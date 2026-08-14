@@ -92,12 +92,13 @@ describe('HomeView compact mode', () => {
     expect(wrapper.get('[data-testid="compact-home"]').text()).toContain('Test site')
   })
 
-  it.each([undefined, false])('selects the default home when compact mode is %s', (enabled) => {
+  it.each([undefined, false])('selects the full scheme3 home when compact mode is %s', (enabled) => {
     const settings = enabled === undefined ? {} : { compact_home_enabled: enabled }
     const wrapper = mountHome(settings)
 
     expect(wrapper.find('[data-testid="compact-home"]').exists()).toBe(false)
-    expect(wrapper.find('.terminal-container').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="scheme3-home"]').classes()).toContain('home-shell')
+    expect(wrapper.find('.home-main').exists()).toBe(true)
   })
 
   it('links unauthenticated visitors to login', () => {

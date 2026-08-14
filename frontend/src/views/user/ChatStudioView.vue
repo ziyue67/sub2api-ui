@@ -43,6 +43,10 @@
             </button>
           </div>
         </div>
+        <div class="chat-ledger-line" aria-hidden="true">
+          <span>对话档案</span>
+          <strong>{{ sessions.length }} 个会话</strong>
+        </div>
 
         <div class="chat-settings">
           <div>
@@ -159,6 +163,7 @@
               />
             </template>
             <template v-else>
+              <span class="chat-main-kicker">会话工作台</span>
               <h2 class="truncate text-lg font-semibold text-gray-900 dark:text-white">
                 {{ currentSession?.title || t('chatStudio.defaultSessionTitle') }}
               </h2>
@@ -1289,6 +1294,416 @@ async function copyReply(text: string): Promise<void> {
 
   .chat-composer-actions > div {
     align-self: flex-end;
+  }
+}
+
+/* Scheme 3: a quiet conversation ledger with the original streaming workflow intact. */
+.chat-studio {
+  --chat-ink: #181711;
+  --chat-muted: #716e63;
+  --chat-line: #d9d3c5;
+  --chat-paper: #f5f2ea;
+  --chat-panel: #fffdf8;
+  --chat-subtle: #ece8dd;
+  --chat-accent: #1e5c42;
+  --chat-accent-hover: #174a35;
+  --chat-accent-soft: rgba(30, 92, 66, 0.1);
+  --chat-danger: #9c4e3c;
+  gap: 0.85rem;
+  grid-template-columns: minmax(16rem, 17.25rem) minmax(0, 1fr);
+  color: var(--chat-ink);
+}
+
+.dark .chat-studio {
+  --chat-ink: #f4f2ea;
+  --chat-muted: #aaa69a;
+  --chat-line: #49453b;
+  --chat-paper: #1b1b18;
+  --chat-panel: #24231f;
+  --chat-subtle: #2b2924;
+  --chat-accent: #8fc2a5;
+  --chat-accent-hover: #acd5b9;
+  --chat-accent-soft: rgba(143, 194, 165, 0.12);
+  --chat-danger: #e09a8d;
+}
+
+.chat-studio .chat-sessions,
+.chat-studio .chat-main {
+  border-color: var(--chat-line);
+  border-radius: 8px;
+  background: var(--chat-panel);
+  box-shadow: 0 14px 32px rgba(54, 48, 34, 0.06);
+}
+
+.dark .chat-studio .chat-sessions,
+.dark .chat-studio .chat-main {
+  border-color: var(--chat-line);
+  background: var(--chat-panel);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.18);
+}
+
+.chat-studio .chat-sessions-header,
+.chat-studio .chat-main-header {
+  border-bottom-color: var(--chat-line);
+  padding: 0.85rem 0.9rem;
+}
+
+.chat-studio .chat-sessions-header h1,
+.chat-studio .chat-main-header h2,
+.chat-studio .chat-empty h3 {
+  color: var(--chat-ink);
+}
+
+.chat-studio .chat-sessions-header p,
+.chat-studio .chat-main-subtitle,
+.chat-studio .chat-empty p,
+.chat-studio .chat-composer-actions > span {
+  color: var(--chat-muted);
+}
+
+.chat-studio .chat-ledger-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  border-bottom: 1px solid var(--chat-line);
+  padding: 0.58rem 0.9rem;
+  color: var(--chat-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.61rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.chat-studio .chat-ledger-line strong {
+  border: 1px solid var(--chat-line);
+  border-radius: 999px;
+  padding: 0.17rem 0.42rem;
+  color: var(--chat-accent);
+  font-size: 0.57rem;
+  letter-spacing: 0.04em;
+}
+
+.chat-studio .chat-settings {
+  gap: 0.7rem;
+  border-bottom-color: var(--chat-line);
+  padding: 0.85rem 0.9rem;
+}
+
+.chat-studio .input-label,
+.chat-studio .input-hint {
+  color: var(--chat-muted);
+}
+
+.chat-studio .chat-settings button.text-primary-600,
+.chat-studio .chat-settings button.dark\:text-primary-400 {
+  color: var(--chat-accent);
+}
+
+.chat-studio :deep(.select-trigger) {
+  min-height: 2.35rem;
+  border-color: var(--chat-line);
+  border-radius: 7px;
+  background: var(--chat-paper);
+  color: var(--chat-ink);
+  box-shadow: none;
+}
+
+.chat-studio :deep(.select-trigger:hover),
+.chat-studio :deep(.select-trigger-open) {
+  border-color: var(--chat-accent);
+  box-shadow: 0 0 0 3px var(--chat-accent-soft);
+}
+
+.chat-studio :deep(.select-value),
+.chat-studio :deep(.select-icon) {
+  color: var(--chat-ink);
+}
+
+.chat-studio .chat-session-list {
+  padding: 0.65rem;
+}
+
+.chat-studio .chat-session-item {
+  gap: 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--chat-ink);
+}
+
+.chat-studio .chat-session-select {
+  gap: 0.55rem;
+  padding: 0.52rem;
+}
+
+.chat-studio .chat-session-item:hover,
+.chat-studio .chat-session-item-active {
+  border-color: rgba(30, 92, 66, 0.22);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+  box-shadow: inset 3px 0 0 var(--chat-accent);
+}
+
+.dark .chat-studio .chat-session-item,
+.dark .chat-studio .chat-session-delete {
+  color: var(--chat-muted);
+}
+
+.dark .chat-studio .chat-session-item:hover,
+.dark .chat-studio .chat-session-item-active {
+  border-color: rgba(143, 194, 165, 0.28);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.chat-studio .chat-session-delete {
+  border-radius: 6px;
+  color: var(--chat-muted);
+}
+
+.chat-studio .chat-session-delete:hover:not(:disabled) {
+  background: rgba(156, 78, 60, 0.1);
+  color: var(--chat-danger);
+}
+
+.chat-studio .chat-main-header {
+  background: var(--chat-panel);
+}
+
+.chat-studio .chat-main-kicker {
+  display: block;
+  color: var(--chat-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.chat-studio .chat-main-kicker + h2 {
+  margin-top: 0.2rem;
+}
+
+.chat-studio .chat-messages {
+  background: var(--chat-paper);
+  padding: 0 1rem 0.5rem;
+}
+
+.dark .chat-studio .chat-messages {
+  background: var(--chat-paper);
+}
+
+.chat-studio .chat-empty {
+  min-height: 420px;
+  border: 1px dashed var(--chat-line);
+  border-radius: 8px;
+  background: var(--chat-panel);
+}
+
+.chat-studio .chat-empty-icon {
+  height: 3.5rem;
+  width: 3.5rem;
+  border: 1px solid rgba(30, 92, 66, 0.24);
+  border-radius: 7px;
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.dark .chat-studio .chat-empty-icon {
+  border-color: rgba(143, 194, 165, 0.28);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.chat-studio .chat-message {
+  animation: chat-studio-message-in 180ms ease both;
+}
+
+@keyframes chat-studio-message-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-studio .chat-avatar {
+  border: 1px solid rgba(30, 92, 66, 0.22);
+  border-radius: 7px;
+}
+
+.chat-studio .chat-avatar-assistant {
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.dark .chat-studio .chat-avatar-assistant {
+  border-color: rgba(143, 194, 165, 0.28);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.chat-studio .chat-assistant-body {
+  border: 1px solid var(--chat-line);
+  border-radius: 8px;
+  background: var(--chat-panel);
+  padding: 0.75rem 0.9rem;
+}
+
+.dark .chat-studio .chat-assistant-body {
+  border-color: var(--chat-line);
+  background: var(--chat-panel);
+}
+
+.chat-studio .chat-user-bubble {
+  border: 1px solid var(--chat-accent);
+  border-radius: 8px;
+  background: var(--chat-accent);
+  color: #fffdf8;
+  padding: 0.7rem 0.9rem;
+}
+
+.dark .chat-studio .chat-user-bubble {
+  border-color: var(--chat-accent);
+  background: var(--chat-accent);
+  color: #1b1b18;
+}
+
+.chat-studio .chat-message-toolbar {
+  margin-bottom: 0.45rem;
+  color: var(--chat-muted);
+}
+
+.chat-studio .chat-user-bubble .chat-message-content {
+  color: inherit;
+}
+
+.chat-studio .chat-copy-button {
+  border-radius: 5px;
+  color: var(--chat-muted);
+}
+
+.chat-studio .chat-copy-button:hover {
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.chat-studio .chat-message-content {
+  color: var(--chat-ink);
+}
+
+.dark .chat-studio .chat-message-content {
+  color: var(--chat-ink);
+}
+
+.chat-studio .chat-typing {
+  color: var(--chat-muted);
+}
+
+.chat-studio .chat-composer {
+  border-top: 1px solid var(--chat-line);
+  background: var(--chat-panel);
+  padding: 0.8rem 1rem 1rem;
+}
+
+.chat-studio .chat-composer-box {
+  border-color: var(--chat-line);
+  border-radius: 8px;
+  background: var(--chat-paper);
+  box-shadow: 0 10px 24px rgba(54, 48, 34, 0.06);
+}
+
+.dark .chat-studio .chat-composer-box {
+  border-color: var(--chat-line);
+  background: var(--chat-subtle);
+}
+
+.chat-studio .chat-input,
+.dark .chat-studio .chat-input {
+  color: var(--chat-ink);
+}
+
+.chat-studio .chat-input::placeholder {
+  color: var(--chat-muted);
+}
+
+.chat-studio .chat-composer-actions .btn-primary,
+.chat-studio .chat-sessions-header .btn-primary {
+  border-radius: 6px;
+  background: var(--chat-accent);
+  color: #fffdf8;
+  box-shadow: 0 8px 18px rgba(30, 92, 66, 0.16);
+}
+
+.chat-studio .chat-composer-actions .btn-primary:hover:not(:disabled),
+.chat-studio .chat-sessions-header .btn-primary:hover:not(:disabled) {
+  background: var(--chat-accent-hover);
+}
+
+.chat-studio .chat-composer-actions .btn-secondary,
+.chat-studio .chat-main-header .btn-secondary,
+.chat-studio .chat-sessions-header .btn-secondary {
+  border-color: var(--chat-line);
+  border-radius: 6px;
+  background: var(--chat-panel);
+  color: var(--chat-ink);
+}
+
+.chat-studio .chat-composer-actions .btn-secondary:hover,
+.chat-studio .chat-main-header .btn-secondary:hover,
+.chat-studio .chat-sessions-header .btn-secondary:hover {
+  border-color: var(--chat-accent);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.dark .chat-studio .chat-composer-actions .btn-secondary,
+.dark .chat-studio .chat-main-header .btn-secondary,
+.dark .chat-studio .chat-sessions-header .btn-secondary {
+  border-color: var(--chat-line);
+  background: var(--chat-panel);
+  color: var(--chat-ink);
+}
+
+.chat-mobile-backdrop {
+  background: rgba(24, 23, 17, 0.38);
+  backdrop-filter: blur(5px);
+}
+
+@media (max-width: 1023px) {
+  .chat-studio .chat-sessions {
+    border-radius: 0 8px 8px 0;
+    box-shadow: 18px 0 40px rgba(54, 48, 34, 0.16);
+  }
+
+  .chat-studio .chat-main-header {
+    padding: 0.75rem 0.8rem;
+  }
+
+  .chat-studio .chat-messages {
+    padding-inline: 0.7rem;
+  }
+
+  .chat-studio .chat-composer {
+    padding: 0.65rem 0.7rem 0.75rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .chat-studio {
+    min-height: 0;
+  }
+
+  .chat-studio .chat-ledger-line {
+    padding-inline: 0.75rem;
+  }
+
+  .chat-studio .chat-main-kicker {
+    display: none;
+  }
+
+  .chat-studio .chat-user-bubble {
+    max-width: 92%;
+  }
+
+  .chat-studio .chat-composer-actions {
+    gap: 0.5rem;
   }
 }
 </style>

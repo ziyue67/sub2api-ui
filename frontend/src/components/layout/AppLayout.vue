@@ -1,5 +1,9 @@
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-dark-950">
+  <Scheme3ConsoleLayout v-if="useScheme3Layout">
+    <slot />
+  </Scheme3ConsoleLayout>
+
+  <div v-else class="min-h-screen bg-gray-50 dark:bg-dark-950">
     <!-- Background Decoration -->
     <div class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
 
@@ -25,17 +29,21 @@
 <script setup lang="ts">
 import '@/styles/onboarding.css'
 import { computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
 import { useOnboardingTour } from '@/composables/useOnboardingTour'
 import { useOnboardingStore } from '@/stores/onboarding'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+import Scheme3ConsoleLayout from './Scheme3ConsoleLayout.vue'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const route = useRoute()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const isAdmin = computed(() => authStore.user?.role === 'admin')
+const useScheme3Layout = computed(() => authStore.isAuthenticated && !isAdmin.value && route.meta.requiresAdmin !== true)
 
 const { replayTour } = useOnboardingTour({
   storageKey: isAdmin.value ? 'admin_guide' : 'user_guide',

@@ -157,8 +157,9 @@ export default {
 
   // Navigation
   nav: {
-   dashboard: '仪表盘',
-   announcements: '公告',
+    dashboard: '仪表盘',
+    scheme3Workspace: 'Shour or ToKen 控制台',
+    announcements: '公告',
    apiKeys: 'API 密钥',
     leaderboard: '后台总排行榜',
    batchImage: '批量生图',

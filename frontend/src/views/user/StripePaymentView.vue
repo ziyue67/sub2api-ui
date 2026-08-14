@@ -1,6 +1,6 @@
 <template>
-  <component :is="isPopup ? 'div' : AppLayout" :class="isPopup ? 'min-h-screen bg-gray-50 dark:bg-dark-900' : ''">
-    <div class="mx-auto max-w-lg space-y-6 py-8" :class="isPopup ? 'px-4' : ''">
+  <div class="scheme3-external-payment-shell">
+    <div class="scheme3-stripe-payment mx-auto max-w-lg space-y-6 py-8">
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
@@ -15,8 +15,8 @@
       <template v-else>
         <!-- 金额头部 -->
         <div v-if="order" class="card overflow-hidden">
-          <div class="bg-gradient-to-br from-[#635bff] to-[#4f46e5] px-6 py-6 text-center">
-            <p class="text-sm font-medium text-indigo-200">{{ t('payment.actualPay') }}</p>
+          <div class="scheme3-stripe-payment-amount px-6 py-6 text-center">
+            <p class="text-sm font-medium">{{ t('payment.actualPay') }}</p>
             <p class="mt-1 text-3xl font-bold text-white">{{ formatGatewayAmount(order.pay_amount) }}</p>
           </div>
         </div>
@@ -26,7 +26,7 @@
           <div class="card p-6">
             <div class="flex flex-col items-center space-y-4">
               <p class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('payment.qr.scanWxpay') }}</p>
-              <div class="relative rounded-lg border-2 border-[#2BB741] bg-green-50 p-4 dark:border-[#2BB741]/70 dark:bg-green-950/20">
+              <div class="scheme3-stripe-payment-qr relative p-4">
                 <img :src="wechatQrUrl" alt="WeChat Pay QR" class="h-56 w-56 rounded" />
                 <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <span class="rounded-full bg-[#2BB741] p-2 shadow ring-2 ring-white">
@@ -90,7 +90,7 @@
         </div>
       </template>
     </div>
-  </component>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -105,7 +105,6 @@ import { formatPaymentAmount, normalizePaymentCurrency } from '@/components/paym
 import { PAYMENT_RECOVERY_STORAGE_KEY, readPaymentRecoverySnapshot } from '@/components/payment/paymentFlow'
 import type { PaymentOrder } from '@/types/payment'
 import type { Stripe, StripeElements } from '@stripe/stripe-js'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 
 const i18n = useI18n()
@@ -113,9 +112,6 @@ const { t } = i18n
 const route = useRoute()
 const router = useRouter()
 const paymentStore = usePaymentStore()
-
-// 弹窗模式：指定支付宝或微信方式时跳过 AppLayout
-const isPopup = computed(() => !!route.query.method)
 
 const loading = ref(true)
 const initError = ref('')
@@ -312,3 +308,24 @@ onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
 })
 </script>
+
+<style scoped>
+.scheme3-external-payment-shell { display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 1.5rem; background: #f4f2ec; }
+.scheme3-stripe-payment { --scheme3-stripe-card: #fffefa; --scheme3-stripe-line: #d8d2c3; --scheme3-stripe-ink: #27251f; }
+.scheme3-stripe-payment { width: min(100%, 32rem); }
+.scheme3-stripe-payment :deep(.card) { border: 1px solid var(--scheme3-stripe-line); border-radius: 8px; background: var(--scheme3-stripe-card); box-shadow: 0 12px 26px rgba(54,48,34,.07); }
+.scheme3-stripe-payment-amount { border-left: 3px solid #b7791f; background: #f1eee6; color: #27251f; }
+.scheme3-stripe-payment-amount p:first-child { color: #777266; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .66rem; letter-spacing: .06em; }
+.scheme3-stripe-payment-amount p:last-child { color: #1e5c42; font-family: Georgia, 'Times New Roman', serif; }
+.scheme3-stripe-payment-qr { border: 1px solid rgba(30,92,66,.3); border-radius: 8px; background: #f8f5ed; }
+.scheme3-stripe-payment :deep(.btn-primary), .scheme3-stripe-payment :deep(.btn-stripe) { border-radius: 7px; background: #1e5c42 !important; color: #fffefa !important; box-shadow: 0 8px 16px rgba(30,92,66,.15); }
+.scheme3-stripe-payment :deep(.btn-secondary) { border-color: var(--scheme3-stripe-line); border-radius: 7px; background: var(--scheme3-stripe-card); color: var(--scheme3-stripe-ink); }
+
+:global(.dark .scheme3-external-payment-shell) { background: #1b1b18; }
+:global(.dark .scheme3-stripe-payment) { --scheme3-stripe-card: #24231f; --scheme3-stripe-line: #47443a; --scheme3-stripe-ink: #f4f2ec; }
+:global(.dark .scheme3-stripe-payment-amount) { border-color: #d6a65d; background: #2b2924; color: #f4f2ec; }
+:global(.dark .scheme3-stripe-payment-amount p:first-child) { color: #aaa69a; }
+:global(.dark .scheme3-stripe-payment-amount p:last-child) { color: #8fc2a5; }
+:global(.dark .scheme3-stripe-payment-qr) { border-color: rgba(143,194,165,.32); background: #2b2924; }
+:global(.dark .scheme3-stripe-payment :deep(.btn-primary)), :global(.dark .scheme3-stripe-payment :deep(.btn-stripe)) { background: #8fc2a5 !important; color: #1b1b18 !important; }
+</style>

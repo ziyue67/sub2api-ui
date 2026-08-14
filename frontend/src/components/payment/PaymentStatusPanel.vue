@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-4">
+  <div class="scheme3-payment-status space-y-4">
     <!-- ═══ Terminal States: show result, user clicks to return ═══ -->
 
     <!-- Success -->
@@ -297,15 +297,11 @@ const isMobileAlipayDeepLink = computed(() => props.mobileAlipayDeepLink === tru
 const showQRCode = computed(() => !!qrUrl.value && (!isMobileAlipayDeepLink.value || deepLinkFallbackVisible.value))
 
 const qrBorderClass = computed(() => {
-  if (isAlipay.value) return 'border-[#00AEEF] bg-blue-50 dark:border-[#00AEEF]/70 dark:bg-blue-950/20'
-  if (isWxpay.value) return 'border-[#2BB741] bg-green-50 dark:border-[#2BB741]/70 dark:bg-green-950/20'
-  return 'border-gray-200 bg-white dark:border-dark-600 dark:bg-dark-800'
+  return 'scheme3-payment-qr'
 })
 
 const qrLogoBgClass = computed(() => {
-  if (isAlipay.value) return 'bg-[#00AEEF]'
-  if (isWxpay.value) return 'bg-[#2BB741]'
-  return 'bg-gray-400'
+  return 'scheme3-payment-qr-logo'
 })
 
 const qrLogoIcon = computed(() => {
@@ -502,3 +498,28 @@ onMounted(() => {
 })
 onUnmounted(() => cleanup())
 </script>
+
+<style scoped>
+.scheme3-payment-status { --scheme3-payment-status-card: #fffefa; --scheme3-payment-status-line: #d8d2c3; --scheme3-payment-status-ink: #27251f; --scheme3-payment-status-muted: #777266; }
+.scheme3-payment-status :deep(.card) { border: 1px solid var(--scheme3-payment-status-line); border-radius: 8px; background: var(--scheme3-payment-status-card); box-shadow: 0 10px 24px rgba(54,48,34,.055); }
+.scheme3-payment-status :deep(.bg-gray-50), .scheme3-payment-status :deep(.bg-gray-100) { background: #f1eee6 !important; }
+.scheme3-payment-status :deep(.bg-green-100), .scheme3-payment-status :deep(.bg-blue-50) { background: rgba(30,92,66,.09) !important; }
+.scheme3-payment-status :deep(.bg-orange-100) { background: rgba(183,121,31,.1) !important; }
+.scheme3-payment-status :deep(.text-green-500), .scheme3-payment-status :deep(.text-green-600) { color: #1e5c42 !important; }
+.scheme3-payment-status :deep(.text-orange-500) { color: #b7791f !important; }
+.scheme3-payment-status :deep(.border-y) { border-color: var(--scheme3-payment-status-line); }
+.scheme3-payment-qr { border-color: rgba(30,92,66,.32) !important; border-radius: 8px; background: #f8f5ed !important; }
+.scheme3-payment-qr-logo { background: #1e5c42 !important; }
+.scheme3-payment-status :deep(.btn-primary), .scheme3-payment-status :deep(.btn-alipay), .scheme3-payment-status :deep(.btn-wxpay), .scheme3-payment-status :deep(.btn-stripe), .scheme3-payment-status :deep(.btn-airwallex) { border-radius: 7px; background: #1e5c42 !important; color: #fffefa !important; box-shadow: 0 8px 16px rgba(30,92,66,.15); }
+.scheme3-payment-status :deep(.btn-secondary) { border-color: var(--scheme3-payment-status-line); border-radius: 7px; background: var(--scheme3-payment-status-card); color: var(--scheme3-payment-status-ink); }
+
+:global(.dark .scheme3-payment-status) { --scheme3-payment-status-card: #24231f; --scheme3-payment-status-line: #47443a; --scheme3-payment-status-ink: #f4f2ec; --scheme3-payment-status-muted: #aaa69a; }
+:global(.dark .scheme3-payment-status :deep(.bg-gray-50)), :global(.dark .scheme3-payment-status :deep(.bg-gray-100)) { background: #2b2924 !important; }
+:global(.dark .scheme3-payment-status :deep(.bg-green-100)), :global(.dark .scheme3-payment-status :deep(.bg-blue-50)) { background: rgba(143,194,165,.1) !important; }
+:global(.dark .scheme3-payment-status :deep(.bg-orange-100)) { background: rgba(214,166,93,.1) !important; }
+:global(.dark .scheme3-payment-status :deep(.text-green-500)), :global(.dark .scheme3-payment-status :deep(.text-green-600)) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-payment-status :deep(.text-orange-500)) { color: #d6a65d !important; }
+:global(.dark .scheme3-payment-qr) { border-color: rgba(143,194,165,.34) !important; background: #2b2924 !important; }
+:global(.dark .scheme3-payment-qr-logo) { background: #8fc2a5 !important; }
+:global(.dark .scheme3-payment-status :deep(.btn-primary)), :global(.dark .scheme3-payment-status :deep(.btn-alipay)), :global(.dark .scheme3-payment-status :deep(.btn-wxpay)), :global(.dark .scheme3-payment-status :deep(.btn-stripe)), :global(.dark .scheme3-payment-status :deep(.btn-airwallex)) { background: #8fc2a5 !important; color: #1b1b18 !important; }
+</style>

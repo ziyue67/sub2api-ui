@@ -1,6 +1,6 @@
 <template>
-  <AppLayout>
-    <div class="mx-auto max-w-lg space-y-6 py-8">
+  <div class="scheme3-external-payment-shell">
+    <div class="scheme3-airwallex-payment mx-auto max-w-lg space-y-6 py-8">
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-emerald-500 border-t-transparent"></div>
       </div>
@@ -21,14 +21,13 @@
         </div>
       </div>
     </div>
-  </AppLayout>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
   PAYMENT_RECOVERY_STORAGE_KEY,
@@ -131,3 +130,17 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.scheme3-external-payment-shell { display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 1.5rem; background: #f4f2ec; }
+.scheme3-airwallex-payment { --scheme3-airwallex-card: #fffefa; --scheme3-airwallex-line: #d8d2c3; }
+.scheme3-airwallex-payment { width: min(100%, 32rem); }
+.scheme3-airwallex-payment :deep(.card) { border: 1px solid var(--scheme3-airwallex-line); border-radius: 8px; background: var(--scheme3-airwallex-card); box-shadow: 0 12px 26px rgba(54,48,34,.07); }
+.scheme3-airwallex-payment :deep(.border-emerald-500) { border-color: #1e5c42 !important; }
+.scheme3-airwallex-payment :deep(.btn-primary) { border-radius: 7px; background: #1e5c42; box-shadow: 0 8px 16px rgba(30,92,66,.15); }
+
+:global(.dark .scheme3-external-payment-shell) { background: #1b1b18; }
+:global(.dark .scheme3-airwallex-payment) { --scheme3-airwallex-card: #24231f; --scheme3-airwallex-line: #47443a; }
+:global(.dark .scheme3-airwallex-payment :deep(.border-emerald-500)) { border-color: #8fc2a5 !important; }
+:global(.dark .scheme3-airwallex-payment :deep(.btn-primary)) { background: #8fc2a5; color: #1b1b18; }
+</style>

@@ -1,6 +1,6 @@
 <template>
   <header
-    class="glass sticky top-0 z-30 border-b border-gray-200/50 dark:border-dark-700/50"
+    class="scheme3-model-plaza-nav sticky top-0 z-30"
   >
     <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3.5 sm:px-6">
       <!-- 左:站点 logo + 名称 -->
@@ -25,14 +25,14 @@
       <RouterLink
         v-if="isAuthenticated"
         :to="backTarget"
-        class="inline-flex flex-shrink-0 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary-500/25 transition-all duration-200 hover:from-primary-600 hover:to-primary-700 hover:shadow-lg hover:shadow-primary-500/30 active:scale-[0.98] dark:shadow-primary-500/20"
+        class="scheme3-model-plaza-nav-action"
       >
         {{ t('modelPlaza.nav.backToDashboard') }}
       </RouterLink>
       <RouterLink
         v-else
         :to="{ path: '/login', query: { redirect: '/model-plaza' } }"
-        class="inline-flex flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary-500/25 transition-all duration-200 hover:from-primary-600 hover:to-primary-700 hover:shadow-lg hover:shadow-primary-500/30 active:scale-[0.98] dark:shadow-primary-500/20"
+        class="scheme3-model-plaza-nav-action"
       >
         {{ t('modelPlaza.nav.login') }}
       </RouterLink>
@@ -44,6 +44,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { sanitizeUrl } from '@/utils/url'
+import { resolveDisplaySiteName } from '@/utils/branding'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
@@ -52,10 +53,15 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 
 const settings = computed(() => appStore.cachedPublicSettings)
-const siteName = computed(() => settings.value?.site_name || 'Sub2API')
+const siteName = computed(() => resolveDisplaySiteName(settings.value?.site_name))
 const siteLogo = computed(() =>
   sanitizeUrl(settings.value?.site_logo || '', { allowRelative: true, allowDataUrl: true })
 )
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const backTarget = computed(() => (authStore.isAdmin ? '/admin/dashboard' : '/dashboard'))
 </script>
+
+<style scoped>
+.scheme3-model-plaza-nav { border-bottom: 1px solid #dad5c8; background: rgba(244,242,236,.94); backdrop-filter: blur(18px); }.scheme3-model-plaza-nav-action { display: inline-flex; min-height: 2.25rem; align-items: center; justify-content: center; border: 1px solid #1e5c42; border-radius: 6px; padding: .4rem .7rem; background: #1e5c42; color: #f4f2ec; font-size: .68rem; font-weight: 800; transition: background-color 150ms ease,transform 150ms ease; }.scheme3-model-plaza-nav-action:hover { background: #174a35; }.scheme3-model-plaza-nav-action:active { transform: scale(.98); }
+:global(html.dark) .scheme3-model-plaza-nav { border-color: #47443a; background: rgba(27,27,24,.94); }:global(html.dark) .scheme3-model-plaza-nav-action { border-color: #8fc2a5; background: #1e5c42; color: #f4f2ec; }
+</style>

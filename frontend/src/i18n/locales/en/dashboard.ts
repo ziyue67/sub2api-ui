@@ -1,6 +1,7 @@
 export default {
   dashboard: {
     title: 'Dashboard',
+    scheme3Description: 'Request ledger and route observability',
     welcomeMessage: "Welcome back! Here's an overview of your account.",
     balance: 'Balance',
     apiKeys: 'API Keys',

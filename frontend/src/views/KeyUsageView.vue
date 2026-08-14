@@ -1,5 +1,5 @@
 <template>
-  <div class="relative flex min-h-screen flex-col bg-gray-50 dark:bg-dark-950">
+  <div class="scheme3-key-usage relative flex min-h-screen flex-col">
     <!-- Header (same pattern as HomeView) -->
     <header class="relative z-20 px-6 py-4">
       <nav class="mx-auto flex max-w-6xl items-center justify-between">
@@ -424,6 +424,7 @@ import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { buildGatewayUrl } from '@/api/client'
 import { formatDateLocalInput } from '@/utils/format'
+import { resolveDisplaySiteName } from '@/utils/branding'
 import { sanitizeUrl } from '@/utils/url'
 
 const { t, locale } = useI18n()
@@ -431,7 +432,9 @@ const appStore = useAppStore()
 
 // ==================== Site Settings (same as HomeView) ====================
 
-const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
+const siteName = computed(() =>
+  resolveDisplaySiteName(appStore.cachedPublicSettings?.site_name || appStore.siteName)
+)
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 const githubUrl = 'https://github.com/Wei-Shaw/sub2api'
@@ -998,6 +1001,25 @@ onUnmounted(() => {
 /* Tabular nums */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
+
+.scheme3-key-usage { --scheme3-key-paper: #f4f2ec; --scheme3-key-card: #fffefa; --scheme3-key-ink: #27251f; --scheme3-key-muted: #777266; --scheme3-key-line: #d8d2c3; background: var(--scheme3-key-paper); color: var(--scheme3-key-ink); }
+.scheme3-key-usage :deep(.bg-white), .scheme3-key-usage :deep(.bg-white\/90) { background-color: var(--scheme3-key-card) !important; }
+.scheme3-key-usage :deep(.bg-gray-50), .scheme3-key-usage :deep(.bg-gray-100) { background-color: #f1eee6 !important; }
+.scheme3-key-usage :deep(.border-gray-100), .scheme3-key-usage :deep(.border-gray-200) { border-color: var(--scheme3-key-line) !important; }
+.scheme3-key-usage :deep(.text-gray-900), .scheme3-key-usage :deep(.text-gray-800), .scheme3-key-usage :deep(.text-gray-700) { color: var(--scheme3-key-ink) !important; }
+.scheme3-key-usage :deep(.text-gray-600), .scheme3-key-usage :deep(.text-gray-500), .scheme3-key-usage :deep(.text-gray-400) { color: var(--scheme3-key-muted) !important; }
+.scheme3-key-usage :deep(.bg-primary-500), .scheme3-key-usage :deep(.bg-primary-600) { background-color: #1e5c42 !important; }
+.scheme3-key-usage :deep(.border-primary-500), .scheme3-key-usage :deep(.border-primary-300) { border-color: #1e5c42 !important; }
+.scheme3-key-usage :deep(.rounded-2xl) { border-radius: 8px !important; }
+.scheme3-key-usage :deep(.input-ring:focus) { border-color: #1e5c42; box-shadow: 0 0 0 3px rgba(30,92,66,.14); }
+.scheme3-key-usage :deep(.shadow-sm), .scheme3-key-usage :deep(.shadow-md) { box-shadow: 0 8px 20px rgba(54,48,34,.07) !important; }
+
+:global(.dark .scheme3-key-usage) { --scheme3-key-paper: #1b1b18; --scheme3-key-card: #24231f; --scheme3-key-ink: #f4f2ec; --scheme3-key-muted: #aaa69a; --scheme3-key-line: #47443a; }
+:global(.dark .scheme3-key-usage :deep(.bg-gray-50)), :global(.dark .scheme3-key-usage :deep(.bg-gray-100)) { background-color: #2b2924 !important; }
+:global(.dark .scheme3-key-usage :deep(.bg-dark-900)), :global(.dark .scheme3-key-usage :deep(.bg-dark-950)) { background-color: var(--scheme3-key-paper) !important; }
+:global(.dark .scheme3-key-usage :deep(.border-dark-700)) { border-color: var(--scheme3-key-line) !important; }
+:global(.dark .scheme3-key-usage :deep(.bg-primary-500)), :global(.dark .scheme3-key-usage :deep(.bg-primary-600)) { background-color: #8fc2a5 !important; color: #1b1b18 !important; }
+:global(.dark .scheme3-key-usage :deep(.text-primary-600)), :global(.dark .scheme3-key-usage :deep(.text-primary-500)) { color: #8fc2a5 !important; }
 </style>

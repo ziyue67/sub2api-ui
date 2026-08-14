@@ -1,75 +1,68 @@
 <template>
   <AppLayout>
-    <!-- 极简流体背景: 仅作为质感点缀，不干扰阅读 -->
-    <div class="fixed inset-0 pointer-events-none z-0 overflow-hidden bg-gray-50 dark:bg-dark-950">
-      <div class="absolute -top-48 -left-48 h-[800px] w-[800px] rounded-full bg-primary-500/5 blur-[120px] dark:bg-primary-900/10"></div>
-      <div class="absolute bottom-0 right-0 h-[600px] w-[600px] rounded-full bg-blue-500/5 blur-[100px] dark:bg-blue-900/10"></div>
-    </div>
-
-    <div class="relative z-10 mx-auto w-full max-w-[1600px] px-4 py-8 sm:px-6">
-      <!-- 页面标题与搜索控制栏 -->
-      <div class="mb-8 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-        <div class="px-2">
-          <h1 class="text-3xl font-black tracking-tight text-gray-900 dark:text-white">模型广场</h1>
-          <p class="mt-2 text-sm font-medium text-gray-500 dark:text-dark-400">按模型汇聚渠道、可用分组和渠道基础定价。</p>
+    <section class="scheme3-model-square">
+      <header class="scheme3-model-square-header">
+        <div>
+          <p class="scheme3-model-square-kicker">模型目录 / 定价账本</p>
+          <h1>模型广场</h1>
+          <p class="scheme3-model-square-subtitle">按模型核对可用渠道、分组与基础定价。</p>
         </div>
-        <div class="flex items-center gap-3">
-          <div class="relative group">
-            <Icon name="search" size="sm" class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
-            <input v-model="search" class="w-full lg:w-80 h-11 bg-white/80 dark:bg-dark-900/60 border border-gray-200 dark:border-dark-800 rounded-xl py-2 pl-11 pr-4 text-sm font-bold outline-none focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 transition-all shadow-sm" placeholder="搜索模型、渠道、平台或分组..." />
-          </div>
-          <button class="flex h-11 w-11 items-center justify-center rounded-xl bg-white dark:bg-dark-900 border border-gray-200 dark:border-dark-800 hover:bg-gray-50 dark:hover:bg-dark-800 transition-all shadow-sm active:scale-95" :disabled="loading" @click="loadModels">
+        <div class="scheme3-model-square-tools">
+          <label class="scheme3-model-square-search">
+            <Icon name="search" size="sm" />
+            <input v-model="search" aria-label="搜索模型、渠道、平台或分组" placeholder="搜索模型、渠道、平台或分组..." />
+          </label>
+          <button type="button" class="scheme3-model-square-refresh" :disabled="loading" title="刷新模型目录" @click="loadModels">
             <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
           </button>
         </div>
-      </div>
+      </header>
 
-      <!-- 平台筛选菜单 -->
-      <div class="mb-8 flex flex-wrap gap-2 px-2">
+      <div class="scheme3-model-square-filter" aria-label="平台筛选">
         <button
           v-for="item in platforms"
           :key="item"
-          class="px-5 py-2 rounded-xl text-xs font-black transition-all active:scale-95"
-          :class="platform === item ? 'bg-gray-900 text-white shadow-md dark:bg-white dark:text-gray-900' : 'bg-white/80 text-gray-500 border border-gray-100 hover:border-gray-200 dark:bg-dark-900/60 dark:text-dark-400 dark:border-dark-800'"
+          type="button"
+          class="scheme3-model-square-filter-button"
+          :class="{ 'scheme3-model-square-filter-button-active': platform === item }"
           @click="platform = item"
         >
           {{ item === 'all' ? '全部平台' : item.toUpperCase() }}
         </button>
       </div>
 
-      <!-- 提示条: 对齐图 7 风格 -->
-      <div class="mb-8 mx-2 inline-flex items-center gap-2.5 rounded-xl bg-amber-500/5 px-5 py-3 text-xs font-bold text-amber-700 dark:text-amber-300 border border-amber-500/10 shadow-sm">
+      <div class="scheme3-model-square-note">
         <Icon name="infoCircle" size="xs" />
         提示：下方价格为渠道基础价，实际扣费按所选分组倍率计算；专属倍率和高峰倍率会直接显示在分组标签中。
       </div>
 
-      <!-- 模型列表: 严格对照图 7 的 2 列布局 -->
-      <div v-if="loading" class="py-32 text-center">
-         <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-primary-500/20 border-t-primary-500"></div>
+      <div v-if="loading" class="scheme3-model-square-state">
+        <div class="scheme3-model-square-spinner"></div>
       </div>
-      <div v-else-if="filteredModels.length === 0" class="py-32 text-center text-gray-400 font-bold uppercase tracking-widest">没有可展示的模型</div>
+      <div v-else-if="filteredModels.length === 0" class="scheme3-model-square-state scheme3-model-square-empty">
+        <Icon name="inbox" size="lg" />
+        <span>没有可展示的模型</span>
+      </div>
 
-      <div v-else class="grid gap-6 xl:grid-cols-2">
-        <article v-for="model in filteredModels" :key="model.key" class="bg-white dark:bg-dark-900 border border-gray-200 dark:border-dark-800 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden flex flex-col">
-          <!-- 1. 卡片页眉 (对照图 7) -->
-          <header class="px-6 py-5 flex items-start justify-between border-b border-gray-100 dark:border-dark-800 bg-gray-50/30 dark:bg-dark-950/20">
-            <div class="min-w-0">
-              <h2 class="text-xl font-black tracking-tight text-gray-900 dark:text-white truncate leading-tight">{{ model.name }}</h2>
-              <span class="mt-1 inline-block text-[10px] font-black uppercase text-gray-400 dark:text-dark-500 tracking-widest leading-none">{{ model.platform }}</span>
+      <div v-else class="scheme3-model-square-grid">
+        <article v-for="model in filteredModels" :key="model.key" class="scheme3-model-square-card">
+          <header class="scheme3-model-square-card-header">
+            <div>
+              <h2>{{ model.name }}</h2>
+              <span>{{ model.platform }}</span>
             </div>
-            <div class="shrink-0 text-xs font-black text-gray-400 dark:text-dark-500 uppercase tracking-widest">
+            <div class="scheme3-model-square-card-count">
               {{ channelCount(model) }} {{ t('modelPlaza.detail.channelCount', channelCount(model)) }}
             </div>
           </header>
 
-          <div class="flex-1 divide-y divide-gray-100 dark:divide-dark-800">
-            <section v-for="channel in model.channels" :key="channel.key" class="p-6 space-y-5">
-              <!-- 2. 渠道与分组行 (结构 1:1 复刻图 7) -->
-              <div class="grid grid-cols-[3rem_minmax(0,1fr)] items-start gap-x-4 gap-y-3">
-                <div class="pt-1 text-xs font-black uppercase tracking-[0.16em] text-gray-400 dark:text-dark-500">渠道</div>
-                <div class="min-w-0 break-words text-sm font-bold text-gray-800 dark:text-gray-200">{{ channel.name }}</div>
-                <div class="pt-1 text-xs font-black uppercase tracking-[0.16em] text-gray-400 dark:text-dark-500">分组</div>
-                <div class="model-square-groups min-w-0 flex flex-wrap gap-2 rounded-xl border border-gray-200/70 bg-white/60 p-2.5 dark:border-dark-700/70 dark:bg-dark-950/30">
+          <div class="scheme3-model-square-card-body">
+            <section v-for="channel in model.channels" :key="channel.key" class="scheme3-model-square-channel">
+              <div class="scheme3-model-square-channel-meta">
+                <span>渠道</span>
+                <strong>{{ channel.name }}</strong>
+                <span>分组</span>
+                <div class="scheme3-model-square-groups">
                   <GroupBadge
                     v-for="entry in channel.entries"
                     :key="entryKey(entry)"
@@ -83,42 +76,38 @@
                     :peak-end="entry.group.peak_end"
                     :peak-rate-multiplier="entry.group.peak_rate_multiplier"
                     always-show-rate
-                    class="model-square-group-badge max-w-full min-w-0 rounded-lg px-3 py-1"
+                    class="model-square-group-badge"
                   />
                 </div>
               </div>
 
-              <!-- 3. 定价详情框 (结构 1:1 复刻图 7) -->
-              <div class="rounded-xl border border-gray-200 dark:border-dark-700 bg-gray-50/50 dark:bg-dark-950/40 p-5">
-                <!-- 定价页眉 -->
-                <div class="flex items-center justify-between mb-5">
-                   <h3 class="text-sm font-black text-gray-500 dark:text-dark-400">渠道基础定价</h3>
-                   <span class="text-[10px] font-black uppercase text-gray-400 dark:text-dark-500 tracking-widest">
+              <div class="scheme3-model-square-pricing">
+                <div class="scheme3-model-square-pricing-header">
+                   <h3>渠道基础定价</h3>
+                   <span>
                      {{ billingModeLabel(channel.pricing) }}
                    </span>
                 </div>
 
-                <!-- 2x3 网格定价 (图 7 核心结构) -->
-                <div class="grid grid-cols-3 gap-y-5 gap-x-4">
-                   <div v-for="item in fullPriceItems(channel.pricing)" :key="item.label" class="space-y-1.5">
-                      <p class="text-[10px] font-bold text-gray-400 uppercase leading-none">{{ item.label }}</p>
-                      <p class="text-sm font-black font-mono text-gray-900 dark:text-white leading-none break-all">
+                <div class="scheme3-model-square-pricing-grid">
+                   <div v-for="item in fullPriceItems(channel.pricing)" :key="item.label">
+                      <p>{{ item.label }}</p>
+                      <strong>
                         {{ formatTokenPrice(item.value) }}
-                      </p>
+                      </strong>
                    </div>
                 </div>
 
-                <!-- 特殊计费提示 (对齐图 7 阶梯与计费逻辑) -->
-                <div v-if="isRequestBilling(channel.pricing) || (channel.pricing?.intervals?.length)" class="mt-5 pt-5 border-t border-gray-200 dark:border-dark-700 flex flex-wrap items-center gap-6">
-                   <div v-if="isRequestBilling(channel.pricing)" class="space-y-1.5">
-                      <p class="text-[10px] font-bold text-gray-400 uppercase leading-none">{{ channel.pricing?.billing_mode === 'image' ? '每张价格' : '每次价格' }}</p>
-                      <p class="text-sm font-black font-mono text-primary-600 dark:text-primary-400 leading-none">
+                <div v-if="isRequestBilling(channel.pricing) || (channel.pricing?.intervals?.length)" class="scheme3-model-square-pricing-extra">
+                   <div v-if="isRequestBilling(channel.pricing)">
+                      <p>{{ channel.pricing?.billing_mode === 'image' ? '每张价格' : '每次价格' }}</p>
+                      <strong>
                         {{ formatRequestPrice(channel.pricing?.per_request_price, channel.pricing?.billing_mode) }}
-                      </p>
+                      </strong>
                    </div>
-                   <div v-if="channel.pricing?.intervals?.length" class="flex items-center gap-2 text-primary-600 dark:text-primary-400 bg-primary-500/5 px-4 py-2 rounded-xl border border-primary-500/10">
+                   <div v-if="channel.pricing?.intervals?.length" class="scheme3-model-square-tier-note">
                       <Icon name="shield" size="xs" />
-                      <span class="text-[10px] font-black uppercase tracking-widest font-mono">已配置 {{ channel.pricing.intervals.length }} 档阶梯价格</span>
+                      <span>已配置 {{ channel.pricing.intervals.length }} 档阶梯价格</span>
                    </div>
                 </div>
               </div>
@@ -126,7 +115,7 @@
           </div>
         </article>
       </div>
-    </div>
+    </section>
   </AppLayout>
 </template>
 
@@ -267,10 +256,66 @@ onMounted(loadModels)
 </script>
 
 <style scoped>
-.model-square-groups {
-  transition: all 0.3s ease;
+.scheme3-model-square { --square-ink: var(--scheme3-ink,#16150f); --square-muted: var(--scheme3-muted,#6b695f); --square-line: var(--scheme3-line,#dad5c8); --square-paper: var(--scheme3-paper,#f4f2ec); --square-card: var(--scheme3-card,#fbfaf6); color: var(--square-ink); }
+.scheme3-model-square-header { display: flex; align-items: end; justify-content: space-between; gap: 1.25rem; margin-bottom: 1.2rem; border-bottom: 1px solid var(--square-line); padding: .15rem 0 1.1rem; }
+.scheme3-model-square-kicker { margin: 0; color: var(--square-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .61rem; font-weight: 800; letter-spacing: .11em; }
+.scheme3-model-square h1 { margin: .38rem 0 0; font-family: Georgia,'Times New Roman',serif; font-size: clamp(1.55rem,2.6vw,2.1rem); font-weight: 500; letter-spacing: 0; }
+.scheme3-model-square-subtitle { margin: .36rem 0 0; color: var(--square-muted); font-size: .78rem; }
+.scheme3-model-square-tools { display: flex; align-items: center; gap: .55rem; }
+.scheme3-model-square-search { display: flex; width: min(23rem,42vw); min-height: 2.55rem; align-items: center; gap: .52rem; border: 1px solid var(--square-line); border-radius: 7px; padding: 0 .75rem; background: var(--square-card); color: var(--square-muted); transition: border-color 150ms ease,box-shadow 150ms ease; }
+.scheme3-model-square-search:focus-within { border-color: #1e5c42; box-shadow: 0 0 0 3px rgba(30,92,66,.12); color: #1e5c42; }
+.scheme3-model-square-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--square-ink); font-size: .75rem; }
+.scheme3-model-square-search input::placeholder { color: #979286; }
+.scheme3-model-square-refresh { display: inline-flex; width: 2.55rem; height: 2.55rem; align-items: center; justify-content: center; border: 1px solid var(--square-line); border-radius: 7px; background: var(--square-card); color: var(--square-ink); transition: background-color 150ms ease,transform 150ms ease; }
+.scheme3-model-square-refresh:hover { background: #ebe8de; }.scheme3-model-square-refresh:active { transform: scale(.96); }
+.scheme3-model-square-filter { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: .95rem; }
+.scheme3-model-square-filter-button { min-height: 2rem; border: 1px solid var(--square-line); border-radius: 5px; padding: .35rem .7rem; background: var(--square-card); color: var(--square-muted); font-size: .65rem; font-weight: 800; transition: background-color 150ms ease,border-color 150ms ease,color 150ms ease,transform 150ms ease; }
+.scheme3-model-square-filter-button:hover { border-color: rgba(30,92,66,.42); color: #1e5c42; }.scheme3-model-square-filter-button:active { transform: scale(.97); }.scheme3-model-square-filter-button-active { border-color: #1e5c42; background: #1e5c42; color: #f4f2ec; }
+.scheme3-model-square-note { display: flex; align-items: flex-start; gap: .45rem; margin-bottom: 1.15rem; border-left: 3px solid #b7791f; padding: .52rem .7rem; background: rgba(183,121,31,.08); color: #765213; font-size: .7rem; line-height: 1.55; }
+.scheme3-model-square-note svg { flex: 0 0 auto; margin-top: .15rem; }
+.scheme3-model-square-state { display: flex; min-height: 19rem; align-items: center; justify-content: center; }.scheme3-model-square-spinner { width: 1.85rem; height: 1.85rem; border: 2px solid rgba(30,92,66,.18); border-top-color: #1e5c42; border-radius: 50%; animation: square-spin .7s linear infinite; }.scheme3-model-square-empty { flex-direction: column; gap: .6rem; border: 1px dashed var(--square-line); color: var(--square-muted); font-size: .75rem; }.scheme3-model-square-empty svg { color: #b7791f; }
+.scheme3-model-square-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
+.scheme3-model-square-card { overflow: hidden; border: 1px solid var(--square-line); border-radius: 8px; background: var(--square-card); box-shadow: 0 9px 20px rgba(54,48,34,.05); }
+.scheme3-model-square-card-header { display: flex; align-items: start; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--square-line); padding: 1rem 1.05rem .85rem; background: #f8f6ef; }.scheme3-model-square-card-header h2 { overflow: hidden; margin: 0; color: var(--square-ink); font-family: Georgia,'Times New Roman',serif; font-size: 1.04rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }.scheme3-model-square-card-header span,.scheme3-model-square-card-count { display: block; margin-top: .35rem; color: var(--square-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .56rem; font-weight: 700; letter-spacing: .05em; }.scheme3-model-square-card-count { flex: 0 0 auto; text-align: right; }
+.scheme3-model-square-channel { padding: 1rem 1.05rem; border-bottom: 1px solid var(--square-line); }.scheme3-model-square-channel:last-child { border-bottom: 0; }.scheme3-model-square-channel-meta { display: grid; grid-template-columns: 2.65rem minmax(0,1fr); gap: .46rem .68rem; align-items: start; }.scheme3-model-square-channel-meta > span { padding-top: .13rem; color: var(--square-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .56rem; font-weight: 800; letter-spacing: .05em; }.scheme3-model-square-channel-meta > strong { overflow-wrap: anywhere; font-size: .74rem; }
+.scheme3-model-square-groups { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 0; }.model-square-group-badge { max-width: 100%; transition: transform 150ms ease; }.model-square-group-badge:hover { transform: translateY(-1px); }
+.scheme3-model-square-pricing { margin-top: .85rem; border: 1px solid var(--square-line); border-radius: 6px; padding: .75rem; background: rgba(244,242,236,.62); }.scheme3-model-square-pricing-header { display: flex; justify-content: space-between; gap: .8rem; margin-bottom: .7rem; }.scheme3-model-square-pricing h3 { margin: 0; font-size: .64rem; font-weight: 800; }.scheme3-model-square-pricing-header span { color: var(--square-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; }.scheme3-model-square-pricing-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .7rem .5rem; }.scheme3-model-square-pricing-grid p,.scheme3-model-square-pricing-extra p { margin: 0 0 .18rem; color: var(--square-muted); font-size: .55rem; }.scheme3-model-square-pricing-grid strong,.scheme3-model-square-pricing-extra strong { overflow-wrap: anywhere; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .65rem; }.scheme3-model-square-pricing-extra { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; margin-top: .8rem; border-top: 1px solid var(--square-line); padding-top: .7rem; }.scheme3-model-square-pricing-extra > div:first-child strong { color: #1e5c42; }.scheme3-model-square-tier-note { display: inline-flex; align-items: center; gap: .28rem; border: 1px solid rgba(183,121,31,.28); border-radius: 4px; padding: .25rem .4rem; background: rgba(183,121,31,.08); color: #765213; font-size: .56rem; font-weight: 800; }
+@keyframes square-spin { to { transform: rotate(360deg); } }
+:global(html.dark) .scheme3-model-square-card,
+:global(html.dark) .scheme3-model-square-search,
+:global(html.dark) .scheme3-model-square-refresh {
+  border-color: #47443a;
+  background: #24231f;
 }
-.model-square-group-badge {
-  @apply transition-transform duration-200 hover:scale-110 active:scale-95;
+:global(html.dark) .scheme3-model-square-refresh:hover { background: #2b2924; }
+:global(html.dark .scheme3-model-square-card-header) {
+  border-color: #47443a;
+  background: #1b1b18;
 }
+:global(html.dark .scheme3-model-square-card-header h2) { color: #f4f2ec; }
+:global(html.dark .scheme3-model-square-card-header span),
+:global(html.dark .scheme3-model-square-card-count) { color: #aaa69a; }
+:global(html.dark .scheme3-model-square-search input) { color: #f4f2ec; }
+:global(html.dark .scheme3-model-square-search input::placeholder) { color: #aaa69a; }
+:global(html.dark .scheme3-model-square-pricing) {
+  border-color: #47443a;
+  background: #2b2924;
+  color: #f4f2ec;
+}
+:global(html.dark .scheme3-model-square-pricing-header span),
+:global(html.dark .scheme3-model-square-pricing-grid p),
+:global(html.dark .scheme3-model-square-pricing-extra p) { color: #aaa69a; }
+:global(html.dark .scheme3-model-square-pricing-grid strong),
+:global(html.dark .scheme3-model-square-pricing-extra strong),
+:global(html.dark .scheme3-model-square-pricing h3) { color: #f4f2ec; }
+:global(html.dark .scheme3-model-square-pricing-extra) { border-color: #47443a; }
+:global(html.dark .scheme3-model-square-pricing-extra > div:first-child strong) { color: #8fc2a5; }
+:global(html.dark .scheme3-model-square-tier-note) {
+  border-color: rgba(214,166,93,.35);
+  background: rgba(183,121,31,.12);
+  color: #e8c878;
+}
+:global(html.dark .scheme3-model-square-note) { color: #e8c878; background: rgba(183,121,31,.11); }
+@media (max-width: 900px) { .scheme3-model-square-grid { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .scheme3-model-square-header { align-items: stretch; flex-direction: column; }.scheme3-model-square-tools,.scheme3-model-square-search { width: 100%; }.scheme3-model-square-refresh { flex: 0 0 auto; }.scheme3-model-square-pricing-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.scheme3-model-square-card-header,.scheme3-model-square-channel { padding-right: .8rem; padding-left: .8rem; }.scheme3-model-square-card-count { max-width: 5.5rem; }.scheme3-model-square-note { font-size: .65rem; } }
 </style>

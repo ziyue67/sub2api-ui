@@ -2,12 +2,12 @@
   <div>
     <div
       v-if="loading && items.length === 0"
-      class="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+      class="scheme3-monitor-card-grid grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
     >
       <div
         v-for="i in 6"
         :key="i"
-        class="p-5 rounded-2xl min-h-[280px] bg-white/70 dark:bg-dark-800/60 border border-gray-200/80 dark:border-dark-700/70 animate-pulse"
+        class="scheme3-monitor-skeleton p-5 rounded-2xl min-h-[280px] bg-white/70 dark:bg-dark-800/60 border border-gray-200/80 dark:border-dark-700/70 animate-pulse"
       >
         <div class="flex items-start gap-3">
           <div class="w-9 h-9 rounded-xl bg-gray-200 dark:bg-dark-700"></div>
@@ -27,13 +27,14 @@
 
     <EmptyState
       v-else-if="items.length === 0"
+      class="scheme3-monitor-empty"
       :title="t('channelStatus.empty.title')"
       :description="t('channelStatus.empty.description')"
     />
 
     <div
       v-else
-      class="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+      class="scheme3-monitor-card-grid grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
     >
       <MonitorCard
         v-for="item in items"
@@ -79,3 +80,30 @@ function resolveAvailability(item: UserMonitorView): number | null {
   return props.window === '15d' ? primary.availability_15d ?? null : primary.availability_30d ?? null
 }
 </script>
+
+<style scoped>
+.scheme3-monitor-card-grid { gap: .85rem; }
+.scheme3-monitor-skeleton {
+  min-height: 17.5rem;
+  border: 1px solid #d8d2c3 !important;
+  border-radius: 8px !important;
+  background: #fffefa !important;
+  box-shadow: 0 10px 24px rgba(54,48,34,.05);
+}
+
+.scheme3-monitor-skeleton :deep(.bg-gray-200),
+.scheme3-monitor-skeleton :deep(.bg-gray-100) { background: #ece8dd !important; }
+
+:global(.dark .scheme3-monitor-skeleton) {
+  border-color: #47443a !important;
+  background: #24231f !important;
+  box-shadow: 0 14px 28px rgba(0,0,0,.22);
+}
+
+:global(.dark .scheme3-monitor-skeleton :deep(.bg-gray-200)),
+:global(.dark .scheme3-monitor-skeleton :deep(.bg-gray-100)) { background: #2b2924 !important; }
+
+@media (max-width: 767px) {
+  .scheme3-monitor-card-grid { gap: .7rem; }
+}
+</style>

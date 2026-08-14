@@ -157,8 +157,9 @@ export default {
 
   // Navigation
   nav: {
-   dashboard: 'Dashboard',
-   announcements: 'Announcements',
+    dashboard: 'Dashboard',
+    scheme3Workspace: 'Shour or ToKen Console',
+    announcements: 'Announcements',
    apiKeys: 'API Keys',
     leaderboard: 'Admin Leaderboard',
    batchImage: 'Batch Images',

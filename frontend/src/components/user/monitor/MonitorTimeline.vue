@@ -1,7 +1,7 @@
 <template>
-  <div class="mt-4 pt-3 border-t border-gray-100 dark:border-dark-700/60">
+  <div class="scheme3-monitor-timeline mt-4 pt-3 border-t border-gray-100 dark:border-dark-700/60">
     <div
-      class="flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-2"
+      class="scheme3-monitor-timeline-label flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-2"
     >
       <span>{{ t('monitorCommon.history60pts', { n: length }) }}</span>
       <span class="tabular-nums">{{ t('monitorCommon.nextUpdateIn', { n: countdownSeconds }) }}</span>
@@ -9,11 +9,11 @@
 
     <div
       v-if="maintenance"
-      class="flex h-5 w-full items-center justify-center rounded border border-dashed border-gray-300 dark:border-dark-600 text-[10px] uppercase tracking-widest text-gray-400"
+        class="scheme3-monitor-maintenance flex h-5 w-full items-center justify-center rounded border border-dashed border-gray-300 dark:border-dark-600 text-[10px] uppercase tracking-widest text-gray-400"
     >
       {{ t('monitorCommon.maintenancePaused') }}
     </div>
-    <div v-else class="flex items-end gap-[2px] h-5 w-full">
+    <div v-else class="scheme3-monitor-timeline-bars flex items-end gap-[2px] h-5 w-full">
       <div
         v-for="(bar, idx) in displayBars"
         :key="idx"
@@ -25,7 +25,7 @@
     </div>
 
     <div
-      class="mt-1 flex justify-between text-[9px] uppercase tracking-widest text-gray-400"
+      class="scheme3-monitor-timeline-axis mt-1 flex justify-between text-[9px] uppercase tracking-widest text-gray-400"
     >
       <span>{{ t('monitorCommon.past') }}</span>
       <span>{{ t('monitorCommon.now') }}</span>
@@ -113,3 +113,21 @@ const displayBars = computed<Bar[]>(() => {
   return bars
 })
 </script>
+
+<style scoped>
+.scheme3-monitor-timeline { border-color: #d8d2c3 !important; }
+.scheme3-monitor-timeline-label,.scheme3-monitor-timeline-axis { color: #a49e90 !important; letter-spacing: .07em; }
+.scheme3-monitor-maintenance { border-color: #d8d2c3 !important; border-radius: 5px; color: #777266 !important; }
+.scheme3-monitor-timeline-bars :deep(.bg-emerald-500) { background: #1e5c42 !important; }
+.scheme3-monitor-timeline-bars :deep(.bg-amber-500) { background: #b7791f !important; }
+.scheme3-monitor-timeline-bars :deep(.bg-red-500) { background: #9e4d3d !important; }
+.scheme3-monitor-timeline-bars :deep(.bg-gray-300) { background: #ddd8ca !important; }
+
+:global(.dark .scheme3-monitor-timeline) { border-color: #47443a !important; }
+:global(.dark .scheme3-monitor-timeline-label),:global(.dark .scheme3-monitor-timeline-axis) { color: #827e72 !important; }
+:global(.dark .scheme3-monitor-maintenance) { border-color: #47443a !important; color: #aaa69a !important; }
+:global(.dark .scheme3-monitor-timeline-bars :deep(.bg-emerald-500)) { background: #8fc2a5 !important; }
+:global(.dark .scheme3-monitor-timeline-bars :deep(.bg-amber-500)) { background: #d3a55a !important; }
+:global(.dark .scheme3-monitor-timeline-bars :deep(.bg-red-500)) { background: #d38b79 !important; }
+:global(.dark .scheme3-monitor-timeline-bars :deep(.bg-gray-300)),:global(.dark .scheme3-monitor-timeline-bars :deep(.dark\\:bg-dark-600)) { background: #47443a !important; }
+</style>
