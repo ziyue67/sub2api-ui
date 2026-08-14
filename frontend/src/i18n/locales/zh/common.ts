@@ -44,6 +44,7 @@ export default {
     inactive: '禁用',
     more: '更多',
     close: '关闭',
+    clear: '清除',
     toggleMenu: '切换菜单',
     userMenu: '用户菜单',
     pageNotFound: '页面不存在',
@@ -211,6 +212,14 @@ export default {
 
   // Auth
   auth: {
+    scheme3: {
+      kicker: '账户入口 / 访问台账',
+      subtitle: '统一调用与路由服务台',
+      loginEyebrow: '登录记录 / 验证身份',
+      registerEyebrow: '注册记录 / 建立账户',
+      otherEntry: '其他入口',
+      copyright: '账户服务'
+    },
     welcomeBack: '欢迎回来',
     signInToAccount: '登录您的账户以继续',
     signIn: '登录',

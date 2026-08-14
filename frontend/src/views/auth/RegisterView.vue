@@ -1,20 +1,26 @@
 <template>
   <AuthLayout>
-    <div class="space-y-6">
+    <div class="auth-panel register-panel">
       <!-- Title -->
-      <div class="text-center">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
+      <div class="auth-panel-heading">
+        <p class="auth-eyebrow">{{ t('auth.scheme3.registerEyebrow') }}</p>
+        <h2 class="auth-panel-title">
           {{ t('auth.createAccount') }}
         </h2>
-        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+        <p class="auth-panel-subtitle">
           {{ t('auth.signUpToStart', { siteName }) }}
         </p>
+      </div>
+
+      <div v-if="errorMessage" class="auth-alert auth-alert-error" role="alert">
+        <Icon name="exclamationCircle" size="sm" />
+        <span>{{ errorMessage }}</span>
       </div>
 
       <!-- Registration Disabled Message -->
       <div
         v-if="!registrationEnabled && settingsLoaded"
-        class="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/50 dark:bg-amber-900/20"
+        class="auth-alert auth-alert-warn rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/50 dark:bg-amber-900/20"
       >
         <div class="flex items-start gap-3">
           <div class="flex-shrink-0">
@@ -27,7 +33,7 @@
       </div>
 
       <!-- Registration Form -->
-      <form v-else @submit.prevent="handleRegister" class="space-y-5">
+      <form v-else @submit.prevent="handleRegister" class="auth-form">
         <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
@@ -272,8 +278,8 @@
 
       </form>
 
-      <div v-if="showOAuthLogin" class="space-y-3 pt-1">
-        <div class="flex items-center gap-3">
+      <div v-if="showOAuthLogin" class="auth-alternatives">
+        <div class="auth-divider">
           <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
           <span class="text-xs text-gray-500 dark:text-dark-400">
             {{ t('auth.oauthOrContinue') }}
@@ -317,11 +323,11 @@
 
     <!-- Footer -->
     <template #footer>
-      <p class="text-gray-500 dark:text-dark-400">
+      <p class="auth-footer-copy text-gray-500 dark:text-dark-400">
         {{ t('auth.alreadyHaveAccount') }}
         <router-link
           to="/login"
-          class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+          class="auth-link font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
         >
           {{ t('auth.signIn') }}
         </router-link>
@@ -354,6 +360,7 @@ import {
 } from '@/api/auth'
 import { buildAuthErrorMessage } from '@/utils/authError'
 import { extractApiErrorCode, extractI18nErrorMessage } from '@/utils/apiError'
+import { resolveDisplaySiteName } from '@/utils/branding'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
   isRegistrationEmailSuffixAllowed,
@@ -398,7 +405,7 @@ const aliyunCaptchaEnabled = ref<boolean>(false)
 const aliyunCaptchaSceneId = ref<string>('')
 const aliyunCaptchaPrefix = ref<string>('')
 const aliyunCaptchaRegion = ref<string>('cn')
-const siteName = ref<string>('Sub2API')
+const siteName = ref<string>(resolveDisplaySiteName('Sub2API'))
 const linuxdoOAuthEnabled = ref<boolean>(false)
 const wechatOAuthEnabled = ref<boolean>(false)
 const oidcOAuthEnabled = ref<boolean>(false)
@@ -533,7 +540,7 @@ onMounted(async () => {
     aliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
     aliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
     aliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
-    siteName.value = settings.site_name || 'Sub2API'
+    siteName.value = resolveDisplaySiteName(settings.site_name)
     linuxdoOAuthEnabled.value = settings.linuxdo_oauth_enabled
     wechatOAuthEnabled.value = isWeChatWebOAuthEnabled(settings)
     oidcOAuthEnabled.value = settings.oidc_oauth_enabled
@@ -1063,6 +1070,268 @@ function buildRegistrationErrorMessage(error: unknown, fallback: string): string
 </script>
 
 <style scoped>
+@keyframes auth-register-input-breathe {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--auth-green) 12%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--auth-green) 20%, transparent); }
+}
+
+.register-panel {
+  --auth-line: #dad5c8;
+  --auth-card: #fbfaf6;
+  --auth-ink: #16150f;
+  --auth-muted: #6b695f;
+  --auth-green: #1e5c42;
+  --auth-red: #a63d32;
+  --auth-amber: #b7791f;
+}
+
+:global(html.dark .register-panel) {
+  --auth-line: #47443a;
+  --auth-card: #24231f;
+  --auth-ink: #f4f2ec;
+  --auth-muted: #aaa69a;
+  --auth-green: #8fc2a5;
+  --auth-red: #e28b80;
+  --auth-amber: #d3a55a;
+}
+
+.auth-panel-heading {
+  margin-bottom: 1.35rem;
+  border-bottom: 1px solid var(--auth-line);
+  padding-bottom: 1.1rem;
+}
+
+.auth-eyebrow,
+.auth-label,
+.auth-divider span {
+  color: var(--auth-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.auth-panel-title {
+  margin: 0.5rem 0 0;
+  color: var(--auth-ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.65rem, 7vw, 2.2rem);
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.05;
+}
+
+.auth-panel-subtitle {
+  margin: 0.5rem 0 0;
+  color: var(--auth-muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.auth-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.register-panel :deep(.input-label) {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--auth-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.register-panel :deep(.input) {
+  min-height: 2.85rem;
+  border: 1px solid var(--auth-line);
+  border-radius: 0;
+  background: var(--auth-card);
+  color: var(--auth-ink);
+  box-shadow: none;
+  outline: none;
+}
+
+.register-panel :deep(.input:focus) {
+  border-color: var(--auth-green);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--auth-green) 16%, transparent);
+  animation: auth-register-input-breathe 1.8s ease-in-out infinite;
+}
+
+.register-panel :deep(.input::placeholder) {
+  color: color-mix(in srgb, var(--auth-muted) 72%, transparent);
+}
+
+.register-panel :deep(.input-hint) {
+  color: var(--auth-muted);
+  font-size: 0.75rem;
+}
+
+.register-panel :deep(.rounded-xl),
+.register-panel :deep(.rounded-2xl),
+.register-panel :deep(.rounded-lg) {
+  border-radius: 0;
+}
+
+.auth-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+  border: 1px solid;
+  padding: 0.75rem 0.85rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.auth-alert-warn {
+  border-color: color-mix(in srgb, var(--auth-amber) 38%, var(--auth-line));
+  background: #fbf2e2;
+  color: #8b5b1a;
+}
+
+:global(html.dark .register-panel .auth-alert-warn) {
+  background: color-mix(in srgb, var(--auth-amber) 12%, var(--auth-card));
+  color: var(--auth-amber);
+}
+
+.auth-alert-error {
+  border-color: color-mix(in srgb, var(--auth-red) 35%, var(--auth-line));
+  background: #fbefec;
+  color: var(--auth-red);
+}
+
+:global(html.dark .register-panel .auth-alert-error) {
+  background: color-mix(in srgb, var(--auth-red) 12%, var(--auth-card));
+}
+
+.auth-alternatives {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.3rem;
+  border-top: 1px solid var(--auth-line);
+  padding-top: 1.2rem;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  height: 1px;
+  flex: 1;
+  background: var(--auth-line);
+  content: "";
+}
+
+.register-panel :deep(.auth-divider > div) {
+  display: none;
+}
+
+.register-panel :deep(.btn) {
+  min-height: 2.8rem;
+  border: 1px solid var(--auth-line);
+  border-radius: 0;
+  background: var(--auth-card);
+  color: var(--auth-ink);
+  box-shadow: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.register-panel :deep(.btn:active:not(:disabled)) {
+  transform: translateY(1px) scale(0.98);
+}
+
+.register-panel :deep(.btn:hover:not(:disabled)) {
+  border-color: var(--auth-green);
+  background: var(--auth-card);
+  color: var(--auth-green);
+}
+
+.register-panel :deep(.btn-primary) {
+  border-color: var(--auth-green);
+  background: var(--auth-green);
+  color: #fbfaf6;
+}
+
+.register-panel :deep(.bg-green-50) {
+  border: 1px solid color-mix(in srgb, var(--auth-green) 32%, var(--auth-line));
+  border-radius: 0;
+  background: #edf5ef;
+  color: var(--auth-green);
+}
+
+:global(html.dark .register-panel .bg-green-50) {
+  background: color-mix(in srgb, var(--auth-green) 12%, var(--auth-card));
+}
+
+.auth-link {
+  color: var(--auth-green);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--auth-green) 35%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.auth-link:hover { color: #174a35; }
+
+:global(html.dark .register-panel .auth-link) {
+  color: var(--auth-green);
+}
+
+:global(html.dark .register-panel .auth-link:hover) {
+  color: #b4dfc5;
+}
+
+.auth-footer-copy {
+  margin: 0;
+  color: var(--auth-muted);
+}
+
+.auth-submit {
+  display: inline-flex;
+  min-height: 2.85rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  border: 1px solid var(--auth-green);
+  background: var(--auth-green);
+  color: #fbfaf6;
+  padding: 0.7rem 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+}
+
+.register-panel :deep(.btn-primary:hover:not(:disabled)) {
+  transform: translateY(-2px);
+}
+
+.register-panel :deep(form > .btn-primary) {
+  border-color: var(--auth-green);
+  border-radius: 0;
+  background: var(--auth-green);
+  color: #fbfaf6;
+  box-shadow: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 480px) {
+  .auth-panel-title { font-size: 1.75rem; }
+  .register-panel :deep(.grid-cols-2) { grid-template-columns: 1fr; }
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: all 0.3s ease;

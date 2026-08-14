@@ -8,7 +8,6 @@ import GroupsView from '@/views/admin/GroupsView.vue'
 const {
   listGroups,
   duplicateGroup,
-  getLiveCapability,
   getModelsListCandidates,
   getUsageSummary,
   getCapacitySummary,
@@ -18,7 +17,6 @@ const {
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   duplicateGroup: vi.fn(),
-  getLiveCapability: vi.fn(),
   getModelsListCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
@@ -32,7 +30,6 @@ vi.mock('@/api/admin', () => ({
     groups: {
       list: listGroups,
       duplicate: duplicateGroup,
-      getLiveCapability,
       getModelsListCandidates,
       getUsageSummary,
       getCapacitySummary,
@@ -169,7 +166,6 @@ describe('GroupsView duplicate action', () => {
     for (const fn of [
       listGroups,
       duplicateGroup,
-      getLiveCapability,
       getModelsListCandidates,
       getUsageSummary,
       getCapacitySummary,
@@ -179,8 +175,6 @@ describe('GroupsView duplicate action', () => {
     ]) {
       fn.mockReset()
     }
-
-    getLiveCapability.mockResolvedValue({ supported: false })
 
     listGroups.mockResolvedValue({
       items: [sourceGroup],
