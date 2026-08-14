@@ -121,9 +121,7 @@
                 <th class="lb-col-num lb-hide-sm">{{ t('leaderboard.cacheTokensShort') }}</th>
                 <th class="lb-col-num lb-hide-sm">{{ t('leaderboard.imageOutputShort') }}</th>
                 <th class="lb-col-num">{{ t('leaderboard.requests') }}</th>
-                <th class="lb-col-num lb-hide-sm">{{ t('leaderboard.cost') }}</th>
                 <th class="lb-col-num lb-hide-sm">{{ t('leaderboard.actualCost') }}</th>
-                <th class="lb-col-num lb-hide-sm">{{ t('leaderboard.accountCost') }}</th>
                 <th class="lb-col-time lb-hide-sm">{{ t('leaderboard.lastActive') }}</th>
               </tr>
             </thead>
@@ -150,9 +148,7 @@
                 <td class="lb-col-num lb-hide-sm">{{ formatTokens(item.cache_tokens) }}</td>
                 <td class="lb-col-num lb-hide-sm">{{ formatTokens(item.image_output_tokens) }}</td>
                 <td class="lb-col-num">{{ formatNumber(item.requests) }}</td>
-                <td class="lb-col-num lb-hide-sm">{{ formatCost(item.cost) }}</td>
                 <td class="lb-col-num lb-hide-sm lb-strong">{{ formatCost(item.actual_cost) }}</td>
-                <td class="lb-col-num lb-hide-sm">{{ formatCost(item.account_cost) }}</td>
                 <td class="lb-col-time lb-hide-sm">{{ item.last_active_at || '—' }}</td>
               </tr>
             </tbody>
