@@ -1,6 +1,6 @@
 <template>
   <div class="scheme3-monitor-availability mt-3 flex items-end justify-between">
-    <div class="scheme3-monitor-availability-label text-[11px] uppercase tracking-widest text-gray-400">
+    <div class="scheme3-monitor-availability-label text-[11px] uppercase tracking-widest">
       {{ windowLabel }}
     </div>
     <div class="flex items-baseline gap-0.5">
@@ -18,7 +18,7 @@
   </div>
   <div
     v-if="samplesLabel"
-    class="scheme3-monitor-availability-extra mt-1 text-[11px] text-gray-400 text-right"
+    class="scheme3-monitor-availability-extra mt-1 text-[11px] text-right"
   >
     {{ samplesLabel }}
   </div>
@@ -44,7 +44,7 @@ const displayValue = computed(() => {
 
 const colorStyle = computed(() => {
   const colour = hslForPct(props.value)
-  return colour ? { color: colour } : { color: 'rgb(156 163 175)' }
+  return colour ? { color: colour } : { color: '#a49e90' }
 })
 </script>
 

@@ -4,7 +4,8 @@
     <div class="auth-wrap">
       <header class="auth-brand">
         <div class="auth-brand-mark">
-          <img :src="siteLogo || '/logo.svg'" alt="Logo" />
+          <img v-if="siteLogo" :src="siteLogo" alt="" />
+          <span v-else class="auth-brand-monogram" aria-hidden="true">ST</span>
         </div>
         <div class="min-w-0">
           <p class="auth-kicker">{{ t('auth.scheme3.kicker') }}</p>
@@ -200,6 +201,14 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.auth-brand-monogram {
+  color: var(--auth-green);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .75rem;
+  font-weight: 900;
+  letter-spacing: .08em;
 }
 
 .auth-kicker,

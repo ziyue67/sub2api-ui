@@ -14,7 +14,10 @@
         class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl shadow-glow transition-opacity hover:opacity-80"
         @click="handleMenuItemClick(homePath)"
       >
-        <img v-if="settingsLoaded" :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+        <template v-if="settingsLoaded">
+          <img v-if="siteLogo" :src="siteLogo" alt="" class="h-full w-full object-contain" />
+          <span v-else class="font-mono text-xs font-black tracking-wider text-primary-700 dark:text-primary-300" aria-hidden="true">ST</span>
+        </template>
       </router-link>
       <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
         <router-link

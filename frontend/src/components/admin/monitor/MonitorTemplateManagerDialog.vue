@@ -3,10 +3,11 @@
     :show="show"
     :title="t('admin.channelMonitor.template.managerTitle')"
     width="wide"
+    content-class="scheme3-monitor-dialog scheme3-monitor-template-dialog"
     @close="$emit('close')"
   >
     <!-- provider tabs -->
-    <div class="mb-4 border-b border-gray-200 dark:border-dark-700">
+    <div class="scheme3-template-tabs mb-4">
       <div role="tablist" class="flex flex-wrap gap-1">
         <button
           v-for="tab in providerTabs"
@@ -14,14 +15,14 @@
           type="button"
           role="tab"
           :aria-selected="activeProvider === tab.value"
-          class="px-4 py-2 text-sm font-medium transition-colors"
+          class="scheme3-template-tab px-4 py-2 text-sm font-medium transition-colors"
           :class="tabClass(tab.value)"
           @click="activeProvider = tab.value"
         >
           {{ tab.label }}
           <span
             v-if="countByProvider[tab.value] > 0"
-            class="ml-1.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-dark-700"
+            class="scheme3-template-count ml-1.5 px-2 py-0.5 text-xs"
           >
             {{ countByProvider[tab.value] }}
           </span>
@@ -32,19 +33,19 @@
     <!-- active provider list -->
     <div v-if="!editing" class="space-y-2">
       <div class="flex justify-end">
-        <button class="btn btn-primary btn-sm" @click="openCreateForm">
+        <button class="scheme3-monitor-button is-primary" @click="openCreateForm">
           <Icon name="plus" size="sm" class="mr-1" />
           {{ t('admin.channelMonitor.template.createButton') }}
         </button>
       </div>
 
-      <div v-if="loading" class="py-8 text-center text-sm text-gray-400">
+      <div v-if="loading" class="scheme3-template-state py-8 text-center text-sm">
         {{ t('common.loading') }}
       </div>
 
       <div
         v-else-if="templatesForActiveProvider.length === 0"
-        class="py-8 text-center text-sm text-gray-400"
+        class="scheme3-template-state py-8 text-center text-sm"
       >
         {{ t('admin.channelMonitor.template.emptyState') }}
       </div>
@@ -53,36 +54,36 @@
         v-for="tpl in templatesForActiveProvider"
         v-else
         :key="tpl.id"
-        class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800"
+        class="scheme3-template-card p-4"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
-              <span class="font-medium text-gray-900 dark:text-white">{{ tpl.name }}</span>
+              <span class="scheme3-template-name font-medium">{{ tpl.name }}</span>
               <span
-                class="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs"
+                class="scheme3-template-badge inline-flex items-center px-1.5 py-0.5 text-xs"
                 :class="modeBadgeClass(tpl.body_override_mode)"
               >
                 {{ modeLabel(tpl.body_override_mode) }}
               </span>
               <span
                 v-if="tpl.provider === PROVIDER_OPENAI"
-                class="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs"
+                class="scheme3-template-badge inline-flex items-center px-1.5 py-0.5 text-xs"
                 :class="apiModeBadgeClass(tpl.api_mode)"
               >
                 {{ apiModeLabel(tpl.api_mode) }}
               </span>
               <span
                 v-if="tpl.associated_monitors > 0"
-                class="text-xs text-gray-500 dark:text-gray-400"
+                class="scheme3-template-meta text-xs"
               >
                 {{ t('admin.channelMonitor.template.associatedCount', { n: tpl.associated_monitors }) }}
               </span>
             </div>
-            <p v-if="tpl.description" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+            <p v-if="tpl.description" class="scheme3-template-meta mt-0.5 text-xs">
               {{ tpl.description }}
             </p>
-            <p class="mt-1 text-xs text-gray-400">
+            <p class="scheme3-template-submeta mt-1 text-xs">
               {{ t('admin.channelMonitor.template.headersSummary', {
                 n: Object.keys(tpl.extra_headers || {}).length,
               }) }}
@@ -90,7 +91,7 @@
           </div>
           <div class="flex flex-shrink-0 gap-2">
             <button
-              class="btn btn-secondary btn-sm"
+              class="scheme3-monitor-button"
               :disabled="tpl.associated_monitors === 0"
               :title="t('admin.channelMonitor.template.applyTooltip')"
               @click="confirmApply(tpl)"
@@ -98,10 +99,10 @@
               <Icon name="refresh" size="sm" class="mr-1" />
               {{ t('admin.channelMonitor.template.applyButton') }}
             </button>
-            <button class="btn btn-secondary btn-sm" @click="openEditForm(tpl)">
+            <button class="scheme3-monitor-button" @click="openEditForm(tpl)">
               {{ t('common.edit') }}
             </button>
-            <button class="btn btn-secondary btn-sm text-red-600" @click="handleDelete(tpl)">
+            <button class="scheme3-monitor-button is-danger" @click="handleDelete(tpl)">
               {{ t('common.delete') }}
             </button>
           </div>
@@ -112,30 +113,30 @@
     <!-- edit / create form -->
     <div v-else class="space-y-4">
       <div>
-        <label class="input-label">
+        <label class="scheme3-monitor-label">
           {{ t('admin.channelMonitor.template.form.name') }}
-          <span class="text-red-500">*</span>
+          <span class="scheme3-template-required">*</span>
         </label>
         <input
           v-model="form.name"
           type="text"
           required
-          class="input"
+          class="scheme3-monitor-input"
           :placeholder="t('admin.channelMonitor.template.form.namePlaceholder')"
         />
       </div>
 
       <div v-if="editing === 'new'">
-        <label class="input-label">
+        <label class="scheme3-monitor-label">
           {{ t('admin.channelMonitor.form.provider') }}
-          <span class="text-red-500">*</span>
+          <span class="scheme3-template-required">*</span>
         </label>
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <button
             v-for="opt in providerTabs"
             :key="opt.value"
             type="button"
-            class="rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors"
+            class="scheme3-monitor-choice"
             :class="providerPickerClass(opt.value, form.provider === opt.value)"
             @click="form.provider = opt.value"
           >
@@ -144,31 +145,31 @@
         </div>
       </div>
 
-      <div v-if="form.provider === PROVIDER_OPENAI" class="rounded-lg border border-blue-100 bg-blue-50/50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
-        <label class="input-label">{{ t('admin.channelMonitor.form.apiMode') }}</label>
+      <div v-if="form.provider === PROVIDER_OPENAI" class="scheme3-monitor-panel p-3">
+        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.apiMode') }}</label>
         <div class="grid gap-3 sm:grid-cols-2">
           <button
             v-for="opt in apiModeOptions"
             :key="opt.value"
             type="button"
-            class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
+            class="scheme3-monitor-choice text-left"
             :class="apiModeButtonClass(opt.value)"
             @click="form.api_mode = opt.value"
           >
             <span class="block text-sm font-semibold">{{ opt.label }}</span>
-            <span class="mt-0.5 block text-xs opacity-80">{{ opt.hint }}</span>
+            <span class="scheme3-template-choice-hint mt-0.5 block text-xs">{{ opt.hint }}</span>
           </button>
         </div>
       </div>
 
       <div>
-        <label class="input-label">
+        <label class="scheme3-monitor-label">
           {{ t('admin.channelMonitor.template.form.description') }}
         </label>
         <input
           v-model="form.description"
           type="text"
-          class="input"
+          class="scheme3-monitor-input"
           :placeholder="t('admin.channelMonitor.template.form.descriptionPlaceholder')"
         />
       </div>
@@ -189,16 +190,16 @@
       <div class="flex w-full items-center justify-between">
         <!-- Left: back to list / nothing -->
         <div>
-          <button v-if="editing" class="btn btn-secondary" @click="backToList">
+          <button v-if="editing" class="scheme3-monitor-button" @click="backToList">
             {{ t('common.back') }}
           </button>
         </div>
         <!-- Right: save or close -->
         <div class="flex gap-2">
-          <button class="btn btn-secondary" @click="$emit('close')">
+          <button class="scheme3-monitor-button" @click="$emit('close')">
             {{ t('common.close') }}
           </button>
-          <button v-if="editing" class="btn btn-primary" :disabled="submitting" @click="handleSubmit">
+          <button v-if="editing" class="scheme3-monitor-button is-primary" :disabled="submitting" @click="handleSubmit">
             {{ submitting ? t('common.submitting') : editing === 'new' ? t('common.create') : t('common.update') }}
           </button>
         </div>
@@ -221,6 +222,7 @@
     :confirm-text="t('common.delete')"
     :cancel-text="t('common.cancel')"
     :danger="true"
+    content-class="scheme3-monitor-dialog"
     @confirm="doDelete"
     @cancel="confirmDelete.show = false"
   />
@@ -243,7 +245,6 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import MonitorAdvancedRequestConfig from '@/components/admin/monitor/MonitorAdvancedRequestConfig.vue'
 import MonitorTemplateApplyPickerDialog from '@/components/admin/monitor/MonitorTemplateApplyPickerDialog.vue'
-import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import {
   PROVIDER_ANTHROPIC,
   PROVIDER_OPENAI,
@@ -262,7 +263,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const { providerPickerClass } = useChannelMonitorFormat()
 
 const providerTabs = computed<{ value: Provider; label: string }[]>(() => [
   { value: PROVIDER_ANTHROPIC, label: t('monitorCommon.providers.anthropic') },
@@ -461,20 +461,24 @@ async function doDelete() {
 }
 
 // --- misc ---
+function providerPickerClass(_provider: Provider, active: boolean): string {
+  return active ? 'is-active' : ''
+}
+
 function tabClass(value: Provider): string {
   return activeProvider.value === value
-    ? 'border-b-2 border-primary-500 text-primary-600 dark:text-primary-400'
-    : 'border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+    ? 'scheme3-template-tab-active'
+    : 'scheme3-template-tab-idle'
 }
 
 function modeBadgeClass(mode: BodyOverrideMode): string {
   switch (mode) {
     case 'merge':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+      return 'scheme3-template-badge-amber'
     case 'replace':
-      return 'bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300'
+      return 'scheme3-template-badge-purple'
     default:
-      return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
+      return 'scheme3-template-badge-muted'
   }
 }
 
@@ -508,9 +512,9 @@ function normalizeAPIMode(mode: APIMode | undefined | null): APIMode {
 function apiModeButtonClass(mode: APIMode): string {
   const active = form.api_mode === mode
   if (active) {
-    return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
+    return 'is-active'
   }
-  return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
+  return ''
 }
 
 function apiModeLabel(mode: APIMode): string {
@@ -521,8 +525,48 @@ function apiModeLabel(mode: APIMode): string {
 
 function apiModeBadgeClass(mode: APIMode): string {
   if (normalizeAPIMode(mode) === API_MODE_RESPONSES) {
-    return 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
+    return 'scheme3-template-badge-blue'
   }
-  return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+  return 'scheme3-template-badge-green'
 }
 </script>
+
+<style scoped>
+.scheme3-monitor-template-dialog :deep(.modal-body) { color: #27251f; }
+.scheme3-template-tabs { border-bottom: 1px solid #dad5c8; }
+.scheme3-template-tab { border-bottom: 2px solid transparent; color: #777266; }
+.scheme3-template-tab:hover { color: #1e5c42; }
+.scheme3-template-tab-active { border-color: #1e5c42; color: #1e5c42; }
+.scheme3-template-count { border: 1px solid #dad5c8; border-radius: 999px; background: #f1eee6; color: #777266; }
+.scheme3-template-state { color: #777266; }
+.scheme3-template-card { border: 1px solid #dad5c8; border-radius: 7px; background: #fbfaf6; }
+.scheme3-template-name { color: #27251f; }
+.scheme3-template-meta { color: #6b695f; }
+.scheme3-template-submeta { color: #9a9588; }
+.scheme3-template-badge { border: 1px solid currentColor; border-radius: 5px; font-weight: 700; }
+.scheme3-template-badge-amber { border-color: rgba(183,121,31,.35); background: rgba(183,121,31,.1); color: #8b5d14; }
+.scheme3-template-badge-purple { border-color: rgba(30,92,66,.3); background: rgba(30,92,66,.08); color: #1e5c42; }
+.scheme3-template-badge-muted { border-color: #dad5c8; background: #f1eee6; color: #777266; }
+.scheme3-template-badge-blue { border-color: rgba(30,92,66,.3); background: rgba(30,92,66,.08); color: #1e5c42; }
+.scheme3-template-badge-green { border-color: rgba(30,92,66,.3); background: rgba(30,92,66,.08); color: #1e5c42; }
+.scheme3-template-required { color: #9e4d3d; }
+.scheme3-template-choice-hint { color: #777266; }
+.scheme3-monitor-choice.is-active { border-color: #1e5c42; background: rgba(30,92,66,.1); color: #1e5c42; }
+
+:global(html.dark .scheme3-monitor-template-dialog .modal-body) { color: #f4f2ec; }
+:global(html.dark .scheme3-template-tabs) { border-color: #47443a; }
+:global(html.dark .scheme3-template-tab) { color: #aaa69a; }
+:global(html.dark .scheme3-template-tab:hover),:global(html.dark .scheme3-template-tab-active) { color: #8fc2a5; }
+:global(html.dark .scheme3-template-tab-active) { border-color: #8fc2a5; }
+:global(html.dark .scheme3-template-count) { border-color: #47443a; background: #2b2924; color: #aaa69a; }
+:global(html.dark .scheme3-template-state) { color: #aaa69a; }
+:global(html.dark .scheme3-template-card) { border-color: #47443a; background: #24231f; }
+:global(html.dark .scheme3-template-name) { color: #f4f2ec; }
+:global(html.dark .scheme3-template-meta) { color: #aaa69a; }
+:global(html.dark .scheme3-template-submeta) { color: #827e72; }
+:global(html.dark .scheme3-template-badge-muted) { border-color: #47443a; background: #2b2924; color: #aaa69a; }
+:global(html.dark .scheme3-template-badge-amber) { border-color: rgba(211,164,92,.35); background: rgba(211,164,92,.1); color: #d3a45c; }
+:global(html.dark .scheme3-template-badge-purple),:global(html.dark .scheme3-template-badge-blue),:global(html.dark .scheme3-template-badge-green) { border-color: rgba(143,194,165,.3); background: rgba(143,194,165,.1); color: #8fc2a5; }
+:global(html.dark .scheme3-template-choice-hint) { color: #aaa69a; }
+:global(html.dark .scheme3-monitor-choice.is-active) { border-color: #8fc2a5; background: rgba(143,194,165,.12); color: #8fc2a5; }
+</style>

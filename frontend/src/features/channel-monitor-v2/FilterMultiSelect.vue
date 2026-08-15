@@ -1,16 +1,16 @@
 <template>
   <div
     ref="containerRef"
-    class="filter-menu relative"
+    class="scheme3-v2-filter-menu relative"
     :class="compact ? 'min-w-[6.5rem] sm:min-w-[7.25rem]' : 'min-w-[150px] sm:min-w-[160px]'"
   >
     <button
       ref="triggerRef"
       type="button"
-      class="select-trigger flex cursor-pointer list-none items-center justify-between gap-1.5 text-left"
+      class="scheme3-v2-select-trigger flex cursor-pointer list-none items-center justify-between gap-1.5 text-left"
       :class="[
-        isOpen ? 'select-trigger-open' : '',
-        compact ? 'h-8 rounded-lg !px-2 !py-1 text-xs' : 'h-[42px]',
+        isOpen ? 'is-open' : '',
+        compact ? 'h-8 !px-2 !py-1 text-xs' : 'h-[42px]',
       ]"
       :aria-expanded="isOpen"
       aria-haspopup="listbox"
@@ -18,22 +18,22 @@
       @click="toggleOpen"
     >
       <span
-        class="select-value min-w-0 truncate"
+        class="scheme3-v2-select-value min-w-0 truncate"
         :class="compact ? 'max-w-[5.5rem] sm:max-w-[6.5rem]' : 'max-w-[11rem]'"
       >
         {{ t('channelMonitorV2.filters.labelValue', { label, value: selectionLabel }) }}
       </span>
-      <span class="select-icon shrink-0 text-gray-400 transition-transform" :class="isOpen ? 'rotate-180' : ''">
+      <span class="scheme3-v2-select-icon shrink-0 transition-transform" :class="isOpen ? 'rotate-180' : ''">
         <Icon name="chevronDown" size="sm" />
       </span>
     </button>
 
     <Teleport to="body">
-      <Transition name="select-dropdown">
+      <Transition name="scheme3-v2-dropdown">
         <div
           v-if="isOpen"
           ref="dropdownRef"
-          class="select-dropdown-portal dropdown filter-dropdown"
+          class="scheme3-v2-filter-dropdown"
           :class="[instanceId]"
           :style="dropdownStyle"
           role="listbox"
@@ -43,11 +43,11 @@
         >
           <button
             type="button"
-            class="dropdown-item select-option select-option-group flex w-full items-center justify-between border-b border-gray-100 px-4 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-100 dark:border-dark-700 dark:text-gray-300 dark:hover:bg-dark-700"
+            class="scheme3-v2-filter-option scheme3-v2-filter-option-group flex w-full items-center justify-between px-4 py-2 text-left text-sm font-semibold"
             @click="clear"
           >
             <span>{{ allLabel }}</span>
-            <Icon v-if="modelValue.length === 0" name="check" size="sm" class="text-primary-500" />
+            <Icon v-if="modelValue.length === 0" name="check" size="sm" class="scheme3-v2-filter-check" />
           </button>
 
           <button
@@ -55,23 +55,23 @@
             :key="option.value"
             type="button"
             role="option"
-            class="dropdown-item select-option flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-            :class="modelValue.includes(option.value) ? 'select-option-selected' : ''"
+            class="scheme3-v2-filter-option flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm"
+            :class="modelValue.includes(option.value) ? 'is-selected' : ''"
             :aria-selected="modelValue.includes(option.value)"
             @click="toggle(option.value)"
           >
             <span class="flex min-w-0 flex-1 items-center gap-2">
               <span
-                class="checkbox flex h-4 w-4 items-center justify-center rounded border border-gray-300 bg-white text-primary-500 dark:border-dark-600 dark:bg-dark-900"
-                :class="modelValue.includes(option.value) ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30' : ''"
+                class="scheme3-v2-checkbox flex h-4 w-4 items-center justify-center"
+                :class="modelValue.includes(option.value) ? 'is-checked' : ''"
               >
-                <Icon v-if="modelValue.includes(option.value)" name="check" size="sm" class="text-primary-500" />
+                <Icon v-if="modelValue.includes(option.value)" name="check" size="sm" class="scheme3-v2-filter-check" />
               </span>
               <span class="min-w-0 flex-1 truncate">{{ option.label }}</span>
             </span>
-            <small v-if="option.count != null" class="text-xs text-gray-400">{{ formatCount(option.count) }}</small>
+            <small v-if="option.count != null" class="scheme3-v2-filter-count text-xs">{{ formatCount(option.count) }}</small>
           </button>
-          <p v-if="options.length === 0" class="px-4 py-3 text-center text-xs text-gray-400">{{ t('channelMonitorV2.filters.empty') }}</p>
+          <p v-if="options.length === 0" class="scheme3-v2-filter-empty px-4 py-3 text-center text-xs">{{ t('channelMonitorV2.filters.empty') }}</p>
         </div>
       </Transition>
     </Teleport>
@@ -231,40 +231,119 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.select-trigger {
-  @apply flex w-full items-center justify-between gap-2;
-  @apply rounded-xl px-4 py-2.5 text-sm;
-  @apply bg-white dark:bg-dark-800;
-  @apply border border-gray-200 dark:border-dark-600;
-  @apply text-gray-900 dark:text-gray-100;
-  @apply transition-all duration-200;
-  @apply focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30;
-  @apply hover:border-gray-300 dark:hover:border-dark-500;
-  @apply cursor-pointer;
+.scheme3-v2-select-trigger {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d8d2c3;
+  border-radius: 7px;
+  background: #fffefa;
+  color: #27251f;
+  padding: .55rem .68rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .62rem;
+  font-weight: 700;
+  line-height: 1.2;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
 }
-
-.select-trigger-open {
-  @apply border-primary-500 ring-2 ring-primary-500/30;
+.scheme3-v2-select-trigger:hover,
+.scheme3-v2-select-trigger.is-open {
+  border-color: #1e5c42;
+  background: #f1eee6;
+  color: #1e5c42;
 }
-
-.filter-menu summary::-webkit-details-marker {
-  display: none;
+.scheme3-v2-select-trigger:focus-visible {
+  outline: 2px solid rgba(30, 92, 66, .3);
+  outline-offset: 2px;
 }
+.scheme3-v2-select-icon { color: #777266; }
+.scheme3-v2-select-trigger:hover .scheme3-v2-select-icon,
+.scheme3-v2-select-trigger.is-open .scheme3-v2-select-icon { color: #1e5c42; }
 
-.filter-dropdown {
-  @apply w-max min-w-[200px] max-h-[min(50vh,360px)] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg dark:border-dark-600 dark:bg-dark-800;
+:global(.scheme3-v2-filter-dropdown) {
+  width: max-content;
+  min-width: 200px;
+  max-width: calc(100vw - 1rem);
+  max-height: min(50vh, 360px);
+  overflow-y: auto;
+  border: 1px solid #d8d2c3;
+  border-radius: 7px;
+  background: #fffefa;
+  color: #27251f;
+  box-shadow: 0 18px 38px rgba(54, 48, 34, .18);
+  padding: .25rem;
 }
-
-.dropdown-item {
-  @apply cursor-pointer;
+:global(.scheme3-v2-filter-option) {
+  min-height: 2.1rem;
+  cursor: pointer;
+  border-radius: 5px;
+  color: #27251f;
+  transition: background-color 120ms ease, color 120ms ease;
 }
-
-.checkbox {
+:global(.scheme3-v2-filter-option:hover),
+:global(.scheme3-v2-filter-option:focus-visible),
+:global(.scheme3-v2-filter-option.is-selected) {
+  background: #f1eee6;
+  color: #1e5c42;
+  outline: none;
+}
+:global(.scheme3-v2-filter-option-group) {
+  border-bottom: 1px solid #d8d2c3;
+  margin-bottom: .2rem;
+}
+:global(.scheme3-v2-checkbox) {
+  width: 1rem;
+  height: 1rem;
   flex: none;
+  border: 1px solid #a49e90;
+  border-radius: 4px;
+  background: #fffefa;
 }
+:global(.scheme3-v2-checkbox.is-checked) {
+  border-color: #1e5c42;
+  background: rgba(30, 92, 66, .1);
+}
+:global(.scheme3-v2-filter-check) { color: #1e5c42; }
+:global(.scheme3-v2-filter-count) { color: #a49e90 !important; }
+:global(.scheme3-v2-filter-empty) { color: #777266; }
+
+:global(.dark .scheme3-v2-select-trigger) {
+  border-color: #47443a;
+  background: #24231f;
+  color: #f4f2ec;
+}
+:global(.dark .scheme3-v2-select-trigger:hover),
+:global(.dark .scheme3-v2-select-trigger.is-open) {
+  border-color: #8fc2a5;
+  background: #2b2924;
+  color: #8fc2a5;
+}
+:global(.dark .scheme3-v2-select-icon) { color: #aaa69a; }
+:global(.dark .scheme3-v2-select-trigger:hover .scheme3-v2-select-icon),
+:global(.dark .scheme3-v2-select-trigger.is-open .scheme3-v2-select-icon) { color: #8fc2a5; }
+:global(.dark .scheme3-v2-filter-dropdown) {
+  border-color: #47443a;
+  background: #24231f;
+  color: #f4f2ec;
+  box-shadow: 0 18px 38px rgba(0, 0, 0, .34);
+}
+:global(.dark .scheme3-v2-filter-option) { color: #f4f2ec; }
+:global(.dark .scheme3-v2-filter-option:hover),
+:global(.dark .scheme3-v2-filter-option:focus-visible),
+:global(.dark .scheme3-v2-filter-option.is-selected) { background: #2b2924; color: #8fc2a5; }
+:global(.dark .scheme3-v2-filter-option-group) { border-color: #47443a; }
+:global(.dark .scheme3-v2-checkbox) { border-color: #827e72; background: #2b2924; }
+:global(.dark .scheme3-v2-checkbox.is-checked) { border-color: #8fc2a5; background: rgba(143, 194, 165, .12); }
+:global(.dark .scheme3-v2-filter-check) { color: #8fc2a5; }
+:global(.dark .scheme3-v2-filter-count) { color: #827e72 !important; }
+:global(.dark .scheme3-v2-filter-empty) { color: #aaa69a; }
+
+:global(.scheme3-v2-dropdown-enter-active),
+:global(.scheme3-v2-dropdown-leave-active) { transition: opacity 140ms ease, transform 140ms ease; }
+:global(.scheme3-v2-dropdown-enter-from),
+:global(.scheme3-v2-dropdown-leave-to) { opacity: 0; transform: translateY(-4px); }
 
 @media (max-width: 640px) {
-  .filter-menu {
+  .scheme3-v2-filter-menu {
     min-width: 100%;
   }
 }

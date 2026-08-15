@@ -1,5 +1,5 @@
 <template>
-  <div class="relative" ref="containerRef">
+  <div class="relative" :class="scheme3 && 'scheme3-select'" ref="containerRef">
     <button
       ref="triggerRef"
       type="button"
@@ -11,23 +11,23 @@
       :aria-label="ariaLabel ?? 'Select option'"
       :aria-describedby="ariaDescribedby"
       :class="[
-        'select-trigger',
-        isOpen && 'select-trigger-open',
-        error && 'select-trigger-error',
-        disabled && 'select-trigger-disabled',
-        theme === 'dark' && 'select-theme-dark'
+        scheme3 ? 'scheme3-select-trigger' : 'select-trigger',
+        isOpen && (scheme3 ? 'scheme3-select-trigger-open' : 'select-trigger-open'),
+        error && (scheme3 ? 'scheme3-select-trigger-error' : 'select-trigger-error'),
+        disabled && (scheme3 ? 'scheme3-select-trigger-disabled' : 'select-trigger-disabled'),
+        theme === 'dark' && (scheme3 ? 'scheme3-select-theme-dark' : 'select-theme-dark')
       ]"
       @keydown.down.prevent="onTriggerKeyDown"
       @keydown.up.prevent="onTriggerKeyDown"
     >
-      <span class="select-value">
+      <span :class="scheme3 ? 'scheme3-select-value' : 'select-value'">
         <slot name="selected" :option="selectedOption">
           {{ selectedLabel }}
         </slot>
       </span>
       <span
         v-if="clearable && hasValue && !disabled"
-        class="select-clear"
+        :class="scheme3 ? 'scheme3-select-clear' : 'select-clear'"
         role="button"
         tabindex="-1"
         aria-label="Clear selection"
@@ -37,7 +37,7 @@
       >
         <Icon name="x" size="sm" />
       </span>
-      <span class="select-icon">
+      <span :class="scheme3 ? 'scheme3-select-icon' : 'select-icon'">
         <Icon
           name="chevronDown"
           size="md"
@@ -48,12 +48,15 @@
 
     <!-- Teleport dropdown to body to escape stacking context -->
     <Teleport to="body">
-      <Transition name="select-dropdown">
+      <Transition :name="scheme3 ? 'scheme3-select-dropdown' : 'select-dropdown'">
         <div
           v-if="isOpen"
           ref="dropdownRef"
-          class="select-dropdown-portal"
-          :class="[instanceId, theme === 'dark' && 'select-theme-dark']"
+          :class="[
+            scheme3 ? 'scheme3-select-dropdown-portal' : 'select-dropdown-portal',
+            instanceId,
+            theme === 'dark' && (scheme3 ? 'scheme3-select-theme-dark' : 'select-theme-dark')
+          ]"
           :style="dropdownStyle"
           role="listbox"
           @click.stop
@@ -61,21 +64,21 @@
           @keydown="onDropdownKeyDown"
         >
           <!-- Search input -->
-          <div v-if="isSearchable" class="select-search">
-            <Icon name="search" size="sm" class="text-gray-400" />
+          <div v-if="isSearchable" :class="scheme3 ? 'scheme3-select-search' : 'select-search'">
+            <Icon name="search" size="sm" :class="scheme3 ? 'scheme3-select-search-icon' : 'text-gray-400'" />
             <input
               ref="searchInputRef"
               v-model="searchQuery"
               type="text"
               :placeholder="searchPlaceholderText"
               :aria-label="searchPlaceholderText"
-              class="select-search-input"
+              :class="scheme3 ? 'scheme3-select-search-input' : 'select-search-input'"
               @click.stop
             />
           </div>
 
           <!-- Options list -->
-          <div class="select-options" ref="optionsListRef">
+          <div :class="scheme3 ? 'scheme3-select-options' : 'select-options'" ref="optionsListRef">
             <div
               v-for="(option, index) in filteredOptions"
               :key="`${typeof getOptionValue(option)}:${String(getOptionValue(option) ?? '')}`"
@@ -85,11 +88,11 @@
               @click.stop="!isOptionDisabled(option) && selectOption(option)"
               @mouseenter="handleOptionMouseEnter(option, index)"
               :class="[
-                'select-option',
-                isGroupHeaderOption(option) && 'select-option-group',
-                isSelected(option) && 'select-option-selected',
-                isOptionDisabled(option) && !isGroupHeaderOption(option) && 'select-option-disabled',
-                focusedIndex === index && !isGroupHeaderOption(option) && 'select-option-focused'
+                scheme3 ? 'scheme3-select-option' : 'select-option',
+                isGroupHeaderOption(option) && (scheme3 ? 'scheme3-select-option-group' : 'select-option-group'),
+                isSelected(option) && (scheme3 ? 'scheme3-select-option-selected' : 'select-option-selected'),
+                isOptionDisabled(option) && !isGroupHeaderOption(option) && (scheme3 ? 'scheme3-select-option-disabled' : 'select-option-disabled'),
+                focusedIndex === index && !isGroupHeaderOption(option) && (scheme3 ? 'scheme3-select-option-focused' : 'select-option-focused')
               ]"
             >
               <slot name="option" :option="option" :selected="isSelected(option)">
@@ -97,21 +100,23 @@
                   v-if="option._creatable"
                   name="search"
                   size="sm"
-                  class="flex-shrink-0 text-gray-400"
+                  :class="scheme3 ? 'scheme3-select-option-creatable-icon' : 'flex-shrink-0 text-gray-400'"
                 />
-                <span class="select-option-label" :class="option._creatable && 'italic text-gray-500 dark:text-dark-300'">{{ getOptionLabel(option) }}</span>
+                <span :class="scheme3 ? 'scheme3-select-option-label' : 'select-option-label'">
+                  <span :class="option._creatable && (scheme3 ? 'scheme3-select-option-creatable' : 'italic text-gray-500 dark:text-dark-300')">{{ getOptionLabel(option) }}</span>
+                </span>
                 <Icon
                   v-if="isSelected(option)"
                   name="check"
                   size="sm"
-                  class="text-primary-500"
+                  :class="scheme3 ? 'scheme3-select-option-check' : 'select-option-check'"
                   :stroke-width="2"
                 />
               </slot>
             </div>
 
             <!-- Empty state -->
-            <div v-if="filteredOptions.length === 0" class="select-empty">
+            <div v-if="filteredOptions.length === 0" :class="scheme3 ? 'scheme3-select-empty' : 'select-empty'">
               {{ emptyTextDisplay }}
             </div>
           </div>
@@ -157,6 +162,8 @@ interface Props {
   ariaDescribedby?: string
   /** Visual theme for an individual Select instance; defaults to the app theme. */
   theme?: 'light' | 'dark'
+  /** Third-version visual surface used by monitor routes without legacy utility classes. */
+  scheme3?: boolean
 }
 
 interface Emits {
@@ -173,7 +180,8 @@ const props = withDefaults(defineProps<Props>(), {
   clearable: false,
   valueKey: 'value',
   labelKey: 'label',
-  theme: 'light'
+  theme: 'light',
+  scheme3: false
 })
 
 const emit = defineEmits<Emits>()
@@ -517,7 +525,7 @@ onUnmounted(() => {
 }
 
 .select-value {
-  @apply flex-1 truncate text-left;
+  @apply min-w-0 flex-1 truncate text-left;
 }
 
 .select-icon {
@@ -629,6 +637,10 @@ onUnmounted(() => {
   @apply flex-1 min-w-0 truncate text-left;
 }
 
+.select-dropdown-portal .select-option-check {
+  color: #14b8a6;
+}
+
 .select-dropdown-portal .select-empty {
   @apply px-4 py-8 text-center text-sm;
   @apply text-gray-500 dark:text-dark-400;
@@ -644,4 +656,121 @@ onUnmounted(() => {
   opacity: 0;
   transform: translateY(-8px);
 }
+
+.scheme3-select-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 2.25rem;
+  cursor: pointer;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  border: 1px solid #dad5c8;
+  border-radius: 7px;
+  padding: .52rem .72rem;
+  background: #fbfaf6;
+  color: #27251f;
+  font-size: .72rem;
+  line-height: 1.25;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.scheme3-select-trigger:hover,
+.scheme3-select-trigger-open {
+  border-color: #1e5c42;
+  background: #fffefa;
+  box-shadow: 0 0 0 2px rgba(30, 92, 66, .1);
+}
+
+.scheme3-select-trigger:focus-visible {
+  outline: 2px solid rgba(30, 92, 66, .28);
+  outline-offset: 2px;
+}
+
+.scheme3-select-trigger-error { border-color: #9e4d3d; }
+.scheme3-select-trigger-disabled { cursor: not-allowed; background: #f1eee6; opacity: .58; }
+.scheme3-select-value { min-width: 0; flex: 1 1 auto; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-select-icon { display: inline-flex; flex: 0 0 auto; color: #777266; }
+.scheme3-select-clear { display: inline-flex; flex: 0 0 auto; cursor: pointer; align-items: center; justify-content: center; border-radius: 4px; color: #777266; transition: color 120ms ease, background-color 120ms ease; }
+.scheme3-select-clear:hover { background: #f1eee6; color: #27251f; }
+
+.scheme3-select-dropdown-portal {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 200px;
+  overflow: hidden;
+  border: 1px solid #dad5c8;
+  border-radius: 7px;
+  background: #fbfaf6;
+  color: #27251f;
+  box-shadow: 0 16px 34px rgba(54, 48, 34, .16);
+  pointer-events: auto !important;
+}
+
+.scheme3-select-search { display: flex; align-items: center; gap: .5rem; border-bottom: 1px solid #dad5c8; padding: .55rem .7rem; }
+.scheme3-select-search-icon { flex: 0 0 auto; color: #777266; }
+.scheme3-select-search-input { min-width: 0; flex: 1 1 auto; border: 0; background: transparent; color: #27251f; font-size: .72rem; outline: none; }
+.scheme3-select-search-input::placeholder { color: #a49e90; }
+.scheme3-select-options { max-height: 20rem; overflow-y: auto; padding: .3rem; outline: none; }
+.scheme3-select-option { display: flex; min-height: 2.2rem; cursor: pointer; align-items: center; justify-content: space-between; gap: .55rem; border: 1px solid transparent; border-radius: 5px; padding: .48rem .65rem; color: #655f53; font-size: .72rem; transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease; pointer-events: auto !important; }
+.scheme3-select-option:hover,
+.scheme3-select-option-focused { border-color: rgba(30, 92, 66, .14); background: #f1eee6; color: #27251f; }
+.scheme3-select-option-selected { border-color: rgba(30, 92, 66, .2); background: rgba(30, 92, 66, .09); color: #1e5c42; font-weight: 700; }
+.scheme3-select-option-disabled { cursor: not-allowed; opacity: .42; }
+.scheme3-select-option-group,
+.scheme3-select-option-group:hover { cursor: default; border-color: transparent; background: #f1eee6; color: #777266; font-size: .58rem; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }
+.scheme3-select-option-label { min-width: 0; flex: 1 1 auto; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-select-option-creatable { color: #777266; font-style: italic; }
+.scheme3-select-option-creatable-icon { flex: 0 0 auto; color: #777266; }
+.scheme3-select-option-check { flex: 0 0 auto; color: #1e5c42; }
+.scheme3-select-empty { padding: 1.4rem .8rem; color: #777266; font-size: .7rem; text-align: center; }
+
+.scheme3-select-dropdown-enter-active,
+.scheme3-select-dropdown-leave-active { transition: opacity 150ms ease, transform 150ms ease; }
+.scheme3-select-dropdown-enter-from,
+.scheme3-select-dropdown-leave-to { opacity: 0; transform: translateY(-5px); }
+
+html.dark .scheme3-select-trigger,
+.scheme3-select-trigger.scheme3-select-theme-dark { border-color: #47443a; background: #24231f; color: #f4f2ec; }
+html.dark .scheme3-select-trigger:hover,
+html.dark .scheme3-select-trigger-open,
+.scheme3-select-trigger.scheme3-select-theme-dark:hover,
+.scheme3-select-trigger-open.scheme3-select-theme-dark { border-color: #8fc2a5; background: #2b2924; box-shadow: 0 0 0 2px rgba(143, 194, 165, .12); }
+html.dark .scheme3-select-trigger:focus-visible,
+.scheme3-select-trigger.scheme3-select-theme-dark:focus-visible { outline-color: rgba(143, 194, 165, .38); }
+html.dark .scheme3-select-trigger-disabled,
+.scheme3-select-trigger-disabled.scheme3-select-theme-dark { background: #1b1b18; }
+html.dark .scheme3-select-icon,
+.scheme3-select-trigger.scheme3-select-theme-dark .scheme3-select-icon { color: #aaa69a; }
+html.dark .scheme3-select-clear,
+.scheme3-select-trigger.scheme3-select-theme-dark .scheme3-select-clear { color: #aaa69a; }
+html.dark .scheme3-select-clear:hover,
+.scheme3-select-trigger.scheme3-select-theme-dark .scheme3-select-clear:hover { background: #2b2924; color: #f4f2ec; }
+
+html.dark .scheme3-select-dropdown-portal,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark { border-color: #47443a; background: #24231f; color: #f4f2ec; box-shadow: 0 18px 38px rgba(0, 0, 0, .28); }
+html.dark .scheme3-select-search,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-search { border-bottom-color: #47443a; }
+html.dark .scheme3-select-search-icon,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-search-icon { color: #aaa69a; }
+html.dark .scheme3-select-search-input,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-search-input { color: #f4f2ec; }
+html.dark .scheme3-select-search-input::placeholder,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-search-input::placeholder { color: #827e72; }
+html.dark .scheme3-select-option,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-option { color: #aaa69a; }
+html.dark .scheme3-select-option:hover,
+html.dark .scheme3-select-option-focused,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-option:hover,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-option-focused { border-color: rgba(143, 194, 165, .16); background: #2b2924; color: #f4f2ec; }
+html.dark .scheme3-select-option-selected,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-option-selected { border-color: rgba(143, 194, 165, .22); background: rgba(143, 194, 165, .1); color: #8fc2a5; }
+html.dark .scheme3-select-option-group,
+html.dark .scheme3-select-option-group:hover,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-option-group,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-option-group:hover { background: #2b2924; color: #aaa69a; }
+html.dark .scheme3-select-option-check,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-option-check { color: #8fc2a5; }
+html.dark .scheme3-select-empty,
+.scheme3-select-dropdown-portal.scheme3-select-theme-dark .scheme3-select-empty { color: #aaa69a; }
 </style>

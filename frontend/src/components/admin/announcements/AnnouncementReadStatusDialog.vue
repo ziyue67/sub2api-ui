@@ -25,6 +25,7 @@
         :columns="columns"
         :data="items"
         :loading="loading"
+        scheme3
         :server-side-sort="true"
         default-sort-key="email"
         default-sort-order="asc"

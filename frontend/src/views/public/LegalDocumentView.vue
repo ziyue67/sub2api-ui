@@ -5,7 +5,8 @@
         <RouterLink to="/home" class="scheme3-legal-brand">
           <template v-if="settings">
             <span class="scheme3-legal-logo">
-              <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+              <img v-if="siteLogo" :src="siteLogo" alt="" class="h-full w-full object-contain" />
+              <span v-else aria-hidden="true">ST</span>
             </span>
             <span class="scheme3-legal-brand-copy">
               <small>规则文档 / 服务说明</small>
@@ -235,6 +236,14 @@ onMounted(async () => {
   border-radius: 7px;
   background: var(--legal-sheet);
   box-shadow: 0 6px 16px rgba(54, 48, 34, .08);
+}
+
+.scheme3-legal-logo > span {
+  color: var(--legal-green);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .64rem;
+  font-weight: 900;
+  letter-spacing: .08em;
 }
 
 .scheme3-legal-brand-copy {

@@ -3378,6 +3378,7 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 .canvas-stage {
+  border-color: var(--canvas-line);
   background-color: var(--canvas-stage);
   background-image:
     linear-gradient(rgba(216, 210, 195, 0.72) 1px, transparent 1px),
@@ -3602,6 +3603,7 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 .dark .canvas-stage {
+  border-color: var(--canvas-line);
   background-color: var(--canvas-stage);
   background-image:
     linear-gradient(rgba(71, 68, 58, 0.72) 1px, transparent 1px),

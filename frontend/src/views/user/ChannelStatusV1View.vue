@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
   --monitor-danger: #d38b79;
 }
 
-:global(.dark .scheme3-channel-status :deep(.scheme3-monitor-empty)) {
+:global(html.dark .scheme3-channel-status .scheme3-monitor-empty) {
   background: rgba(36, 35, 31, 0.72);
 }
 

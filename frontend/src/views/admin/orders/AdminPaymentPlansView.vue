@@ -10,7 +10,7 @@
       </div>
 
       <!-- Plans Table -->
-      <DataTable :columns="planColumns" :data="plans" :loading="plansLoading">
+      <DataTable :columns="planColumns" :data="plans" :loading="plansLoading" scheme3>
         <template #cell-name="{ value, row }">
           <span class="text-sm font-medium" :class="getPlanNameClass(row.group_id)">{{ value }}</span>
         </template>
@@ -21,6 +21,7 @@
           </span>
           <GroupBadge
             v-else-if="getGroup(value)"
+            scheme3
             :name="getGroup(value)!.name"
             :platform="getGroup(value)!.platform"
             :rate-multiplier="getGroup(value)!.rate_multiplier"

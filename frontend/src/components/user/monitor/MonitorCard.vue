@@ -1,48 +1,46 @@
 <template>
   <button
     type="button"
-    class="scheme3-monitor-card group text-left p-5 rounded-2xl min-h-[280px] w-full bg-white/70 backdrop-blur-xl border border-gray-200/80 shadow-card dark:bg-dark-800/60 dark:border-dark-700/70 hover:-translate-y-1 hover:shadow-card-hover dark:hover:border-primary-500/30 hover:border-gray-300 transition-all duration-300 ease-out flex flex-col"
+    class="scheme3-monitor-card"
     @click="emit('click')"
   >
-    <!-- Header: icon + name/model + status chip -->
-    <div class="scheme3-monitor-card-header flex items-start gap-3">
+    <div class="scheme3-monitor-card-header">
       <span
-        class="scheme3-monitor-provider-tile w-9 h-9 rounded-xl ring-1 ring-black/5 dark:ring-white/10 grid place-items-center flex-shrink-0"
-        :class="[providerGradient(item.provider), providerTintClass]"
+        class="scheme3-monitor-provider-tile"
+        :class="providerToneClass"
       >
         <ProviderIcon :provider="item.provider" :size="20" />
       </span>
-      <div class="flex-1 min-w-0">
-        <div class="scheme3-monitor-card-name text-base font-semibold truncate text-gray-900 dark:text-gray-100">
+      <div class="scheme3-monitor-card-copy">
+        <div class="scheme3-monitor-card-name">
           {{ item.name }}
         </div>
-        <div class="mt-0.5 flex items-center gap-1.5 min-w-0">
+        <div class="scheme3-monitor-card-meta">
           <span
-            class="scheme3-monitor-provider-badge inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium flex-shrink-0"
-            :class="providerBadgeClass(item.provider)"
+            class="scheme3-monitor-provider-badge"
+            :class="providerToneClass"
           >
             {{ providerLabel(item.provider) }}
           </span>
-          <span class="scheme3-monitor-model font-mono text-xs truncate text-gray-500 dark:text-gray-400">
+          <span class="scheme3-monitor-model">
             {{ item.primary_model }}
           </span>
           <span
             v-if="item.group_name"
-            class="scheme3-monitor-group inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300 flex-shrink-0"
+            class="scheme3-monitor-group"
           >
             {{ item.group_name }}
           </span>
         </div>
       </div>
       <span
-        class="scheme3-monitor-status px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0"
-        :class="statusBadgeClass(item.primary_status)"
+        class="scheme3-monitor-status"
+        :class="statusToneClass"
       >
         {{ statusLabel(item.primary_status) }}
       </span>
     </div>
 
-    <!-- Metrics -->
     <MonitorMetricPair
       class="scheme3-monitor-card-metrics"
       primary-icon="bolt"
@@ -55,17 +53,14 @@
       secondary-unit="ms"
     />
 
-    <!-- Divider -->
-    <div class="scheme3-monitor-divider mt-4 border-t border-gray-100 dark:border-dark-700/60"></div>
+    <div class="scheme3-monitor-divider"></div>
 
-    <!-- Availability row -->
     <MonitorAvailabilityRow
       :window-label="availabilityLabel"
       :value="availabilityValue"
       :samples-label="extraModelsCountLabel"
     />
 
-    <!-- Timeline -->
     <MonitorTimeline
       :buckets="item.timeline"
       :countdown-seconds="countdownSeconds"
@@ -77,21 +72,14 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { UserMonitorView } from '@/api/channelMonitor'
-import {
-  useChannelMonitorFormat,
-  providerGradient,
-} from '@/composables/useChannelMonitorFormat'
+import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import ProviderIcon from './ProviderIcon.vue'
 import MonitorMetricPair from './MonitorMetricPair.vue'
 import MonitorAvailabilityRow from './MonitorAvailabilityRow.vue'
 import MonitorTimeline from './MonitorTimeline.vue'
 
-const PROVIDER_TINT: Record<string, string> = {
-  openai: 'text-emerald-600 dark:text-emerald-300',
-  anthropic: 'text-orange-600 dark:text-orange-300',
-  gemini: 'text-sky-600 dark:text-sky-300',
-  grok: 'text-zinc-700 dark:text-zinc-200',
-}
+const PROVIDER_TONES = new Set(['openai', 'anthropic', 'gemini', 'grok'])
+const STATUS_TONES = new Set(['operational', 'degraded', 'failed', 'error'])
 
 const props = defineProps<{
   item: UserMonitorView
@@ -107,15 +95,19 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const {
   statusLabel,
-  statusBadgeClass,
   providerLabel,
-  providerBadgeClass,
   formatLatency,
 } = useChannelMonitorFormat()
 
-const providerTintClass = computed(() =>
-  PROVIDER_TINT[props.item.provider] ?? 'text-gray-500 dark:text-gray-300'
-)
+const providerToneClass = computed(() => {
+  const provider = String(props.item.provider || '').toLowerCase()
+  return `is-${PROVIDER_TONES.has(provider) ? provider : 'unknown'}`
+})
+
+const statusToneClass = computed(() => {
+  const status = String(props.item.primary_status || '').toLowerCase()
+  return `is-${STATUS_TONES.has(status) ? status : 'unknown'}`
+})
 
 const availabilityLabel = computed(() => {
   const win = t(`channelStatus.windowTab.${props.window}`)
@@ -131,54 +123,91 @@ const extraModelsCountLabel = computed(() => {
 
 <style scoped>
 .scheme3-monitor-card {
-  border: 1px solid #d8d2c3 !important;
-  border-radius: 8px !important;
-  background: #fffefa !important;
-  box-shadow: 0 10px 24px rgba(54,48,34,.07) !important;
-  color: #27251f;
+  display: flex;
+  min-height: 17.5rem;
+  width: 100%;
+  flex-direction: column;
+  border: 1px solid var(--monitor-line, #d8d2c3);
+  border-radius: 8px;
+  padding: 1.25rem;
+  background: var(--monitor-card, #fffefa);
+  box-shadow: 0 10px 24px rgba(54, 48, 34, .07);
+  color: var(--monitor-ink, #27251f);
+  text-align: left;
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
 }
 
 .scheme3-monitor-card:hover {
-  border-color: rgba(30,92,66,.32) !important;
-  background: #fffefa !important;
-  box-shadow: 0 15px 28px rgba(54,48,34,.11) !important;
+  border-color: rgba(30, 92, 66, .32);
+  box-shadow: 0 15px 28px rgba(54, 48, 34, .11);
   transform: translateY(-2px);
 }
 
 .scheme3-monitor-card:active { transform: translateY(0) scale(.995); }
-.scheme3-monitor-provider-tile { border-radius: 7px !important; background: #f1eee6 !important; box-shadow: inset 0 0 0 1px #d8d2c3; }
-.scheme3-monitor-card-name { color: #27251f !important; }
-.scheme3-monitor-model { color: #777266 !important; }
-.scheme3-monitor-group { border: 1px solid #d8d2c3; background: #f8f6ef !important; color: #655f53 !important; }
-.scheme3-monitor-provider-badge { border: 1px solid currentColor; border-radius: 999px !important; background: transparent !important; }
-.scheme3-monitor-status { border: 1px solid currentColor; border-radius: 999px !important; background: transparent !important; }
-.scheme3-monitor-divider { border-color: #d8d2c3 !important; }
+.scheme3-monitor-card:focus-visible { outline: 2px solid rgba(30, 92, 66, .32); outline-offset: 3px; }
+.scheme3-monitor-card-header { display: flex; align-items: flex-start; gap: .75rem; }
+.scheme3-monitor-provider-tile { display: grid; width: 2.25rem; height: 2.25rem; flex: 0 0 2.25rem; place-items: center; border: 1px solid var(--monitor-line, #d8d2c3); border-radius: 7px; background: var(--monitor-subtle, #f1eee6); color: var(--monitor-muted, #777266); }
+.scheme3-monitor-provider-tile.is-openai { color: var(--monitor-accent, #1e5c42); }
+.scheme3-monitor-provider-tile.is-anthropic { color: var(--monitor-danger, #9e4d3d); }
+.scheme3-monitor-provider-tile.is-gemini { color: var(--monitor-amber, #b7791f); }
+.scheme3-monitor-provider-tile.is-grok { color: var(--monitor-ink, #27251f); }
+.scheme3-monitor-card-copy { min-width: 0; flex: 1 1 auto; }
+.scheme3-monitor-card-name { overflow: hidden; color: var(--monitor-ink, #27251f); font-size: 1rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-monitor-card-meta { display: flex; min-width: 0; align-items: center; gap: .38rem; margin-top: .15rem; }
+.scheme3-monitor-model { min-width: 0; overflow: hidden; color: var(--monitor-muted, #777266); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-monitor-group,
+.scheme3-monitor-provider-badge,
+.scheme3-monitor-status { display: inline-flex; flex: 0 0 auto; align-items: center; border: 1px solid currentColor; font-size: .58rem; font-weight: 800; line-height: 1; }
+.scheme3-monitor-group { max-width: 7rem; overflow: hidden; border-color: var(--monitor-line, #d8d2c3); border-radius: 5px; padding: .22rem .38rem; background: var(--monitor-subtle, #f8f6ef); color: var(--monitor-muted, #655f53); text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-monitor-provider-badge { border-radius: 5px; padding: .22rem .38rem; }
+.scheme3-monitor-provider-badge.is-openai { border-color: rgba(30, 92, 66, .28); background: rgba(30, 92, 66, .08); color: var(--monitor-accent, #1e5c42); }
+.scheme3-monitor-provider-badge.is-anthropic { border-color: rgba(158, 77, 61, .28); background: rgba(158, 77, 61, .07); color: var(--monitor-danger, #9e4d3d); }
+.scheme3-monitor-provider-badge.is-gemini { border-color: rgba(183, 121, 31, .3); background: rgba(183, 121, 31, .08); color: #8b5d14; }
+.scheme3-monitor-provider-badge.is-grok,
+.scheme3-monitor-provider-badge.is-unknown { border-color: var(--monitor-line, #d8d2c3); background: var(--monitor-subtle, #f1eee6); color: var(--monitor-muted, #777266); }
+.scheme3-monitor-status { border-radius: 999px; padding: .38rem .58rem; font-size: .65rem; }
+.scheme3-monitor-status.is-operational { border-color: rgba(30, 92, 66, .3); background: rgba(30, 92, 66, .08); color: var(--monitor-accent, #1e5c42); }
+.scheme3-monitor-status.is-degraded { border-color: rgba(183, 121, 31, .34); background: rgba(183, 121, 31, .09); color: #8b5d14; }
+.scheme3-monitor-status.is-failed,
+.scheme3-monitor-status.is-error { border-color: rgba(158, 77, 61, .34); background: rgba(158, 77, 61, .08); color: var(--monitor-danger, #9e4d3d); }
+.scheme3-monitor-status.is-unknown { border-color: var(--monitor-line, #d8d2c3); background: var(--monitor-subtle, #f1eee6); color: var(--monitor-muted, #777266); }
+.scheme3-monitor-divider { margin-top: 1rem; border-top: 1px solid var(--monitor-line, #d8d2c3); }
 
 :global(.dark .scheme3-monitor-card) {
-  border-color: #47443a !important;
-  background: #24231f !important;
+  border-color: #47443a;
+  background: #24231f;
   color: #f4f2ec;
-  box-shadow: 0 14px 30px rgba(0,0,0,.24) !important;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, .24);
 }
 
 :global(.dark .scheme3-monitor-card:hover) {
-  border-color: rgba(143,194,165,.35) !important;
-  background: #24231f !important;
-  box-shadow: 0 18px 34px rgba(0,0,0,.3) !important;
+  border-color: rgba(143, 194, 165, .35);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, .3);
 }
 
-:global(.dark .scheme3-monitor-provider-tile) { background: #2b2924 !important; box-shadow: inset 0 0 0 1px #47443a; }
-:global(.dark .scheme3-monitor-card-name) { color: #f4f2ec !important; }
-:global(.dark .scheme3-monitor-model) { color: #aaa69a !important; }
-:global(.dark .scheme3-monitor-group) { border-color: #47443a; background: #2b2924 !important; color: #d4d0c6 !important; }
-:global(.dark .scheme3-monitor-divider) { border-color: #47443a !important; }
-:global(.dark .scheme3-monitor-status.bg-emerald-100) { border-color: #8fc2a5; color: #8fc2a5; }
-:global(.dark .scheme3-monitor-status.bg-amber-100) { border-color: #d3a55a; color: #d3a55a; }
-:global(.dark .scheme3-monitor-status.bg-red-100) { border-color: #d38b79; color: #d38b79; }
+:global(.dark .scheme3-monitor-card:focus-visible) { outline-color: rgba(143, 194, 165, .38); }
+:global(.dark .scheme3-monitor-provider-tile) { border-color: #47443a; background: #2b2924; color: #aaa69a; }
+:global(.dark .scheme3-monitor-provider-tile.is-openai) { color: #8fc2a5; }
+:global(.dark .scheme3-monitor-provider-tile.is-anthropic) { color: #d38b79; }
+:global(.dark .scheme3-monitor-provider-tile.is-gemini) { color: #d3a55a; }
+:global(.dark .scheme3-monitor-provider-tile.is-grok) { color: #f4f2ec; }
+:global(.dark .scheme3-monitor-card-name) { color: #f4f2ec; }
+:global(.dark .scheme3-monitor-model) { color: #aaa69a; }
+:global(.dark .scheme3-monitor-group) { border-color: #47443a; background: #2b2924; color: #d4d0c6; }
+:global(.dark .scheme3-monitor-provider-badge.is-openai),
+:global(.dark .scheme3-monitor-status.is-operational) { border-color: rgba(143, 194, 165, .32); background: rgba(143, 194, 165, .1); color: #8fc2a5; }
+:global(.dark .scheme3-monitor-provider-badge.is-anthropic),
+:global(.dark .scheme3-monitor-status.is-failed),
+:global(.dark .scheme3-monitor-status.is-error) { border-color: rgba(211, 139, 121, .34); background: rgba(211, 139, 121, .09); color: #d38b79; }
+:global(.dark .scheme3-monitor-provider-badge.is-gemini),
+:global(.dark .scheme3-monitor-status.is-degraded) { border-color: rgba(211, 165, 90, .34); background: rgba(211, 165, 90, .09); color: #d3a55a; }
+:global(.dark .scheme3-monitor-provider-badge.is-grok),
+:global(.dark .scheme3-monitor-provider-badge.is-unknown),
+:global(.dark .scheme3-monitor-status.is-unknown) { border-color: #47443a; background: #2b2924; color: #aaa69a; }
+:global(.dark .scheme3-monitor-divider) { border-color: #47443a; }
 
 @media (max-width: 560px) {
-  .scheme3-monitor-card { min-height: 0; padding: 1rem !important; }
-  .scheme3-monitor-status { padding-right: .45rem !important; padding-left: .45rem !important; font-size: .61rem !important; }
+  .scheme3-monitor-card { min-height: 0; padding: 1rem; }
+  .scheme3-monitor-status { padding-right: .45rem; padding-left: .45rem; font-size: .61rem; }
 }
 </style>

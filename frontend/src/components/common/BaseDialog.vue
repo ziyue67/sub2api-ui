@@ -20,7 +20,7 @@
             <button
               v-if="showCloseButton"
               @click="emit('close')"
-              class="-mr-2 rounded-xl p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30 focus-visible:ring-offset-2 dark:text-dark-500 dark:hover:bg-dark-700 dark:hover:text-dark-300 dark:focus-visible:ring-offset-dark-900"
+              class="modal-close-button"
               aria-label="Close modal"
             >
               <Icon name="x" size="md" />
@@ -157,3 +157,19 @@ onUnmounted(() => {
   document.body.classList.remove('modal-open')
 })
 </script>
+
+<style scoped>
+.modal-close-button {
+  margin-right: -.5rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: .5rem;
+  background: transparent;
+  color: #9ca3af;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+.modal-close-button:hover { border-color: #e5e7eb; background: #f3f4f6; color: #4b5563; }
+.modal-close-button:focus-visible { outline: 2px solid rgba(20, 184, 166, .3); outline-offset: 2px; }
+:global(.dark .modal-close-button) { color: #827e72; }
+:global(.dark .modal-close-button:hover) { border-color: #47443a; background: #2b2924; color: #f4f2ec; }
+</style>

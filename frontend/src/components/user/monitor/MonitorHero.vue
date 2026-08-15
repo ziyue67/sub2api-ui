@@ -1,20 +1,15 @@
 <template>
-  <section class="scheme3-monitor-hero py-3 md:py-4">
-    <div class="scheme3-monitor-controls flex items-center justify-end gap-3 flex-wrap">
-      <div
-        role="tablist"
-        class="scheme3-monitor-window-tabs inline-flex p-0.5 rounded-xl bg-gray-100 dark:bg-dark-800 border border-gray-200/60 dark:border-dark-700/60 text-xs"
-      >
+  <section class="scheme3-monitor-hero">
+    <div class="scheme3-monitor-controls">
+      <div role="tablist" class="scheme3-monitor-window-tabs">
         <button
           v-for="opt in windowOptions"
           :key="opt.value"
           type="button"
           role="tab"
           :aria-selected="window === opt.value"
-          class="scheme3-monitor-window-tab px-3 py-1 rounded-lg transition-colors"
-          :class="window === opt.value
-            ? 'bg-white dark:bg-dark-700 shadow-sm text-gray-900 dark:text-white font-semibold'
-            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+          class="scheme3-monitor-window-tab"
+          :class="{ 'is-active': window === opt.value }"
           @click="emit('update:window', opt.value)"
         >
           {{ opt.label }}
@@ -22,24 +17,21 @@
       </div>
 
       <span
-        class="scheme3-monitor-overall inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold tracking-wider uppercase"
-        :class="overallChipClass"
+        class="scheme3-monitor-overall"
+        :class="overallToneClass"
       >
-        <span
-          class="w-1.5 h-1.5 rounded-full mr-1.5"
-          :class="overallDotClass"
-        ></span>
+        <span class="scheme3-monitor-overall-dot" aria-hidden="true"></span>
         {{ overallLabel }}
       </span>
 
       <button
         type="button"
-        class="scheme3-monitor-refresh h-8 w-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-dark-700 transition-colors disabled:opacity-50"
+        class="scheme3-monitor-refresh"
         :disabled="loading"
         :title="t('common.refresh')"
         @click="emit('refresh')"
       >
-        <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+        <Icon name="refresh" size="md" :class="{ 'is-spinning': loading }" />
       </button>
 
       <div v-if="autoRefresh" class="scheme3-monitor-auto-refresh">
@@ -94,62 +86,46 @@ const windowOptions = computed<{ value: MonitorWindow; label: string }[]>(() => 
 
 const overallLabel = computed(() => t(`channelStatus.overall.${props.overallStatus}`))
 
-const overallChipClass = computed(() => {
-  switch (props.overallStatus) {
-    case 'operational':
-      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-    case 'degraded':
-    default:
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
-  }
-})
-
-const overallDotClass = computed(() => {
-  switch (props.overallStatus) {
-    case 'operational':
-      return 'bg-emerald-500 animate-pulse'
-    case 'degraded':
-    default:
-      return 'bg-amber-500 animate-pulse'
-  }
-})
+const overallToneClass = computed(() => `is-${props.overallStatus === 'operational' ? 'operational' : 'degraded'}`)
 
 </script>
 
 <style scoped>
-.scheme3-monitor-hero { color: #27251f; }
-.scheme3-monitor-controls { min-height: 2.5rem; }
-.scheme3-monitor-window-tabs { border-color: #d8d2c3; background: #f1eee6; }
-.scheme3-monitor-window-tab { min-height: 1.95rem; color: #777266; font-weight: 700; }
-.scheme3-monitor-window-tab:hover { color: #27251f; }
-.scheme3-monitor-window-tab[aria-selected='true'] { background: #fffefa; color: #1e5c42; box-shadow: 0 2px 6px rgba(54,48,34,.08); }
-.scheme3-monitor-overall { border: 1px solid rgba(30,92,66,.2); background: rgba(30,92,66,.07); color: #1e5c42; letter-spacing: .06em; }
-.scheme3-monitor-refresh { border: 1px solid #d8d2c3; background: #fffefa; color: #777266; }
-.scheme3-monitor-refresh:hover { border-color: rgba(30,92,66,.25); background: #f1eee6; color: #1e5c42; }
-.scheme3-monitor-auto-refresh :deep(button) { min-height: 2rem; border-color: #d8d2c3; border-radius: 7px; background: #fffefa; color: #777266; box-shadow: none; }
-.scheme3-monitor-auto-refresh :deep(button:hover) { background: #f1eee6; color: #27251f; }
-.scheme3-monitor-auto-refresh :deep(.absolute) { border-color: #d8d2c3; border-radius: 7px; background: #fffefa; box-shadow: 0 14px 28px rgba(54,48,34,.14); }
-.scheme3-monitor-auto-refresh :deep(.absolute button:hover) { background: #f1eee6; }
+.scheme3-monitor-hero { color: var(--monitor-ink, #27251f); padding: .75rem 0 1rem; }
+.scheme3-monitor-controls { display: flex; min-height: 2.5rem; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .7rem; }
+.scheme3-monitor-window-tabs { display: inline-flex; gap: 2px; border: 1px solid var(--monitor-line, #d8d2c3); border-radius: 7px; padding: 2px; background: var(--monitor-subtle, #f1eee6); }
+.scheme3-monitor-window-tab { min-height: 1.95rem; border: 1px solid transparent; border-radius: 5px; padding: .28rem .72rem; background: transparent; color: var(--monitor-muted, #777266); font-size: .66rem; font-weight: 800; transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease; }
+.scheme3-monitor-window-tab:hover { color: var(--monitor-ink, #27251f); }
+.scheme3-monitor-window-tab.is-active { border-color: rgba(30, 92, 66, .16); background: var(--monitor-card, #fffefa); color: var(--monitor-accent, #1e5c42); box-shadow: 0 2px 6px rgba(54, 48, 34, .08); }
+.scheme3-monitor-overall { display: inline-flex; align-items: center; gap: .4rem; border: 1px solid rgba(30, 92, 66, .2); border-radius: 999px; padding: .42rem .65rem; background: rgba(30, 92, 66, .07); color: var(--monitor-accent, #1e5c42); font-size: .62rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.scheme3-monitor-overall.is-degraded { border-color: rgba(183, 121, 31, .28); background: rgba(183, 121, 31, .08); color: var(--monitor-amber, #b7791f); }
+.scheme3-monitor-overall-dot { width: .4rem; height: .4rem; border-radius: 999px; background: currentColor; animation: scheme3-monitor-status-pulse 1.8s ease-in-out infinite; }
+.scheme3-monitor-refresh { display: inline-flex; width: 2rem; height: 2rem; align-items: center; justify-content: center; border: 1px solid var(--monitor-line, #d8d2c3); border-radius: 7px; background: var(--monitor-card, #fffefa); color: var(--monitor-muted, #777266); transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease; }
+.scheme3-monitor-refresh:hover:not(:disabled) { border-color: rgba(30, 92, 66, .25); background: var(--monitor-subtle, #f1eee6); color: var(--monitor-accent, #1e5c42); }
+.scheme3-monitor-refresh:disabled { cursor: not-allowed; opacity: .5; }
+.scheme3-monitor-refresh .is-spinning { animation: scheme3-monitor-refresh-spin 1.2s linear infinite; }
+.scheme3-monitor-auto-refresh { flex: 0 0 auto; }
+
+@keyframes scheme3-monitor-refresh-spin { to { transform: rotate(360deg); } }
+@keyframes scheme3-monitor-status-pulse { 0%, 100% { opacity: .55; box-shadow: 0 0 0 0 currentColor; } 50% { opacity: 1; box-shadow: 0 0 0 .22rem transparent; } }
 
 :global(.dark .scheme3-monitor-hero) { color: #f4f2ec; }
 :global(.dark .scheme3-monitor-window-tabs) { border-color: #47443a; background: #2b2924; }
 :global(.dark .scheme3-monitor-window-tab) { color: #aaa69a; }
 :global(.dark .scheme3-monitor-window-tab:hover) { color: #f4f2ec; }
-:global(.dark .scheme3-monitor-window-tab[aria-selected='true']) { background: #24231f; color: #8fc2a5; box-shadow: 0 2px 7px rgba(0,0,0,.18); }
-:global(.dark .scheme3-monitor-overall) { border-color: rgba(143,194,165,.28); background: rgba(143,194,165,.1); color: #8fc2a5; }
+:global(.dark .scheme3-monitor-window-tab.is-active) { border-color: rgba(143, 194, 165, .2); background: #24231f; color: #8fc2a5; box-shadow: 0 2px 7px rgba(0, 0, 0, .18); }
+:global(.dark .scheme3-monitor-overall) { border-color: rgba(143, 194, 165, .28); background: rgba(143, 194, 165, .1); color: #8fc2a5; }
+:global(.dark .scheme3-monitor-overall.is-degraded) { border-color: rgba(211, 165, 90, .3); background: rgba(211, 165, 90, .1); color: #d3a55a; }
 :global(.dark .scheme3-monitor-refresh) { border-color: #47443a; background: #24231f; color: #aaa69a; }
-:global(.dark .scheme3-monitor-refresh:hover) { border-color: rgba(143,194,165,.3); background: #2b2924; color: #8fc2a5; }
-:global(.dark .scheme3-monitor-auto-refresh :deep(button)) { border-color: #47443a; background: #24231f; color: #aaa69a; }
-:global(.dark .scheme3-monitor-auto-refresh :deep(button:hover)) { background: #2b2924; color: #f4f2ec; }
-:global(.dark .scheme3-monitor-auto-refresh :deep(.absolute)) { border-color: #47443a; background: #24231f; box-shadow: 0 16px 30px rgba(0,0,0,.28); }
-:global(.dark .scheme3-monitor-auto-refresh :deep(.absolute button:hover)) { background: #2b2924; }
+:global(.dark .scheme3-monitor-refresh:hover:not(:disabled)) { border-color: rgba(143, 194, 165, .3); background: #2b2924; color: #8fc2a5; }
 
 @media (max-width: 560px) {
+  .scheme3-monitor-hero { padding-top: .55rem; }
   .scheme3-monitor-controls { align-items: stretch; justify-content: stretch; gap: .45rem; }
   .scheme3-monitor-window-tabs { flex: 1 1 auto; justify-content: space-between; }
   .scheme3-monitor-window-tab { flex: 1 1 0; padding-right: .45rem; padding-left: .45rem; }
   .scheme3-monitor-overall { justify-content: center; }
   .scheme3-monitor-auto-refresh { flex: 1 1 auto; }
-  .scheme3-monitor-auto-refresh :deep(button) { width: 100%; justify-content: center; }
+  .scheme3-monitor-auto-refresh :deep(.scheme3-auto-refresh-trigger) { width: 100%; justify-content: center; }
 }
 </style>

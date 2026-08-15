@@ -1,29 +1,21 @@
 <template>
-  <div class="scheme3-monitor-metric-pair mt-5 grid grid-cols-2 gap-2">
-    <div
-      class="scheme3-monitor-metric rounded-xl p-3 bg-gray-50/80 dark:bg-dark-900/40 border border-gray-100 dark:border-dark-700/50"
-    >
-      <div
-        class="scheme3-monitor-metric-label flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400"
-      >
+  <div class="scheme3-monitor-metric-pair">
+    <div class="scheme3-monitor-metric">
+      <div class="scheme3-monitor-metric-label">
         <Icon :name="primaryIcon" size="xs" />
         <span>{{ primaryLabel }}</span>
       </div>
-      <div class="scheme3-monitor-metric-value mt-1.5 text-lg font-bold font-mono tabular-nums text-gray-900 dark:text-gray-100">
-        {{ primaryValue }}<span class="scheme3-monitor-metric-unit text-xs font-normal text-gray-400 ml-0.5">{{ primaryUnit }}</span>
+      <div class="scheme3-monitor-metric-value">
+        {{ primaryValue }}<span class="scheme3-monitor-metric-unit">{{ primaryUnit }}</span>
       </div>
     </div>
-    <div
-      class="scheme3-monitor-metric rounded-xl p-3 bg-gray-50/80 dark:bg-dark-900/40 border border-gray-100 dark:border-dark-700/50"
-    >
-      <div
-        class="scheme3-monitor-metric-label flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400"
-      >
+    <div class="scheme3-monitor-metric">
+      <div class="scheme3-monitor-metric-label">
         <Icon :name="secondaryIcon" size="xs" />
         <span>{{ secondaryLabel }}</span>
       </div>
-      <div class="scheme3-monitor-metric-value mt-1.5 text-lg font-bold font-mono tabular-nums text-gray-900 dark:text-gray-100">
-        {{ secondaryValue }}<span class="scheme3-monitor-metric-unit text-xs font-normal text-gray-400 ml-0.5">{{ secondaryUnit }}</span>
+      <div class="scheme3-monitor-metric-value">
+        {{ secondaryValue }}<span class="scheme3-monitor-metric-unit">{{ secondaryUnit }}</span>
       </div>
     </div>
   </div>
@@ -45,13 +37,20 @@ defineProps<{
 </script>
 
 <style scoped>
-.scheme3-monitor-metric { border-color: #d8d2c3 !important; border-radius: 7px !important; background: #f8f6ef !important; }
-.scheme3-monitor-metric-label { color: #777266 !important; letter-spacing: .055em; }
-.scheme3-monitor-metric-value { color: #27251f !important; font-size: 1.05rem; }
-.scheme3-monitor-metric-unit { color: #a49e90 !important; }
+.scheme3-monitor-metric-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-top: 1.25rem; }
+.scheme3-monitor-metric { min-width: 0; border: 1px solid var(--monitor-line, #d8d2c3); border-radius: 7px; padding: .75rem; background: var(--monitor-subtle, #f8f6ef); }
+.scheme3-monitor-metric-label { display: flex; min-width: 0; align-items: center; gap: .38rem; overflow: hidden; color: var(--monitor-muted, #777266); font-size: .62rem; font-weight: 800; letter-spacing: .055em; line-height: 1.2; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.scheme3-monitor-metric-label span { overflow: hidden; text-overflow: ellipsis; }
+.scheme3-monitor-metric-value { margin-top: .38rem; overflow: hidden; color: var(--monitor-ink, #27251f); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.05rem; font-variant-numeric: tabular-nums; font-weight: 800; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-monitor-metric-unit { margin-left: .12rem; color: var(--monitor-soft, #a49e90); font-size: .68rem; font-weight: 500; }
 
-:global(.dark .scheme3-monitor-metric) { border-color: #47443a !important; background: #2b2924 !important; }
-:global(.dark .scheme3-monitor-metric-label) { color: #aaa69a !important; }
-:global(.dark .scheme3-monitor-metric-value) { color: #f4f2ec !important; }
-:global(.dark .scheme3-monitor-metric-unit) { color: #827e72 !important; }
+:global(.dark .scheme3-monitor-metric) { border-color: #47443a; background: #2b2924; }
+:global(.dark .scheme3-monitor-metric-label) { color: #aaa69a; }
+:global(.dark .scheme3-monitor-metric-value) { color: #f4f2ec; }
+:global(.dark .scheme3-monitor-metric-unit) { color: #827e72; }
+
+@media (max-width: 380px) {
+  .scheme3-monitor-metric { padding: .62rem; }
+  .scheme3-monitor-metric-value { font-size: .94rem; }
+}
 </style>

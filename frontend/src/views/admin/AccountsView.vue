@@ -197,6 +197,7 @@
           :columns="cols"
           :data="accounts"
           :loading="loading"
+          scheme3
           row-key="id"
           :server-side-sort="true"
           @sort="handleSort"

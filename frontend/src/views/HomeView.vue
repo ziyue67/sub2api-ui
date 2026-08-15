@@ -18,7 +18,10 @@
     <header class="home-nav">
       <nav class="home-nav-inner">
         <a href="#top" class="home-brand" :aria-label="t('home.scheme3.enterAccount')">
-          <span class="home-brand-mark"><img :src="siteLogo || '/logo.svg'" alt="Logo" /></span>
+          <span class="home-brand-mark">
+            <img v-if="siteLogo" :src="siteLogo" alt="" />
+            <span v-else class="home-brand-monogram" aria-hidden="true">ST</span>
+          </span>
           <span class="home-brand-copy">
             <span class="home-brand-name">{{ siteName }}</span>
             <span class="home-brand-caption">{{ t('home.scheme3.brandCaptionCompact') }}</span>
@@ -99,7 +102,10 @@
     <header class="home-nav">
       <nav class="home-nav-inner">
         <a href="#top" class="home-brand" :aria-label="t('home.scheme3.enterAccount')">
-          <span class="home-brand-mark"><img :src="siteLogo || '/logo.svg'" alt="Logo" /></span>
+          <span class="home-brand-mark">
+            <img v-if="siteLogo" :src="siteLogo" alt="" />
+            <span v-else class="home-brand-monogram" aria-hidden="true">ST</span>
+          </span>
           <span class="home-brand-copy">
             <span class="home-brand-name">{{ siteName }}</span>
             <span class="home-brand-caption">{{ t('home.scheme3.brandCaption') }}</span>
@@ -276,7 +282,7 @@ const isHomeContentUrl = computed(() => {
 })
 
 const isDark = ref(document.documentElement.classList.contains('dark'))
-const githubUrl = 'https://github.com/Wei-Shaw/sub2api'
+const githubUrl = 'https://github.com/ShourGG/sub2api'
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const isAdmin = computed(() => authStore.isAdmin)
 const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/dashboard')
@@ -542,6 +548,16 @@ onMounted(() => {
   height: 100%;
   object-fit: contain;
   transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.home-brand-monogram {
+  position: relative;
+  z-index: 1;
+  color: var(--home-green);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .08em;
 }
 
 .home-brand:hover .home-brand-mark img {
