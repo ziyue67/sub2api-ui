@@ -52,6 +52,22 @@ const { t } = useI18n()
 const props = defineProps<{
   trendData: TrendDataPoint[]
   loading?: boolean
+  palette?: Partial<{
+    input: string
+    output: string
+    cacheCreation: string
+    cacheRead: string
+    cacheHitRate: string
+  }>
+  labels?: Partial<{
+    input: string
+    output: string
+    cacheCreation: string
+    cacheRead: string
+    cacheHitRate: string
+    actualCost: string
+    standardCost: string
+  }>
 }>()
 
 const isDarkMode = computed(() => {
@@ -65,7 +81,19 @@ const chartColors = computed(() => ({
   output: '#10b981',
   cacheCreation: '#f59e0b',
   cacheRead: '#06b6d4',
-  cacheHitRate: '#8b5cf6'
+  cacheHitRate: '#8b5cf6',
+  ...props.palette,
+}))
+
+const chartLabels = computed(() => ({
+  input: 'Input',
+  output: 'Output',
+  cacheCreation: 'Cache Creation',
+  cacheRead: 'Cache Read',
+  cacheHitRate: 'Cache Hit Rate',
+  actualCost: 'Actual',
+  standardCost: 'Standard',
+  ...props.labels,
 }))
 
 const chartData = computed(() => {
@@ -75,7 +103,7 @@ const chartData = computed(() => {
     labels: props.trendData.map((d) => d.date),
     datasets: [
       {
-        label: 'Input',
+        label: chartLabels.value.input,
         data: props.trendData.map((d) => d.input_tokens),
         borderColor: chartColors.value.input,
         backgroundColor: `${chartColors.value.input}20`,
@@ -83,7 +111,7 @@ const chartData = computed(() => {
         tension: 0.3
       },
       {
-        label: 'Output',
+        label: chartLabels.value.output,
         data: props.trendData.map((d) => d.output_tokens),
         borderColor: chartColors.value.output,
         backgroundColor: `${chartColors.value.output}20`,
@@ -91,7 +119,7 @@ const chartData = computed(() => {
         tension: 0.3
       },
       {
-        label: 'Cache Creation',
+        label: chartLabels.value.cacheCreation,
         data: props.trendData.map((d) => d.cache_creation_tokens),
         borderColor: chartColors.value.cacheCreation,
         backgroundColor: `${chartColors.value.cacheCreation}20`,
@@ -99,7 +127,7 @@ const chartData = computed(() => {
         tension: 0.3
       },
       {
-        label: 'Cache Read',
+        label: chartLabels.value.cacheRead,
         data: props.trendData.map((d) => d.cache_read_tokens),
         borderColor: chartColors.value.cacheRead,
         backgroundColor: `${chartColors.value.cacheRead}20`,
@@ -107,7 +135,7 @@ const chartData = computed(() => {
         tension: 0.3
       },
       {
-        label: 'Cache Hit Rate',
+        label: chartLabels.value.cacheHitRate,
         data: props.trendData.map((d) => {
           const totalPromptTokens = d.input_tokens + d.cache_read_tokens + d.cache_creation_tokens
           return totalPromptTokens > 0 ? (d.cache_read_tokens / totalPromptTokens) * 100 : 0
@@ -155,7 +183,7 @@ const lineOptions = computed(() => ({
           const dataIndex = tooltipItems[0]?.dataIndex
           if (dataIndex !== undefined && props.trendData[dataIndex]) {
             const data = props.trendData[dataIndex]
-            return `Actual: $${formatCost(data.actual_cost)} | Standard: $${formatCost(data.cost)}`
+            return `${chartLabels.value.actualCost}: $${formatCost(data.actual_cost)} | ${chartLabels.value.standardCost}: $${formatCost(data.cost)}`
           }
           return ''
         }

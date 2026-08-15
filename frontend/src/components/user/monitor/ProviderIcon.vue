@@ -17,7 +17,7 @@
   </svg>
   <span
     v-else
-    class="inline-flex items-center justify-center font-bold text-gray-500"
+    class="scheme3-monitor-provider-fallback inline-flex items-center justify-center font-bold"
     :style="{ width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.5)}px` }"
   >
     {{ fallbackText }}
@@ -74,3 +74,8 @@ const fallbackText = computed(() =>
   (props.provider || '?').charAt(0).toUpperCase()
 )
 </script>
+
+<style scoped>
+.scheme3-monitor-provider-fallback { color: #777266; }
+:global(.dark .scheme3-monitor-provider-fallback) { color: #aaa69a; }
+</style>

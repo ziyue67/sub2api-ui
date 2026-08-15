@@ -7,9 +7,9 @@
           <div class="flex-1 sm:max-w-64">
             <input v-model="orderSearch" type="text" :placeholder="t('payment.admin.searchOrders')" class="input" @input="debounceLoadOrders" />
           </div>
-          <Select v-model="orderFilters.status" :options="statusFilterOptions" class="w-36" @change="loadOrders" />
-          <Select v-model="orderFilters.payment_type" :options="paymentTypeFilterOptions" class="w-40" @change="loadOrders" />
-          <Select v-model="orderFilters.order_type" :options="orderTypeFilterOptions" class="w-36" @change="loadOrders" />
+          <Select v-model="orderFilters.status" :options="statusFilterOptions" class="w-36" scheme3 @change="loadOrders" />
+          <Select v-model="orderFilters.payment_type" :options="paymentTypeFilterOptions" class="w-40" scheme3 @change="loadOrders" />
+          <Select v-model="orderFilters.order_type" :options="orderTypeFilterOptions" class="w-36" scheme3 @change="loadOrders" />
           <div class="flex flex-1 flex-wrap items-center justify-end gap-2">
             <button @click="loadOrders" :disabled="ordersLoading" class="btn btn-secondary" :title="t('common.refresh')">
               <Icon name="refresh" size="md" :class="ordersLoading ? 'animate-spin' : ''" />

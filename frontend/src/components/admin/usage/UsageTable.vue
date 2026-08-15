@@ -21,6 +21,7 @@
         :columns="columns"
         :data="data"
         :loading="loading"
+        scheme3
         :server-side-sort="serverSideSort"
         :default-sort-key="defaultSortKey"
         :default-sort-order="defaultSortOrder"

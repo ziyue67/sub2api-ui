@@ -1,15 +1,15 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-4xl space-y-6">
+    <div class="scheme3-payment mx-auto max-w-4xl space-y-6">
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
       <template v-else>
         <!-- Tab Switcher (hide during payment and subscription confirm) -->
-        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="flex space-x-1 rounded-xl bg-gray-100 p-1 dark:bg-dark-800">
+        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="scheme3-payment-tabs flex space-x-1">
           <button v-for="tab in tabs" :key="tab.key"
-            class="flex-1 rounded-lg px-4 py-2.5 text-sm font-medium transition-all"
-            :class="activeTab === tab.key ? 'bg-white text-gray-900 shadow dark:bg-dark-700 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'"
+            class="scheme3-payment-tab flex-1"
+            :class="{ 'scheme3-payment-tab-active': activeTab === tab.key }"
             @click="activeTab = tab.key">{{ tab.label }}</button>
         </div>
         <!-- Payment in progress (shared by recharge and subscription) -->
@@ -36,7 +36,7 @@
           <!-- Top-up Tab -->
           <template v-if="activeTab === 'recharge'">
             <!-- Recharge Account Card -->
-            <div class="card p-5">
+            <div class="scheme3-payment-account card p-5">
               <p class="text-xs font-medium text-gray-400 dark:text-gray-500">{{ t('payment.rechargeAccount') }}</p>
               <p class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ user?.username || '' }}</p>
               <p class="mt-0.5 text-sm font-medium text-green-600 dark:text-green-400">{{ t('payment.currentBalance') }}: {{ user?.balance?.toFixed(2) || '0.00' }}</p>
@@ -97,7 +97,7 @@
           <template v-else-if="activeTab === 'subscription'">
             <!-- Subscription confirm (inline, replaces plan list) -->
             <template v-if="selectedPlan">
-              <div class="card p-5">
+              <div class="scheme3-payment-selected-plan card p-5">
                 <!-- Header: platform badge + plan name -->
                 <div class="mb-3 flex flex-wrap items-center gap-2">
                   <span :class="['rounded-md border px-2 py-0.5 text-xs font-medium', planBadgeClass]">
@@ -118,7 +118,7 @@
                   {{ selectedPlan.description }}
                 </p>
                 <!-- Rate + Limits grid -->
-                <div class="mt-3 grid grid-cols-2 gap-3">
+                <div class="scheme3-payment-plan-details mt-3 grid grid-cols-2 gap-3">
                   <div>
                     <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('payment.planCard.rate') }}</span>
                     <div class="flex items-baseline">
@@ -195,7 +195,7 @@
                 <p class="mb-2 text-xs font-medium text-gray-400 dark:text-gray-500">{{ t('payment.activeSubscription') }}</p>
                 <div class="space-y-2">
                   <div v-for="sub in activeSubscriptions" :key="sub.id"
-                    class="flex items-center gap-3 rounded-xl border border-gray-100 bg-white px-3 py-2 dark:border-dark-700 dark:bg-dark-800">
+                    class="scheme3-payment-active-sub flex items-center gap-3 border px-3 py-2">
                     <div :class="['h-6 w-1 shrink-0 rounded-full', platformAccentBarClass(sub.group?.platform || '')]" />
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-1.5">
@@ -231,9 +231,9 @@
     <Teleport to="body">
       <Transition name="modal">
         <div v-if="showRenewalModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="closeRenewalModal">
-          <div class="relative w-full max-w-lg rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-900">
+          <div class="scheme3-payment-modal relative w-full max-w-lg border p-6">
             <!-- Close button -->
-            <button class="absolute right-4 top-4 rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-200" @click="closeRenewalModal">
+            <button class="scheme3-payment-modal-close absolute right-4 top-4 p-1 transition-colors" @click="closeRenewalModal">
               <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
             <h3 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">{{ t('payment.selectPlan') }}</h3>
@@ -271,7 +271,7 @@ import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderTy
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
-import { METHOD_ORDER, getPaymentPopupFeatures, isBuiltInAlipayMethod, isBuiltInWxpayMethod } from '@/components/payment/providerConfig'
+import { METHOD_ORDER, getPaymentPopupFeatures } from '@/components/payment/providerConfig'
 import {
   PAYMENT_RECOVERY_STORAGE_KEY,
   buildCreateOrderPayload,
@@ -701,15 +701,9 @@ watch(() => [validAmount.value, selectedMethod.value] as const, ([amt, method]) 
   if (available) selectedMethod.value = available
 })
 
-// Payment button class: follows selected payment method color
+// Keep the payment action visually stable while the selected method remains visible in its selector.
 const paymentButtonClass = computed(() => {
-  const m = selectedMethod.value
-  if (!m) return 'btn-primary'
-  if (isBuiltInAlipayMethod(m)) return 'btn-alipay'
-  if (isBuiltInWxpayMethod(m)) return 'btn-wxpay'
-  if (m === 'stripe') return 'btn-stripe'
-  if (m === 'airwallex') return 'btn-airwallex'
-  return 'btn-primary'
+  return 'scheme3-payment-primary'
 })
 
 // Subscription confirm: platform accent colors (clean card, no gradient)
@@ -1158,3 +1152,44 @@ onMounted(async () => {
   subscriptionStore.fetchActiveSubscriptions().catch(() => {})
 })
 </script>
+
+<style scoped>
+.scheme3-payment { --scheme3-payment-card: #fffefa; --scheme3-payment-ink: #27251f; --scheme3-payment-muted: #777266; --scheme3-payment-line: #d8d2c3; }
+.scheme3-payment-tabs { gap: .35rem; border: 1px solid var(--scheme3-payment-line); border-radius: 8px; padding: .32rem; background: #eee9de; }
+.scheme3-payment-tab { border: 1px solid transparent; border-radius: 6px; padding: .62rem .85rem; color: var(--scheme3-payment-muted); font-size: .76rem; font-weight: 800; transition: color 150ms ease, background 150ms ease, border-color 150ms ease, transform 150ms ease; }
+.scheme3-payment-tab:hover { color: var(--scheme3-payment-ink); background: rgba(255,254,250,.72); }
+.scheme3-payment-tab:active { transform: scale(.98); }
+.scheme3-payment-tab-active { border-color: var(--scheme3-payment-line); background: var(--scheme3-payment-card); color: #1e5c42; box-shadow: 0 2px 8px rgba(54,48,34,.08); }
+.scheme3-payment :deep(.card) { border: 1px solid var(--scheme3-payment-line); border-radius: 8px; background: var(--scheme3-payment-card); box-shadow: 0 10px 24px rgba(54,48,34,.055); }
+.scheme3-payment-account { border-left: 3px solid #b7791f !important; }
+.scheme3-payment-account p:first-child { color: var(--scheme3-payment-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .64rem; letter-spacing: .06em; }
+.scheme3-payment-account p:last-child { color: #1e5c42 !important; }
+.scheme3-payment-selected-plan { border-left: 3px solid #1e5c42 !important; }
+.scheme3-payment-plan-details { border-top: 1px solid var(--scheme3-payment-line); padding-top: .85rem; }
+.scheme3-payment-plan-details > div { min-width: 0; }
+.scheme3-payment-active-sub { border-color: var(--scheme3-payment-line); border-radius: 7px; background: #f8f5ed; }
+.scheme3-payment-active-sub > div:first-child { border-radius: 999px; }
+.scheme3-payment :deep(.scheme3-payment-primary) { border: 0; border-radius: 7px; background: #1e5c42 !important; color: #fffefa !important; box-shadow: 0 9px 18px rgba(30,92,66,.16); transition: background 150ms ease, transform 150ms ease, box-shadow 150ms ease; }
+.scheme3-payment :deep(.scheme3-payment-primary:hover:not(:disabled)) { background: #174a35 !important; box-shadow: 0 11px 22px rgba(30,92,66,.2); transform: translateY(-1px); }
+.scheme3-payment :deep(.scheme3-payment-primary:active:not(:disabled)) { transform: scale(.985); }
+.scheme3-payment :deep(.scheme3-payment-primary:focus-visible) { outline: 3px solid rgba(30,92,66,.22); outline-offset: 3px; }
+.scheme3-payment-modal { border-color: var(--scheme3-payment-line); border-radius: 8px; background: #fffefa; color: #27251f; box-shadow: 0 22px 60px rgba(31,28,20,.22); }
+.scheme3-payment-modal-close { border: 1px solid transparent; border-radius: 6px; color: #777266; }
+.scheme3-payment-modal-close:hover { border-color: #d8d2c3; background: #f1eee6; color: #27251f; }
+
+:global(.dark .scheme3-payment) { --scheme3-payment-card: #24231f; --scheme3-payment-ink: #f4f2ec; --scheme3-payment-muted: #aaa69a; --scheme3-payment-line: #47443a; }
+:global(.dark .scheme3-payment-tabs) { background: #2b2924; }
+:global(.dark .scheme3-payment-tab:hover) { background: rgba(143,194,165,.08); }
+:global(.dark .scheme3-payment-tab-active) { border-color: #47443a; background: #24231f; color: #8fc2a5; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+:global(.dark .scheme3-payment-account p:last-child) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-payment-active-sub) { background: #2b2924; }
+:global(.dark .scheme3-payment :deep(.scheme3-payment-primary)) { background: #8fc2a5 !important; color: #1b1b18 !important; box-shadow: 0 9px 18px rgba(143,194,165,.13); }
+:global(.dark .scheme3-payment :deep(.scheme3-payment-primary:hover:not(:disabled))) { background: #a7d2b7 !important; }
+:global(.dark .scheme3-payment-modal) { border-color: #47443a; background: #24231f; color: #f4f2ec; box-shadow: 0 22px 60px rgba(0,0,0,.42); }
+:global(.dark .scheme3-payment-modal-close:hover) { border-color: #47443a; background: #2b2924; color: #f4f2ec; }
+
+@media (max-width: 640px) {
+  .scheme3-payment-tab { padding-right: .55rem; padding-left: .55rem; }
+  .scheme3-payment-active-sub { align-items: flex-start; }
+}
+</style>

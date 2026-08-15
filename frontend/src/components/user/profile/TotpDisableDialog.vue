@@ -114,6 +114,12 @@ const canSubmit = computed(() => {
   return form.value.password.length > 0
 })
 
+function handleEscape(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    emit('close')
+  }
+}
+
 const loadVerificationMethod = async () => {
   methodLoading.value = true
   try {
@@ -175,10 +181,12 @@ const handleDisable = async () => {
 }
 
 onMounted(() => {
+  document.addEventListener('keydown', handleEscape)
   loadVerificationMethod()
 })
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', handleEscape)
   if (cooldownTimer.value) {
     clearInterval(cooldownTimer.value)
     cooldownTimer.value = null

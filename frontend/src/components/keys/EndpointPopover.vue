@@ -80,22 +80,22 @@ onBeforeUnmount(() => {
 
       <div class="group/endpoint relative flex items-center gap-1.5">
         <div
-          class="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-max max-w-[24rem] -translate-x-1/2 translate-y-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left opacity-0 shadow-[0_14px_36px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/80 transition-all duration-150 group-hover/endpoint:translate-y-0 group-hover/endpoint:opacity-100 group-focus-within/endpoint:translate-y-0 group-focus-within/endpoint:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:ring-slate-700/70"
+          class="scheme3-endpoint-tooltip pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-max max-w-[24rem] -translate-x-1/2 translate-y-1 rounded-xl px-3 py-2.5 text-left opacity-0 transition-all duration-150 group-hover/endpoint:translate-y-0 group-hover/endpoint:opacity-100 group-focus-within/endpoint:translate-y-0 group-focus-within/endpoint:opacity-100"
         >
           <p
             v-if="item.description"
-            class="max-w-[24rem] break-words text-xs leading-5 text-slate-600 dark:text-slate-200"
+            class="scheme3-endpoint-description max-w-[24rem] break-words text-xs leading-5"
           >
             {{ item.description }}
           </p>
           <p
-            class="flex items-center gap-1.5 text-[11px] leading-4 text-primary-600 dark:text-primary-300"
+            class="scheme3-endpoint-hint flex items-center gap-1.5 text-[11px] leading-4"
             :class="item.description ? 'mt-1.5' : ''"
           >
-            <span class="h-1.5 w-1.5 rounded-full bg-primary-500 dark:bg-primary-300"></span>
+            <span class="scheme3-endpoint-hint-dot h-1.5 w-1.5 rounded-full"></span>
             {{ tooltipHint(item.endpoint) }}
           </p>
-          <div class="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"></div>
+          <div class="scheme3-endpoint-tooltip-arrow absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45"></div>
         </div>
 
         <code
@@ -139,3 +139,21 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.scheme3-endpoint-tooltip {
+  border: 1px solid #dad5c8;
+  background: #fbfaf6;
+  color: #27251f;
+  box-shadow: 0 14px 36px rgba(54, 48, 34, .16);
+}
+.scheme3-endpoint-description { color: #6b695f; }
+.scheme3-endpoint-hint { color: #1e5c42; }
+.scheme3-endpoint-hint-dot { background: #1e5c42; }
+.scheme3-endpoint-tooltip-arrow { border-right: 1px solid #dad5c8; border-bottom: 1px solid #dad5c8; background: #fbfaf6; }
+:global(html.dark .scheme3-endpoint-tooltip) { border-color: #47443a; background: #24231f; color: #f4f2ec; box-shadow: 0 16px 38px rgba(0, 0, 0, .28); }
+:global(html.dark .scheme3-endpoint-description) { color: #aaa69a; }
+:global(html.dark .scheme3-endpoint-hint) { color: #8fc2a5; }
+:global(html.dark .scheme3-endpoint-hint-dot) { background: #8fc2a5; }
+:global(html.dark .scheme3-endpoint-tooltip-arrow) { border-color: #47443a; background: #24231f; }
+</style>

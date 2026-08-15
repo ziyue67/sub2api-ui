@@ -133,6 +133,7 @@ const props = withDefaults(defineProps<{
   startDate?: string
   endDate?: string
   filters?: Record<string, any>
+  palette?: string[]
 }>(), {
   loading: false,
   metric: 'tokens',
@@ -188,6 +189,8 @@ const chartColors = [
   '#84cc16'
 ]
 
+const resolvedChartColors = computed(() => props.palette?.length ? props.palette : chartColors)
+
 const displayGroupStats = computed(() => {
   if (!props.groupStats?.length) return []
 
@@ -203,7 +206,7 @@ const chartData = computed(() => {
     datasets: [
       {
         data: displayGroupStats.value.map((g) => toFiniteNumber(props.metric === 'actual_cost' ? g.actual_cost : g.total_tokens)),
-        backgroundColor: chartColors.slice(0, displayGroupStats.value.length),
+        backgroundColor: resolvedChartColors.value.slice(0, displayGroupStats.value.length),
         borderWidth: 0
       }
     ]

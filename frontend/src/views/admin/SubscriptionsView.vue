@@ -173,6 +173,7 @@
           :columns="columns"
           :data="subscriptions"
           :loading="loading"
+          scheme3
           :server-side-sort="true"
           default-sort-key="created_at"
           default-sort-order="desc"
@@ -202,6 +203,7 @@
           <template #cell-group="{ row }">
             <GroupBadge
               v-if="row.group"
+              scheme3
               :name="row.group.name"
               :platform="row.group.platform"
               :subscription-type="row.group.subscription_type"
@@ -515,6 +517,7 @@
             <template #selected="{ option }">
               <GroupBadge
                 v-if="option"
+                scheme3
                 :name="(option as unknown as GroupOption).label"
                 :platform="(option as unknown as GroupOption).platform"
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"

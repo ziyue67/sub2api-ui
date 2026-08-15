@@ -3,38 +3,45 @@
   <AppLayout>
     <div class="leaderboard-page space-y-6" :data-theme="theme">
      <!-- 顶部操作栏：时间范围 + 数量 + 刷新/重置 -->
-      <section class="lb-card lb-toolbar">
-        <div class="lb-toolbar-group">
-          <span class="lb-toolbar-label">{{ t('leaderboard.periodLabel') }}</span>
-          <div class="w-40">
-            <Select v-model="days" :options="periodOptions" :theme="theme" @change="onDaysChange" />
-          </div>
+      <section class="lb-card lb-header">
+        <div class="lb-header-main">
+          <h1 class="lb-title">{{ t('leaderboard.title') }}</h1>
+          <p class="lb-desc">{{ t('leaderboard.description') }}</p>
         </div>
-        <div class="lb-toolbar-group lb-toolbar-actions">
-          <span class="lb-toolbar-label">{{ t('leaderboard.limit') }}</span>
-          <div class="w-24">
-            <Select v-model="limit" :options="limitOptions" :theme="theme" @change="onLimitChange" />
+        <div class="lb-header-controls">
+          <div class="lb-toolbar-group">
+            <span class="lb-toolbar-label">{{ t('leaderboard.periodLabel') }}</span>
+            <div class="w-40">
+              <Select v-model="days" :options="periodOptions" :theme="theme" @change="onDaysChange" />
+            </div>
           </div>
-          <button
-            type="button"
-            class="lb-btn"
-            :disabled="loading"
-            @click="reload"
-          >
-            <span :class="{ 'lb-spin': loading }">⟳</span>
-            {{ t('leaderboard.refresh') }}
-          </button>
-          <button type="button" class="lb-btn" @click="resetFilters">
-            {{ t('leaderboard.reset') }}
-          </button>
-          <button
-            type="button"
-            class="lb-icon-btn"
-            :title="themeToggleLabel"
-            @click="toggleTheme"
-          >
-            {{ theme === 'dark' ? '☀️' : '🌙' }}
-          </button>
+          <div class="lb-toolbar-group lb-toolbar-actions">
+            <span class="lb-toolbar-label">{{ t('leaderboard.limit') }}</span>
+            <div class="w-24">
+              <Select v-model="limit" :options="limitOptions" :theme="theme" @change="onLimitChange" />
+            </div>
+            <button
+              type="button"
+              class="lb-btn"
+              :disabled="loading"
+              @click="reload"
+            >
+              <Icon name="refresh" size="sm" :class="{ 'lb-spin': loading }" />
+              {{ t('leaderboard.refresh') }}
+            </button>
+            <button type="button" class="lb-btn" @click="resetFilters">
+              {{ t('leaderboard.reset') }}
+            </button>
+            <button
+              type="button"
+              class="lb-icon-btn"
+              :aria-label="themeToggleLabel"
+              :title="themeToggleLabel"
+              @click="toggleTheme"
+            >
+              <Icon :name="theme === 'dark' ? 'sun' : 'moon'" size="sm" />
+            </button>
+          </div>
         </div>
       </section>
 
@@ -158,6 +165,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Select from '@/components/common/Select.vue'
+import Icon from '@/components/icons/Icon.vue'
 import {
   usageAPI,
   type TokenLeaderboardResponse,
@@ -171,15 +179,15 @@ const { t } = useI18n()
 
 type DaysWindow = 1 | 3 | 7 | 14 | 30
 
-const THEME_STORAGE_KEY = 'leaderboard.theme'
-
 const leaderboard = ref<TokenLeaderboardResponse | null>(null)
 const loading = ref(false)
 const error = ref(false)
 const days = ref<DaysWindow>(1)
 const limit = ref(20)
 const sortBy = ref<LeaderboardSortBy>('tokens')
-const theme = ref<'light' | 'dark'>('light')
+const theme = ref<'light' | 'dark'>(
+  typeof document !== 'undefined' && document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+)
 
 // 筛选面板
 const filterModel = ref<string | null>(null)
@@ -192,6 +200,7 @@ const availableGroups = ref<GroupStat[]>([])
 const filterOptionsLoading = ref(false)
 
 let abortController: AbortController | null = null
+let themeObserver: MutationObserver | null = null
 
 const periodOptions = computed(() => [
   { value: 1, label: t('leaderboard.period.day1') },
@@ -423,9 +432,12 @@ function resetFilters() {
 function applyTheme(next: 'light' | 'dark') {
   theme.value = next
   try {
-    localStorage.setItem(THEME_STORAGE_KEY, next)
+    localStorage.setItem('theme', next)
   } catch {
     /* ignore storage errors */
+  }
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('dark', next === 'dark')
   }
 }
 
@@ -434,14 +446,13 @@ function toggleTheme() {
 }
 
 onMounted(() => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY)
-    if (saved === 'dark' || saved === 'light') {
-      theme.value = saved
-    }
-  } catch {
-    /* ignore storage errors */
-  }
+  // The user console has a single source of truth for theme. Ignoring the
+  // historic route-only key prevents this page from drifting from its shell.
+  theme.value = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+  themeObserver = new MutationObserver(() => {
+    theme.value = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   void loadFilterOptions()
   void load()
 })
@@ -451,34 +462,36 @@ onBeforeUnmount(() => {
     abortController.abort()
     abortController = null
   }
+  themeObserver?.disconnect()
+  themeObserver = null
 })
 </script>
 
 <style scoped>
 .leaderboard-page {
-  --lb-bg: #ffffff;
-  --lb-fg: #1f2937;
-  --lb-muted: #6b7280;
-  --lb-border: #e5e7eb;
-  --lb-row-hover: #f9fafb;
-  --lb-me-bg: #eff6ff;
-  --lb-me-border: #3b82f6;
-  --lb-accent: #2563eb;
-  --lb-input-bg: #ffffff;
-  --lb-input-border: #d1d5db;
+  --lb-bg: #fffdf8;
+  --lb-fg: #181711;
+  --lb-muted: #716e63;
+  --lb-border: #d9d3c5;
+  --lb-row-hover: #ece8dd;
+  --lb-me-bg: rgba(30, 92, 66, 0.1);
+  --lb-me-border: #1e5c42;
+  --lb-accent: #1e5c42;
+  --lb-input-bg: #fffdf8;
+  --lb-input-border: #d9d3c5;
 }
 
 .leaderboard-page[data-theme='dark'] {
-  --lb-bg: #0f172a;
-  --lb-fg: #e2e8f0;
-  --lb-muted: #94a3b8;
-  --lb-border: #1e293b;
-  --lb-row-hover: #1e293b;
-  --lb-me-bg: #1e3a5f;
-  --lb-me-border: #3b82f6;
-  --lb-accent: #60a5fa;
-  --lb-input-bg: #151e32;
-  --lb-input-border: #334155;
+  --lb-bg: #24231f;
+  --lb-fg: #f4f2ea;
+  --lb-muted: #aaa69a;
+  --lb-border: #49453b;
+  --lb-row-hover: #2b2924;
+  --lb-me-bg: rgba(143, 194, 165, 0.12);
+  --lb-me-border: #8fc2a5;
+  --lb-accent: #8fc2a5;
+  --lb-input-bg: #24231f;
+  --lb-input-border: #49453b;
 }
 
 /* 深色只覆盖排行榜内容区；导航栏、侧栏和其他路由保持原样。 */
@@ -486,14 +499,51 @@ onBeforeUnmount(() => {
   min-height: calc(100dvh - 8rem);
   padding: 1.5rem;
   margin: -1.5rem;
-  background: #020617;
+  background: #1b1b18;
+}
+
+.lb-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+
+.lb-header-main {
+  min-width: 0;
+}
+
+.lb-title {
+  margin: 0;
+  color: var(--lb-fg);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.7rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.15;
+}
+
+.lb-desc {
+  max-width: 38rem;
+  margin: 0.45rem 0 0;
+  color: var(--lb-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.lb-header-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 
 .lb-card {
   background: var(--lb-bg);
   color: var(--lb-fg);
   border: 1px solid var(--lb-border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 1.25rem;
 }
 
@@ -547,7 +597,7 @@ onBeforeUnmount(() => {
 .lb-input {
   width: 100%;
   border: 1px solid var(--lb-input-border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--lb-input-bg);
   color: var(--lb-fg);
   padding: 0.45rem 0.75rem;
@@ -592,7 +642,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  border-radius: 8px;
+  border-radius: 6px;
   border: 1px solid var(--lb-border);
   background: var(--lb-bg);
   color: var(--lb-fg);
@@ -615,7 +665,7 @@ onBeforeUnmount(() => {
 .lb-icon-btn {
   width: 34px;
   height: 34px;
-  border-radius: 8px;
+  border-radius: 6px;
   border: 1px solid var(--lb-border);
   background: var(--lb-bg);
   color: var(--lb-fg);
@@ -755,7 +805,7 @@ onBeforeUnmount(() => {
   font-size: 0.7rem;
   color: var(--lb-accent);
   border: 1px solid var(--lb-accent);
-  border-radius: 999px;
+  border-radius: 4px;
   padding: 0.05rem 0.4rem;
 }
 
@@ -768,13 +818,18 @@ onBeforeUnmount(() => {
     display: none;
   }
 
-  .lb-toolbar {
+  .lb-header {
     flex-direction: column;
     align-items: stretch;
   }
 
+  .lb-header-controls,
   .lb-toolbar-group {
     justify-content: space-between;
   }
+
+  .lb-header-controls { align-items: stretch; }
+  .lb-header-controls > .lb-toolbar-group { flex: 1 1 100%; }
+  .lb-title { font-size: 1.5rem; }
 }
 </style>

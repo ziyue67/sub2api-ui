@@ -1,50 +1,62 @@
 <template>
   <AppLayout>
-    <div class="space-y-6 pb-12">
-      <!-- Ops-style elevated shell: title toolbar + filters (mirrors OpsDashboardHeader) -->
-      <section
-        class="card sticky top-0 z-20 !rounded-3xl !border-0 p-0 shadow-sm ring-1 ring-gray-900/5 backdrop-blur-sm dark:!bg-dark-800 dark:ring-dark-700 supports-[backdrop-filter]:bg-white/95 dark:supports-[backdrop-filter]:bg-dark-800/95"
-      >
-        <header class="page-header mb-0 flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
-          <div class="min-w-0">
-            <h1 class="page-title flex items-center gap-2 text-xl font-black text-gray-900 dark:text-white">
-              <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400">
+    <div class="scheme3-channel-status-v2 space-y-6 pb-12">
+      <section class="scheme3-v2-control-sheet">
+        <header class="scheme3-v2-control-header">
+          <div class="scheme3-v2-heading min-w-0">
+            <p class="scheme3-v2-kicker">运行观测 / 多维渠道账本</p>
+            <h1 class="scheme3-v2-title">
+              <span class="scheme3-v2-title-mark">
                 <Icon name="chart" size="sm" />
               </span>
               {{ t('channelMonitorV2.title') }}
             </h1>
-            <div class="page-description mt-1.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-              <span class="relative flex h-2 w-2 shrink-0">
-                <span
-                  class="relative inline-flex h-2 w-2 rounded-full"
-                  :class="loading || refreshing ? 'bg-gray-400' : 'bg-green-500'"
-                ></span>
-              </span>
-              <span v-if="refreshing" class="inline-flex items-center gap-1 text-primary-600 dark:text-primary-300">
+            <p class="scheme3-v2-subtitle">成功率、首 Token、缓存与错误路径，统一收进同一套观测秩序。</p>
+            <div class="scheme3-v2-status-line">
+              <span class="scheme3-v2-status-dot" :class="loading || refreshing ? 'is-loading' : 'is-live'"></span>
+              <span v-if="refreshing" class="scheme3-v2-status-copy is-accent">
                 <LoadingSpinner size="sm" />
                 {{ t('channelMonitorV2.updating') }}
               </span>
               <span v-else-if="snapshot?.coverage.data_through">
                 {{ t('channelMonitorV2.updatedTo', { time: formatTime(snapshot.coverage.data_through) }) }}
               </span>
-              <span v-else class="text-gray-400">{{ t('common.loading') }}</span>
+              <span v-else class="scheme3-v2-status-copy is-muted">{{ t('common.loading') }}</span>
               <span
                 v-if="snapshot && !snapshot.coverage.coverage_complete && !bootstrapActive"
-                class="badge badge-warning"
+                class="scheme3-v2-badge scheme3-v2-badge-warning"
               >
                 {{ t('channelMonitorV2.partialCoverage') }}
               </span>
               <span
                 v-if="bootstrapActive"
-                class="badge badge-primary inline-flex items-center gap-1"
+                class="scheme3-v2-badge scheme3-v2-badge-accent inline-flex items-center gap-1"
               >
                 <LoadingSpinner size="sm" />
                 {{ t('channelMonitorV2.bootstrap.progress', { percent: bootstrapPercent }) }}
               </span>
             </div>
           </div>
+          <div class="scheme3-v2-ledger" aria-label="渠道状态概览">
+            <span>
+              <strong>{{ observedRows }}</strong>
+              <small>观测维度</small>
+            </span>
+            <span>
+              <strong class="is-positive">{{ healthyRows }}</strong>
+              <small>运行正常</small>
+            </span>
+            <span>
+              <strong :class="degradedRows > 0 ? 'is-warning' : 'is-positive'">{{ degradedRows }}</strong>
+              <small>需要留意</small>
+            </span>
+            <span>
+              <strong>{{ currentRangeLabel }}</strong>
+              <small>观测窗口</small>
+            </span>
+          </div>
           <button
-            class="btn btn-secondary btn-icon flex h-8 w-8 items-center justify-center rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600"
+            class="scheme3-v2-refresh"
             type="button"
             :title="t('common.refresh')"
             :disabled="loading"
@@ -57,25 +69,25 @@
         <!-- First-upgrade silent backfill: show until 30d product window is covered -->
         <div
           v-if="bootstrapActive"
-          class="border-b border-blue-100 bg-blue-50/90 px-5 py-3 dark:border-blue-900/40 dark:bg-blue-950/40 sm:px-6"
+          class="scheme3-v2-bootstrap"
           role="status"
           aria-live="polite"
         >
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-semibold text-blue-900 dark:text-blue-100">
+              <p class="scheme3-v2-bootstrap-title">
                 {{ t('channelMonitorV2.bootstrap.title') }}
               </p>
-              <p class="mt-0.5 text-xs text-blue-800/80 dark:text-blue-200/80">
+              <p class="scheme3-v2-bootstrap-copy">
                 {{ t('channelMonitorV2.bootstrap.description') }}
               </p>
             </div>
-            <span class="shrink-0 text-xs font-medium tabular-nums text-blue-700 dark:text-blue-300">
+            <span class="scheme3-v2-bootstrap-percent">
               {{ t('channelMonitorV2.bootstrap.progress', { percent: bootstrapPercent }) }}
             </span>
           </div>
           <div
-            class="mt-2.5 h-1.5 overflow-hidden rounded-full bg-blue-200/80 dark:bg-blue-900/60"
+            class="scheme3-v2-progress-track"
             role="progressbar"
             :aria-valuenow="bootstrapPercent"
             aria-valuemin="0"
@@ -83,16 +95,16 @@
             :aria-label="t('channelMonitorV2.bootstrap.working')"
           >
             <div
-              class="h-full rounded-full bg-blue-500 transition-[width] duration-500 ease-out dark:bg-blue-400"
+              class="scheme3-v2-progress-value"
               :style="{ width: `${bootstrapPercent}%` }"
             />
           </div>
         </div>
 
         <!-- Single compact toolbar row: range · filters · view controls -->
-        <div class="monitor-toolbar flex flex-nowrap items-center gap-1.5 overflow-x-auto px-4 py-3 sm:gap-2 sm:px-5">
+        <div class="scheme3-v2-toolbar monitor-toolbar">
           <div
-            class="tabs inline-flex shrink-0"
+            class="scheme3-v2-segmented inline-flex shrink-0"
             role="group"
             :aria-label="t('channelMonitorV2.timeRange')"
           >
@@ -100,15 +112,15 @@
               v-for="option in ranges"
               :key="option.value"
               type="button"
-              class="tab !px-2 !py-1 text-xs sm:!px-2.5"
-              :class="filter.range === option.value ? 'tab-active' : ''"
+              class="scheme3-v2-segment"
+              :class="filter.range === option.value ? 'is-active' : ''"
               @click="setRange(option.value)"
             >
               {{ option.label }}
             </button>
           </div>
 
-          <span class="mx-0.5 hidden h-5 w-px shrink-0 bg-gray-200 dark:bg-dark-700 sm:block" aria-hidden="true"></span>
+          <span class="scheme3-v2-divider" aria-hidden="true"></span>
 
           <FilterMultiSelect
             v-model="filter.platforms"
@@ -133,7 +145,7 @@
           />
           <button
             type="button"
-            class="btn btn-ghost btn-sm shrink-0 !px-2 !py-1 text-xs"
+            class="scheme3-v2-clear shrink-0"
             :disabled="!hasDimensionFilter"
             :class="!hasDimensionFilter ? 'opacity-40' : ''"
             @click="clearDimensions"
@@ -141,32 +153,33 @@
             {{ t('channelMonitorV2.clearFilters') }}
           </button>
 
-          <span class="mx-0.5 hidden h-5 w-px shrink-0 bg-gray-200 dark:bg-dark-700 md:block" aria-hidden="true"></span>
+          <span class="scheme3-v2-divider" aria-hidden="true"></span>
 
           <Select
             v-model="matrixGroupBy"
+            scheme3
             :options="matrixGroupOptions"
             :placeholder="t('channelMonitorV2.groupBy.label')"
-            class="monitor-toolbar-select w-[7.5rem] shrink-0 sm:w-[8.5rem]"
+            class="scheme3-v2-native-select monitor-toolbar-select w-[7.5rem] shrink-0 sm:w-[8.5rem]"
           />
 
           <div
-            class="tabs inline-flex shrink-0"
+            class="scheme3-v2-segmented inline-flex shrink-0"
             role="group"
             :aria-label="t('channelMonitorV2.trendView.label')"
           >
             <button
               type="button"
-              class="tab !px-2 !py-1 text-xs"
-              :class="trendView === 'pulse' ? 'tab-active' : ''"
+              class="scheme3-v2-segment"
+              :class="trendView === 'pulse' ? 'is-active' : ''"
               @click="trendView = 'pulse'"
             >
               {{ t('channelMonitorV2.trendView.pulse') }}
             </button>
             <button
               type="button"
-              class="tab !px-2 !py-1 text-xs"
-              :class="trendView === 'line' ? 'tab-active' : ''"
+              class="scheme3-v2-segment"
+              :class="trendView === 'line' ? 'is-active' : ''"
               @click="trendView = 'line'"
             >
               {{ t('channelMonitorV2.trendView.line') }}
@@ -175,7 +188,7 @@
 
           <div
             v-if="trendView === 'pulse'"
-            class="tabs inline-flex shrink-0"
+            class="scheme3-v2-segmented inline-flex shrink-0"
             role="group"
             :aria-label="t('channelMonitorV2.healthMode.label')"
           >
@@ -183,8 +196,8 @@
               v-for="option in healthModeOptions"
               :key="option.value"
               type="button"
-              class="tab !px-2 !py-1 text-xs"
-              :class="healthMode === option.value ? 'tab-active' : ''"
+              class="scheme3-v2-segment"
+              :class="healthMode === option.value ? 'is-active' : ''"
               @click="healthMode = option.value"
             >
               {{ option.label }}
@@ -196,7 +209,7 @@
       <!-- Overview KPI: success · TTFT · tokens/s(optional) · cache · (+ RPM when throughput visible) -->
       <section
         v-if="snapshot"
-        class="grid grid-cols-2 gap-3 sm:grid-cols-3"
+        class="scheme3-v2-kpi-grid grid grid-cols-2 gap-3 sm:grid-cols-3"
         :class="showThroughput ? 'xl:grid-cols-5' : 'xl:grid-cols-4'"
         :aria-label="t('channelMonitorV2.summaryAria')"
       >
@@ -236,14 +249,14 @@
       </section>
       <section
         v-else-if="loading"
-        class="grid grid-cols-2 gap-3 sm:grid-cols-3"
+        class="scheme3-v2-kpi-grid grid grid-cols-2 gap-3 sm:grid-cols-3"
         :class="showThroughput ? 'xl:grid-cols-5' : 'xl:grid-cols-4'"
         aria-hidden="true"
       >
         <div
           v-for="i in (showThroughput ? 5 : 4)"
           :key="i"
-          class="h-24 animate-pulse rounded-2xl bg-gray-50 dark:bg-dark-900/30"
+          class="scheme3-v2-skeleton h-24 animate-pulse"
         />
       </section>
 
@@ -263,32 +276,32 @@
         />
         <div
           v-else-if="loading"
-          class="card flex min-h-[320px] items-center justify-center !rounded-3xl !border-0 text-sm text-gray-400 shadow-sm ring-1 ring-gray-900/5 dark:ring-dark-700"
+          class="scheme3-v2-loading-panel flex min-h-[320px] items-center justify-center"
         >
           <span class="animate-pulse">{{ t('common.loading') }}</span>
         </div>
       </div>
 
-      <section class="card flex min-h-0 flex-col overflow-hidden !rounded-3xl !border-0 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700">
-        <div class="border-b border-gray-100 px-5 pt-4 dark:border-dark-700 sm:px-6">
-          <nav class="tabs w-full max-w-md sm:w-auto" role="tablist" :aria-label="t('channelMonitorV2.tabs.aria')">
+      <section class="scheme3-v2-data-panel flex min-h-0 flex-col overflow-hidden">
+        <div class="scheme3-v2-data-tabs">
+          <nav class="scheme3-v2-segmented w-full max-w-md sm:w-auto" role="tablist" :aria-label="t('channelMonitorV2.tabs.aria')">
             <button
               v-for="item in tabs"
               :key="item.value"
               type="button"
               role="tab"
-              class="tab flex-1 sm:flex-none"
+              class="scheme3-v2-segment flex-1 sm:flex-none"
               :aria-selected="activeTab === item.value"
-              :class="activeTab === item.value ? 'tab-active' : ''"
+              :class="activeTab === item.value ? 'is-active' : ''"
               @click="activeTab = item.value"
             >
               {{ item.label }}
             </button>
           </nav>
         </div>
-        <div class="min-h-0 max-h-[min(52vh,520px)] overflow-auto p-4 sm:p-5">
-          <div v-if="activeTab === 'models'" class="table-container border-0">
-            <table class="table monitor-table min-w-[720px]">
+        <div class="scheme3-v2-table-scroll min-h-0 max-h-[min(52vh,520px)] overflow-auto p-4 sm:p-5">
+          <div v-if="activeTab === 'models'" class="scheme3-v2-table-wrap border-0">
+            <table class="scheme3-v2-table min-w-[720px]">
               <thead>
                 <tr>
                   <th>{{ t('channelMonitorV2.table.platformModel') }}</th>
@@ -310,8 +323,8 @@
                     <div class="flex items-center gap-2">
                       <span :class="statusDot(row.health)" aria-hidden="true"></span>
                       <div>
-                        <span class="block text-xs text-gray-500 dark:text-dark-400">{{ row.platform }}</span>
-                        <strong class="font-semibold text-gray-900 dark:text-white">
+                        <span class="scheme3-v2-table-meta block text-xs">{{ row.platform }}</span>
+                        <strong class="scheme3-v2-table-primary font-semibold">
                           {{ row.model === '__other__' ? t('channelMonitorV2.otherModels') : row.model }}
                         </strong>
                       </div>
@@ -319,11 +332,11 @@
                   </td>
                   <td>
                     <span class="block">{{ formatPercent(1 - row.metrics.error_rate) }}</span>
-                    <small class="text-xs text-gray-400">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</small>
+                    <small class="scheme3-v2-table-secondary text-xs">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</small>
                   </td>
                   <td>
                     <span class="block">{{ formatMs(row.metrics.ttft.p50_ms) }}</span>
-                    <small class="text-xs text-gray-400">{{ latencyDetail(row.metrics.ttft) }}</small>
+                    <small class="scheme3-v2-table-secondary text-xs">{{ latencyDetail(row.metrics.ttft) }}</small>
                   </td>
                   <td v-if="showThroughput" :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</td>
                   <td>{{ formatPercent(row.metrics.cache_rate) }}</td>
@@ -333,11 +346,11 @@
             </table>
           </div>
 
-          <div v-else-if="activeTab === 'errors'" class="space-y-3">
+          <div v-else-if="activeTab === 'errors'" class="scheme3-v2-error-list space-y-3">
             <div
               v-for="row in errorRows"
               :key="row.category"
-              class="rounded-2xl bg-gray-50 p-4 text-sm dark:bg-dark-900/30"
+              class="scheme3-v2-error-row p-4 text-sm"
               :class="row.ignored ? 'opacity-60' : ''"
             >
               <button
@@ -345,47 +358,47 @@
                 class="grid w-full grid-cols-[minmax(100px,200px)_1fr_auto_auto] items-center gap-3 text-left"
                 @click="toggleError(row.category)"
               >
-                <span class="flex min-w-0 items-center gap-1.5 truncate text-gray-700 dark:text-gray-200">
+                <span class="scheme3-v2-row-label flex min-w-0 items-center gap-1.5 truncate">
                   <span class="truncate">{{ errorLabel(row.category) }}</span>
-                  <span v-if="row.ignored" class="badge badge-gray shrink-0 !px-1.5 !py-0 text-[10px]">{{ t('channelMonitorV2.ignored') }}</span>
+                  <span v-if="row.ignored" class="scheme3-v2-badge scheme3-v2-badge-muted shrink-0 text-[10px]">{{ t('channelMonitorV2.ignored') }}</span>
                 </span>
-                <span class="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                <span class="scheme3-v2-error-track h-2 overflow-hidden">
                   <i
-                    class="block h-full rounded-full"
-                    :class="row.ignored ? 'bg-gray-400 dark:bg-gray-500' : 'bg-gradient-to-r from-red-400 to-red-500'"
+                    class="scheme3-v2-error-fill block h-full"
+                    :class="row.ignored ? 'is-ignored' : 'is-active'"
                     :style="{ width: `${Math.max(2, row.rate * 100)}%` }"
                   ></i>
                 </span>
                 <small
-                  class="w-14 text-right text-xs tabular-nums"
-                  :class="row.ignored ? 'text-gray-400' : 'text-gray-500'"
+                  class="scheme3-v2-error-rate w-14 text-right text-xs tabular-nums"
+                  :class="row.ignored ? 'is-ignored' : ''"
                 >{{ formatPercent(row.rate) }}</small>
-                <Icon name="chevronDown" size="sm" :class="['text-gray-400 transition-transform', expandedErrors.has(row.category) ? 'rotate-180' : '']" />
+                <Icon name="chevronDown" size="sm" class="scheme3-v2-row-chevron transition-transform" :class="expandedErrors.has(row.category) ? 'rotate-180' : ''" />
               </button>
-              <div v-if="expandedErrors.has(row.category)" class="mt-3 space-y-2 border-t border-gray-100 pt-3 dark:border-dark-700">
+              <div v-if="expandedErrors.has(row.category)" class="scheme3-v2-error-details mt-3 space-y-2 pt-3">
                 <template v-if="isAdmin && (row.details || []).length">
                   <div
                     v-for="(detail, index) in row.details || []"
                     :key="`${row.category}:${index}:${detail.message}`"
-                    class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900/50 dark:text-dark-300"
+                    class="scheme3-v2-error-detail px-3 py-2 text-xs"
                   >
                     <div class="mb-1 flex flex-wrap items-center gap-2">
-                      <span class="badge badge-gray !px-1.5 !py-0 text-[10px]">{{ detail.platform || '-' }}</span>
+                      <span class="scheme3-v2-badge scheme3-v2-badge-muted text-[10px]">{{ detail.platform || '-' }}</span>
                       <span class="truncate font-medium">{{ detail.model || '-' }}</span>
-                      <span v-if="detail.status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.http', { code: detail.status_code }) }}</span>
-                      <span v-if="detail.upstream_status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.upstream', { code: detail.upstream_status_code }) }}</span>
-                      <span class="ml-auto text-gray-400">×{{ detail.count }}</span>
+                      <span v-if="detail.status_code" class="scheme3-v2-table-secondary">{{ t('channelMonitorV2.errorDetail.http', { code: detail.status_code }) }}</span>
+                      <span v-if="detail.upstream_status_code" class="scheme3-v2-table-secondary">{{ t('channelMonitorV2.errorDetail.upstream', { code: detail.upstream_status_code }) }}</span>
+                      <span class="scheme3-v2-table-secondary ml-auto">×{{ detail.count }}</span>
                     </div>
                     <p class="break-words leading-relaxed">{{ detail.message || detail.error_type || t('channelMonitorV2.errorDetail.noMessage') }}</p>
                   </div>
                 </template>
-                <p v-else class="text-xs text-gray-400">{{ t('channelMonitorV2.errorDetail.empty') }}</p>
+                <p v-else class="scheme3-v2-table-secondary text-xs">{{ t('channelMonitorV2.errorDetail.empty') }}</p>
               </div>
             </div>
           </div>
 
-          <div v-else class="table-container border-0">
-            <table class="table monitor-table min-w-[640px]">
+          <div v-else class="scheme3-v2-table-wrap border-0">
+            <table class="scheme3-v2-table min-w-[640px]">
               <thead>
                 <tr>
                   <th class="w-16">{{ t('channelMonitorV2.table.rank') }}</th>
@@ -401,30 +414,28 @@
                 <tr
                   v-for="row in userRows"
                   :key="row.user_id || row.display_label"
-                  :class="row.is_self
-                    ? 'bg-primary-50 ring-1 ring-inset ring-primary-200/80 dark:bg-primary-900/25 dark:ring-primary-700/50'
-                    : ''"
+                  :class="row.is_self ? 'scheme3-v2-current-row' : ''"
                 >
                   <td><MonitorRankBadge :rank="row.rank" /></td>
                   <td>
                     <strong
                       class="font-semibold"
-                      :class="row.is_self ? 'text-primary-700 dark:text-primary-300' : 'text-gray-900 dark:text-white'"
+                      :class="row.is_self ? 'scheme3-v2-current-user' : ''"
                     >
                       {{ row.display_label }}
                       <span
                         v-if="row.is_self"
-                        class="badge badge-primary ml-2 !px-1.5 !py-0 text-[10px]"
+                        class="scheme3-v2-current-badge ml-2 text-[10px]"
                       >{{ t('channelMonitorV2.currentUser') }}</span>
                     </strong>
                   </td>
                   <td>
                     <span class="block">{{ formatPercent(1 - row.metrics.error_rate) }}</span>
-                    <small class="text-xs text-gray-400">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</small>
+                    <small class="scheme3-v2-table-secondary text-xs">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</small>
                   </td>
                   <td>
                     <span class="block">{{ formatMs(row.metrics.ttft.p50_ms) }}</span>
-                    <small class="text-xs text-gray-400">{{ latencyDetail(row.metrics.ttft) }}</small>
+                    <small class="scheme3-v2-table-secondary text-xs">{{ latencyDetail(row.metrics.ttft) }}</small>
                   </td>
                   <td v-if="showThroughput" :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</td>
                   <td>{{ formatPercent(row.metrics.cache_rate) }}</td>
@@ -434,16 +445,16 @@
             </table>
           </div>
 
-          <div v-if="tabLoading" class="empty-state py-10 text-sm text-gray-400">{{ t('common.loading') }}</div>
-          <div v-else-if="activeRowsEmpty" class="empty-state py-10">
-            <p class="empty-state-title text-base">
+          <div v-if="tabLoading" class="scheme3-v2-empty py-10 text-sm">{{ t('common.loading') }}</div>
+          <div v-else-if="activeRowsEmpty" class="scheme3-v2-empty py-10">
+            <p class="scheme3-v2-empty-title text-base">
               {{
                 bootstrapActive
                   ? t('channelMonitorV2.bootstrap.title')
                   : t('channelMonitorV2.empty.title')
               }}
             </p>
-            <p class="empty-state-description">
+            <p class="scheme3-v2-empty-description">
               {{
                 bootstrapActive
                   ? t('channelMonitorV2.bootstrap.description')
@@ -654,6 +665,10 @@ const matrixRows = computed(() => {
   }
   return items
 })
+const observedRows = computed(() => matrixRows.value.length)
+const healthyRows = computed(() => matrixRows.value.filter((row) => row.health.overall === 'healthy').length)
+const degradedRows = computed(() => Math.max(0, observedRows.value - healthyRows.value))
+const currentRangeLabel = computed(() => ranges.value.find((item) => item.value === filter.value.range)?.label || filter.value.range)
 
 function csv(value: unknown) {
   return typeof value === 'string' ? value.split(',').filter(Boolean) : []
@@ -861,7 +876,7 @@ function formatTime(value: string) {
 }
 function statusDot(health?: MonitorHealth | HealthState) {
   if (!health || typeof health === 'string') {
-    return `status-dot health-${health || 'unknown'}`
+    return `scheme3-v2-status-dot health-${health || 'unknown'}`
   }
   // Prefer multi-band score when available; otherwise fall back to the coarse
   // overall state for mixed-version/older payloads.
@@ -869,7 +884,7 @@ function statusDot(health?: MonitorHealth | HealthState) {
     health.score != null
       ? healthScoreClass(health, 'overall', 0)
       : `health-${health.overall || 'unknown'}`
-  return `status-dot ${klass}`
+  return `scheme3-v2-status-dot ${klass}`
 }
 function errorLabel(value: string) {
   const key = `channelMonitorV2.errorCategories.${value}`
@@ -912,33 +927,271 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.status-dot {
+.scheme3-channel-status-v2 {
+  --v2-paper: #f4f2ec;
+  --v2-surface: #fffefa;
+  --v2-subtle: #f1eee6;
+  --v2-ink: #27251f;
+  --v2-muted: #777266;
+  --v2-soft: #a49e90;
+  --v2-line: #d8d2c3;
+  --v2-accent: #1e5c42;
+  --v2-amber: #b7791f;
+  --v2-danger: #9e4d3d;
+  color: var(--v2-ink);
+}
+
+.scheme3-v2-control-sheet { border-bottom: 1px solid var(--v2-line); }
+.scheme3-v2-control-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 1rem;
+  border-bottom: 1px solid var(--v2-line);
+  padding: .1rem 0 1rem;
+}
+.scheme3-v2-kicker {
+  margin: 0;
+  color: var(--v2-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .61rem;
+  font-weight: 800;
+  letter-spacing: .1em;
+}
+.scheme3-v2-title {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  margin: .34rem 0 0;
+  color: var(--v2-ink);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(1.55rem, 2.6vw, 2.1rem);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.scheme3-v2-title-mark {
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(30, 92, 66, .28);
+  border-radius: 7px;
+  background: rgba(30, 92, 66, .08);
+  color: var(--v2-accent);
+}
+.scheme3-v2-subtitle {
+  max-width: 38rem;
+  margin: .42rem 0 0;
+  color: var(--v2-muted);
+  font-size: .74rem;
+  line-height: 1.55;
+}
+.scheme3-v2-status-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .45rem;
+  margin-top: .55rem;
+  color: var(--v2-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .6rem;
+  font-weight: 700;
+}
+.scheme3-v2-status-dot {
   display: inline-block;
-  height: 0.5rem;
-  width: 0.5rem;
-  flex: none;
-  border-radius: 9999px;
+  width: .42rem;
+  height: .42rem;
+  border-radius: 999px;
+  background: var(--v2-soft);
 }
-/* Multi-stop green → yellow → red score bands */
-.health-score10 { background: #16a34a; }
-.health-score9  { background: #22c55e; }
-.health-score8  { background: #4ade80; }
-.health-score7  { background: #a3e635; }
-.health-score6  { background: #facc15; }
-.health-score5  { background: #fbbf24; }
-.health-score4  { background: #f59e0b; }
-.health-score3  { background: #f97316; }
-.health-score2  { background: #fb7185; }
-.health-score1  { background: #f87171; }
-.health-score0  { background: rgb(239, 67, 67); }
-.health-healthy  { background: #22c55e; }
-.health-warning  { background: #f59e0b; }
-.health-critical { background: #ef4444; }
-.health-unknown  { background: #9ca3af; }
-.matrix-select {
-  min-width: 10rem;
+.scheme3-v2-status-dot.is-live { background: var(--v2-accent); box-shadow: 0 0 0 .2rem rgba(30, 92, 66, .12); }
+.scheme3-v2-status-dot.is-loading { background: var(--v2-amber); }
+.scheme3-v2-status-dot.health-score10 { background: var(--v2-accent); }
+.scheme3-v2-status-dot.health-score9,
+.scheme3-v2-status-dot.health-score8,
+.scheme3-v2-status-dot.health-score7 { background: #4e8d68; }
+.scheme3-v2-status-dot.health-score6,
+.scheme3-v2-status-dot.health-score5,
+.scheme3-v2-status-dot.health-score4 { background: var(--v2-amber); }
+.scheme3-v2-status-dot.health-score3,
+.scheme3-v2-status-dot.health-score2,
+.scheme3-v2-status-dot.health-score1,
+.scheme3-v2-status-dot.health-score0 { background: var(--v2-danger); }
+.scheme3-v2-status-dot.health-healthy { background: var(--v2-accent); }
+.scheme3-v2-status-dot.health-warning { background: var(--v2-amber); }
+.scheme3-v2-status-dot.health-critical { background: var(--v2-danger); }
+.scheme3-v2-status-dot.health-unknown { background: var(--v2-soft); }
+.scheme3-v2-status-copy { display: inline-flex; align-items: center; gap: .3rem; }
+.scheme3-v2-status-copy.is-accent { color: var(--v2-accent); }
+.scheme3-v2-status-copy.is-muted { color: var(--v2-soft); }
+.scheme3-v2-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: .18rem .42rem;
+  font-size: .54rem;
+  font-weight: 800;
+  letter-spacing: .04em;
 }
-details > summary::-webkit-details-marker {
-  display: none;
+.scheme3-v2-badge-warning { border-color: rgba(183, 121, 31, .24); background: rgba(183, 121, 31, .1); color: var(--v2-amber); }
+.scheme3-v2-badge-accent { border-color: rgba(30, 92, 66, .22); background: rgba(30, 92, 66, .08); color: var(--v2-accent); }
+.scheme3-v2-ledger {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  border: 1px solid var(--v2-line);
+  border-radius: 7px;
+  background: var(--v2-surface);
 }
+.scheme3-v2-ledger span {
+  display: grid;
+  min-width: 4.8rem;
+  gap: .08rem;
+  border-right: 1px solid var(--v2-line);
+  padding: .48rem .68rem;
+  text-align: right;
+}
+.scheme3-v2-ledger span:last-child { border-right: 0; }
+.scheme3-v2-ledger strong {
+  color: var(--v2-accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.scheme3-v2-ledger strong.is-positive { color: var(--v2-accent); }
+.scheme3-v2-ledger strong.is-warning { color: var(--v2-amber); }
+.scheme3-v2-ledger small {
+  color: var(--v2-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .52rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.scheme3-v2-refresh {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--v2-line);
+  border-radius: 7px;
+  background: var(--v2-surface);
+  color: var(--v2-muted);
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease;
+}
+.scheme3-v2-refresh:hover { border-color: rgba(30, 92, 66, .28); background: var(--v2-subtle); color: var(--v2-accent); }
+.scheme3-v2-refresh:disabled { cursor: not-allowed; opacity: .5; }
+.scheme3-v2-bootstrap {
+  border-bottom: 1px solid rgba(30, 92, 66, .22);
+  background: rgba(30, 92, 66, .06);
+  padding: .7rem 0;
+}
+.scheme3-v2-bootstrap-title { color: var(--v2-accent); font-size: .78rem; font-weight: 800; }
+.scheme3-v2-bootstrap-copy { margin-top: .15rem; color: var(--v2-muted); font-size: .66rem; }
+.scheme3-v2-bootstrap-percent { color: var(--v2-accent); font-size: .66rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.scheme3-v2-progress-track { height: .34rem; margin-top: .6rem; overflow: hidden; border-radius: 999px; background: rgba(30, 92, 66, .14); }
+.scheme3-v2-progress-value { height: 100%; border-radius: inherit; background: var(--v2-accent); transition: width 500ms ease-out; }
+.scheme3-v2-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .42rem;
+  overflow-x: auto;
+  padding: .7rem 0;
+}
+.scheme3-v2-divider { display: block; width: 1px; height: 1.25rem; flex: none; background: var(--v2-line); }
+.scheme3-channel-status-v2 :deep(.scheme3-v2-segmented) {
+  gap: 0 !important;
+  border: 1px solid var(--v2-line) !important;
+  border-radius: 7px !important;
+  background: var(--v2-subtle) !important;
+  padding: 2px !important;
+}
+.scheme3-channel-status-v2 :deep(.scheme3-v2-segment) {
+  min-height: 1.75rem;
+  border-radius: 5px !important;
+  padding: .28rem .5rem !important;
+  color: var(--v2-muted) !important;
+  font-size: .61rem;
+  font-weight: 800;
+  box-shadow: none !important;
+}
+.scheme3-channel-status-v2 :deep(.scheme3-v2-segment:hover) { color: var(--v2-ink) !important; }
+.scheme3-channel-status-v2 :deep(.scheme3-v2-segment.is-active) { background: var(--v2-surface) !important; color: var(--v2-accent) !important; box-shadow: 0 2px 6px rgba(54, 48, 34, .08) !important; }
+.scheme3-v2-clear { border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--v2-muted); padding: .38rem .55rem; font-size: .62rem; font-weight: 800; }
+.scheme3-v2-clear:hover { background: var(--v2-subtle) !important; color: var(--v2-ink) !important; }
+.scheme3-channel-status-v2 :deep(.scheme3-v2-native-select .scheme3-select-trigger),
+.scheme3-channel-status-v2 :deep(.scheme3-v2-native-select select) {
+  border-color: var(--v2-line) !important;
+  border-radius: 7px !important;
+  background: var(--v2-surface) !important;
+  color: var(--v2-ink) !important;
+  box-shadow: none !important;
+}
+.scheme3-v2-kpi-grid { margin-top: -.15rem; }
+.scheme3-v2-skeleton { border: 1px solid var(--v2-line); border-radius: 8px; background: var(--v2-subtle); }
+.scheme3-v2-loading-panel { border: 1px dashed var(--v2-line); border-radius: 8px; color: var(--v2-muted); }
+.scheme3-v2-data-panel { border: 1px solid var(--v2-line); border-radius: 8px; background: var(--v2-surface); }
+.scheme3-v2-data-tabs { border-bottom: 1px solid var(--v2-line); padding: .7rem .9rem 0; }
+.scheme3-v2-table-scroll { scrollbar-color: var(--v2-soft) transparent; }
+.scheme3-channel-status-v2 :deep(.scheme3-v2-table) { width: 100%; border-collapse: collapse; color: var(--v2-ink); }
+.scheme3-channel-status-v2 :deep(.scheme3-v2-table thead) { background: var(--v2-subtle); }
+.scheme3-channel-status-v2 :deep(.scheme3-v2-table th) { border-color: var(--v2-line) !important; color: var(--v2-muted) !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .57rem; letter-spacing: .05em; text-transform: uppercase; }
+.scheme3-channel-status-v2 :deep(.scheme3-v2-table td) { border-color: var(--v2-line) !important; color: var(--v2-ink) !important; font-size: .7rem; }
+.scheme3-channel-status-v2 :deep(.scheme3-v2-table tbody tr:hover) { background: var(--v2-subtle); }
+.scheme3-v2-error-row { border-bottom: 1px solid var(--v2-line); background: transparent; }
+.scheme3-v2-error-row:last-child { border-bottom: 0; }
+.scheme3-v2-row-label { color: var(--v2-ink); }
+.scheme3-v2-error-track { border-radius: 999px; background: var(--v2-subtle); }
+.scheme3-v2-error-fill { border-radius: inherit; }
+.scheme3-v2-error-fill.is-active { background: var(--v2-danger); }
+.scheme3-v2-error-fill.is-ignored { background: var(--v2-soft); }
+.scheme3-v2-error-rate { color: var(--v2-muted); }
+.scheme3-v2-error-rate.is-ignored { color: var(--v2-soft); }
+.scheme3-v2-row-chevron { color: var(--v2-muted); }
+.scheme3-v2-error-details { border-top: 1px solid var(--v2-line); }
+.scheme3-v2-error-detail { border: 1px solid var(--v2-line); border-radius: 6px; background: var(--v2-subtle); color: var(--v2-muted); }
+.scheme3-v2-current-row { background: rgba(30, 92, 66, .08) !important; box-shadow: inset 3px 0 0 var(--v2-accent); }
+.scheme3-v2-current-user { color: var(--v2-accent) !important; }
+.scheme3-v2-current-badge { border: 1px solid rgba(30, 92, 66, .2); border-radius: 999px; background: rgba(30, 92, 66, .1); color: var(--v2-accent); padding: .14rem .35rem; font-weight: 800; }
+.scheme3-v2-badge-muted { border-color: var(--v2-line); background: var(--v2-subtle); color: var(--v2-muted); }
+.scheme3-v2-table-meta,
+.scheme3-v2-table-secondary { color: var(--v2-muted); }
+.scheme3-v2-table-primary { color: var(--v2-ink); }
+.scheme3-v2-empty { color: var(--v2-muted); text-align: center; }
+.scheme3-v2-empty-title { color: var(--v2-ink); font-weight: 700; }
+.scheme3-v2-empty-description { color: var(--v2-muted); font-size: .72rem; }
+
+:global(.dark .scheme3-channel-status-v2) {
+  --v2-paper: #1b1b18;
+  --v2-surface: #24231f;
+  --v2-subtle: #2b2924;
+  --v2-ink: #f4f2ec;
+  --v2-muted: #aaa69a;
+  --v2-soft: #827e72;
+  --v2-line: #47443a;
+  --v2-accent: #8fc2a5;
+  --v2-amber: #d3a55a;
+  --v2-danger: #d38b79;
+}
+:global(.dark .scheme3-channel-status-v2 .scheme3-v2-title-mark) { border-color: rgba(143, 194, 165, .3); background: rgba(143, 194, 165, .1); }
+:global(.dark .scheme3-channel-status-v2 .scheme3-v2-status-dot.is-live) { box-shadow: 0 0 0 .2rem rgba(143, 194, 165, .12); }
+:global(.dark .scheme3-channel-status-v2 .scheme3-v2-current-row) { background: rgba(143, 194, 165, .1) !important; }
+
+@media (max-width: 767px) {
+  .scheme3-v2-control-header { grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: .7rem; }
+  .scheme3-v2-ledger { grid-column: 1 / -1; width: 100%; justify-content: stretch; }
+  .scheme3-v2-ledger span { min-width: 0; flex: 1 1 45%; padding: .48rem .42rem; }
+  .scheme3-v2-refresh { grid-column: 2; grid-row: 1; }
+  .scheme3-v2-toolbar { padding-bottom: .55rem; }
+}
+@media (max-width: 520px) {
+  .scheme3-v2-control-header { grid-template-columns: minmax(0, 1fr) auto; }
+  .scheme3-v2-subtitle { max-width: 19rem; }
+  .scheme3-v2-data-tabs { padding-left: .55rem; padding-right: .55rem; }
+}
+details > summary::-webkit-details-marker { display: none; }
 </style>

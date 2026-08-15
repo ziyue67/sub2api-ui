@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-5 p-1">
+  <div class="scheme3-model-plaza-filters space-y-5 p-1">
     <!-- 一级:平台 -->
     <div class="flex flex-wrap items-center gap-3">
       <span class="w-12 shrink-0 text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-dark-500">
@@ -88,7 +88,7 @@
           :value="search"
           type="text"
           :placeholder="t('modelPlaza.filters.searchPlaceholder')"
-          class="w-full bg-white/50 dark:bg-dark-800/50 backdrop-blur-sm border border-gray-200 dark:border-dark-700 rounded-2xl py-2.5 pl-11 pr-10 text-sm ring-primary-500/20 transition-all focus:border-primary-500 focus:bg-white dark:focus:bg-dark-800 focus:ring-4 focus:shadow-glow outline-none"
+          class="scheme3-model-plaza-search w-full"
           @input="$emit('update:search', ($event.target as HTMLInputElement).value)"
         />
         <button
@@ -165,12 +165,20 @@ function rateEnabled(r: number): boolean {
 
 function chipClass(active: boolean): string {
   return active
-    ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-sm shadow-primary-500/30'
-    : 'bg-white text-gray-600 ring-1 ring-inset ring-gray-200 enabled:hover:bg-gray-50 enabled:hover:text-gray-900 enabled:hover:ring-gray-300 dark:bg-dark-800/60 dark:text-dark-300 dark:ring-dark-700 dark:enabled:hover:bg-dark-800 dark:enabled:hover:text-white'
+    ? 'scheme3-model-plaza-chip-active'
+    : 'scheme3-model-plaza-chip'
 }
 </script>
 
 <style scoped>
+.scheme3-model-plaza-filters { --filter-ink: var(--scheme3-ink,#16150f); --filter-muted: var(--scheme3-muted,#6b695f); --filter-line: var(--scheme3-line,#dad5c8); --filter-card: var(--scheme3-card,#fbfaf6); color: var(--filter-ink); }
+.scheme3-model-plaza-filters > div { gap: .4rem; }.scheme3-model-plaza-filters > div > span { width: 3.5rem; color: var(--filter-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .56rem; letter-spacing: .09em; }
+.scheme3-model-plaza-chip,.scheme3-model-plaza-chip-active,.scheme3-model-plaza-filters :deep(.chip-tinted),.scheme3-model-plaza-filters :deep(.chip-tinted-active) { border-radius: 5px; padding: .35rem .65rem; font-size: .64rem; font-weight: 800; transition: background-color 150ms ease,border-color 150ms ease,color 150ms ease,transform 150ms ease; }
+.scheme3-model-plaza-chip { border: 1px solid var(--filter-line); background: var(--filter-card); color: var(--filter-muted); }.scheme3-model-plaza-chip:hover { border-color: rgba(30,92,66,.4); color: #1e5c42; }.scheme3-model-plaza-chip-active { border: 1px solid #1e5c42; background: #1e5c42; color: #f4f2ec; }
+.scheme3-model-plaza-filters :deep(.chip-tinted) { border: 1px solid var(--filter-line); color: var(--filter-muted); background: var(--filter-card); box-shadow: none; }.scheme3-model-plaza-filters :deep(.chip-tinted-active) { border: 1px solid #1e5c42; color: #f4f2ec; background: #1e5c42; box-shadow: none; }
+.scheme3-model-plaza-search { min-height: 2.35rem; border: 1px solid var(--filter-line); border-radius: 6px; padding: .55rem 2.2rem .55rem 2.6rem; background: var(--filter-card); color: var(--filter-ink); outline: 0; font-size: .7rem; }.scheme3-model-plaza-search:focus { border-color: #1e5c42; box-shadow: 0 0 0 3px rgba(30,92,66,.12); }.scheme3-model-plaza-search::placeholder { color: #979286; }
+.scheme3-model-plaza-filters :deep(.text-primary-500) { color: #1e5c42; }
+:global(html.dark) .scheme3-model-plaza-filters { color: #f4f2ec; }:global(html.dark) .scheme3-model-plaza-chip,:global(html.dark) .scheme3-model-plaza-search { border-color: #47443a; background: #24231f; color: #dedbd1; }
 /* 平台/分组 chip 的配色统一从 --chip-accent(平台主色)派生,新增平台无需扩展样式。
    激活态与非激活态在模板上互斥挂载,避免选择器优先级互相覆盖。 */
 .chip-tinted {

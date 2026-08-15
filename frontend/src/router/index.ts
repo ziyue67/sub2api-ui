@@ -13,6 +13,7 @@ import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
+import { resolveDisplaySiteName } from '@/utils/branding'
 
 /**
  * Route definitions with lazy loading
@@ -25,7 +26,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/setup/SetupWizardView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Setup'
+      title: '初始化设置'
     }
   },
 
@@ -36,7 +37,8 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/HomeView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Home'
+      title: '首页',
+      titleKey: 'home.title'
     }
   },
   {
@@ -45,7 +47,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/auth/LoginView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Login',
+      title: '登录',
       titleKey: 'home.login'
     }
   },
@@ -55,7 +57,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/auth/RegisterView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Register',
+      title: '注册',
       titleKey: 'auth.createAccount'
     }
   },
@@ -65,7 +67,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/auth/EmailVerifyView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Verify Email'
+      title: '邮箱验证'
     }
   },
   {
@@ -125,7 +127,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/auth/DingTalkEmailCompletionView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'DingTalk Email Completion'
+      title: '钉钉邮箱补全'
     }
   },
   {
@@ -154,7 +156,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/auth/ResetPasswordView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Reset Password'
+      title: '重置密码'
     }
   },
   {
@@ -163,7 +165,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/KeyUsageView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Key Usage',
+      title: '密钥用量查询',
     }
   },
   {
@@ -172,7 +174,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/public/LegalDocumentView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Legal Document'
+      title: '法律文档'
     }
   },
   {
@@ -194,13 +196,28 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/dashboard',
     name: 'Dashboard',
-    component: () => import('@/views/user/DashboardView.vue'),
+    // Keep the canonical dashboard URL on the scheme-three console. The
+    // original DashboardView remains in the tree as a rollback/reference
+    // implementation, while this route keeps existing auth redirects intact.
+    component: () => import('@/views/user/Scheme3DashboardView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
       title: 'Dashboard',
-      titleKey: 'dashboard.title',
-      descriptionKey: 'dashboard.welcomeMessage'
+      titleKey: 'nav.scheme3Workspace',
+      descriptionKey: 'dashboard.scheme3Description'
+    }
+  },
+  {
+    path: '/scheme3-dashboard',
+    name: 'Scheme3Dashboard',
+    component: () => import('@/views/user/Scheme3DashboardView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Shour or ToKen 控制台',
+      titleKey: 'nav.scheme3Workspace',
+      description: '调用账本与路由观察'
     }
   },
   {
@@ -222,7 +239,8 @@ const routes: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Model Square'
+      title: '模型广场',
+      titleKey: 'modelPlaza.title'
     }
   },
   {
@@ -270,7 +288,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/user/StudioBridgeSessionProbeView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Studio Bridge Session Probe',
+      title: '会话探测',
       hideHeaderTitle: true,
       denseWorkspace: true
     }
@@ -829,7 +847,8 @@ const routes: RouteRecordRaw[] = [
     name: 'NotFound',
     component: () => import('@/views/NotFoundView.vue'),
     meta: {
-      title: '404 Not Found'
+      requiresAuth: false,
+      title: '页面未找到'
     }
   }
 ]
@@ -906,7 +925,7 @@ router.beforeEach(async (to, _from, next) => {
     ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
     ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
   ]
-  document.title = resolveRouteDocumentTitle(to, appStore.siteName, customMenuItems)
+  document.title = resolveRouteDocumentTitle(to, resolveDisplaySiteName(appStore.siteName), customMenuItems)
 
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true

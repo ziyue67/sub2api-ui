@@ -1,10 +1,7 @@
 <template>
   <div
     :class="[
-      'group relative flex flex-col overflow-hidden rounded-2xl border transition-all',
-      'hover:shadow-xl hover:-translate-y-0.5',
-      borderClass,
-      'bg-white dark:bg-dark-800',
+      'scheme3-plan-card group relative flex flex-col overflow-hidden border transition-all',
     ]"
   >
     <!-- Colored top accent bar -->
@@ -44,7 +41,7 @@
       </div>
 
       <!-- Group quota info (compact) -->
-      <div class="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-dark-700/50">
+      <div class="scheme3-plan-quota mb-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
         <div class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.rate') }}</span>
           <span class="font-medium text-gray-700 dark:text-gray-300">{{ rateDisplay }}</span>
@@ -73,7 +70,7 @@
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.models') }}</span>
           <div class="flex flex-wrap justify-end gap-1">
             <span v-for="scope in modelScopeLabels" :key="scope"
-              class="rounded bg-gray-200/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-600 dark:text-gray-300">
+              class="scheme3-plan-scope">
               {{ scope }}
             </span>
           </div>
@@ -95,7 +92,7 @@
       <!-- Subscribe Button -->
       <button
         type="button"
-        :class="['w-full rounded-xl py-2.5 text-sm font-semibold transition-all active:scale-[0.98]', btnClass]"
+        :class="['scheme3-plan-button w-full transition-all active:scale-[0.98]', btnClass]"
         @click="emit('select', plan)"
       >
         {{ isRenewal ? t('payment.renewNow') : t('payment.subscribeNow') }}
@@ -116,7 +113,6 @@ import { currencySymbol } from '@/components/payment/currency'
 import {
   platformAccentBarClass,
   platformBadgeLightClass,
-  platformBorderClass,
   platformTextClass,
   platformIconClass,
   platformButtonClass,
@@ -135,7 +131,6 @@ const isRenewal = computed(() =>
 
 // Derived color classes from central config
 const accentClass = computed(() => platformAccentBarClass(platform.value))
-const borderClass = computed(() => platformBorderClass(platform.value))
 const badgeLightClass = computed(() => platformBadgeLightClass(platform.value))
 const textClass = computed(() => platformTextClass(platform.value))
 const iconClass = computed(() => platformIconClass(platform.value))
@@ -178,3 +173,22 @@ const modelScopeLabels = computed(() => {
 
 const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
 </script>
+
+<style scoped>
+.scheme3-plan-card { border-color: #d8d2c3; border-radius: 8px; background: #fffefa; box-shadow: 0 10px 24px rgba(54,48,34,.06); }
+.scheme3-plan-card:hover { border-color: rgba(30,92,66,.35); box-shadow: 0 14px 30px rgba(54,48,34,.1); transform: translateY(-2px); }
+.scheme3-plan-card > div:first-child { height: 3px; opacity: .78; }
+.scheme3-plan-quota { border: 1px solid #e0dacc; border-radius: 7px; padding: .62rem .72rem; background: #f5f2ea; }
+.scheme3-plan-quota > div { min-width: 0; }
+.scheme3-plan-scope { border: 1px solid #d8d2c3; border-radius: 999px; padding: .12rem .38rem; background: #fffefa; color: #655f53; font-size: .6rem; font-weight: 700; }
+.scheme3-plan-button { border: 0; border-radius: 7px; padding: .62rem .75rem; background: #1e5c42 !important; color: #fffefa !important; font-size: .74rem; font-weight: 800; box-shadow: 0 8px 16px rgba(30,92,66,.14); }
+.scheme3-plan-button:hover { background: #174a35 !important; }
+.scheme3-plan-button:focus-visible { outline: 3px solid rgba(30,92,66,.22); outline-offset: 2px; }
+
+:global(.dark .scheme3-plan-card) { border-color: #47443a; background: #24231f; box-shadow: 0 10px 24px rgba(0,0,0,.16); }
+:global(.dark .scheme3-plan-card:hover) { border-color: rgba(143,194,165,.36); box-shadow: 0 14px 30px rgba(0,0,0,.22); }
+:global(.dark .scheme3-plan-quota) { border-color: #47443a; background: #2b2924; }
+:global(.dark .scheme3-plan-scope) { border-color: #575349; background: #24231f; color: #c4c0b6; }
+:global(.dark .scheme3-plan-button) { background: #8fc2a5 !important; color: #1b1b18 !important; box-shadow: 0 8px 16px rgba(143,194,165,.13); }
+:global(.dark .scheme3-plan-button:hover) { background: #a7d2b7 !important; }
+</style>

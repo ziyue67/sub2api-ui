@@ -1,5 +1,5 @@
 <template>
-  <DataTable :columns="columns" :data="orders" :loading="loading">
+  <DataTable :columns="columns" :data="orders" :loading="loading" scheme3>
     <template #cell-id="{ value }">
       <span class="font-mono text-sm">#{{ value }}</span>
     </template>

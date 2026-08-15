@@ -1,5 +1,6 @@
 export default {
     title: 'Token Leaderboard',
+    adminTitle: 'Admin Token Leaderboard',
     description: 'View the top users by tokens or requests with multi-dimensional filters.',
     periodLabel: 'Ranking period',
     limit: 'Limit',
