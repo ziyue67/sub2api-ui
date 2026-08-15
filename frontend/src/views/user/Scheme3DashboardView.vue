@@ -1,74 +1,6 @@
 <template>
-  <div class="console-app" :class="{ 'console-app-collapsed': navCollapsed }">
-    <aside class="console-nav" :class="{ 'console-nav-open': mobileNavOpen }" aria-label="空间导航">
-      <div class="console-nav-brand">
-        <router-link to="/dashboard" class="console-brand-mark" aria-label="返回控制台" @click="closeMobileNav">
-          <img v-if="appStore.siteLogo" :src="appStore.siteLogo" alt="" />
-          <span v-else>ST</span>
-        </router-link>
-        <div class="console-brand-copy">
-          <strong>Shour or ToKen</strong>
-          <span>个人工作空间</span>
-        </div>
-        <button type="button" class="console-nav-close" aria-label="关闭导航" @click="closeMobileNav">
-          <Icon name="x" size="sm" />
-        </button>
-      </div>
-
-      <div class="console-nav-caption">空间导航</div>
-      <nav class="console-nav-links">
-        <section v-for="section in consoleNavSections" :key="section.id" class="console-nav-section">
-          <div class="console-nav-section-label">{{ section.label }}</div>
-          <router-link v-for="item in section.items" :key="item.path" :to="{ path: item.path, query: item.query }" class="console-nav-link" :class="{ 'console-nav-link-active': isNavActive(item.path) }" @click="closeMobileNav">
-            <span class="console-nav-icon"><Icon :name="item.icon" size="sm" /></span>
-            <span class="console-nav-link-text">{{ item.label }}</span>
-            <span v-if="item.path === '/dashboard'" class="console-nav-current">当前</span>
-          </router-link>
-        </section>
-      </nav>
-
-      <div class="console-nav-foot">
-        <div class="console-nav-account">
-          <span class="console-account-avatar">{{ userInitials }}</span>
-          <div class="console-account-copy"><strong>{{ userLabel }}</strong><span>已登录</span></div>
-        </div>
-        <button type="button" class="console-nav-action" @click="toggleConsoleTheme">
-          <Icon :name="isDarkMode ? 'sun' : 'moon'" size="sm" />
-          <span>{{ isDarkMode ? '切换浅色' : '切换深色' }}</span>
-        </button>
-        <button type="button" class="console-nav-action" @click="toggleNavCollapse">
-          <Icon :name="navCollapsed ? 'chevronRight' : 'chevronLeft'" size="sm" />
-          <span>{{ navCollapsed ? '展开导航' : '收起导航' }}</span>
-        </button>
-        <button type="button" class="console-nav-action console-nav-logout" @click="logoutFromConsole">
-          <Icon name="login" size="sm" />
-          <span>退出空间</span>
-        </button>
-      </div>
-    </aside>
-
-    <div v-if="mobileNavOpen" class="console-nav-overlay" @click="closeMobileNav"></div>
-
-    <div class="console-workspace">
-      <header class="console-topbar">
-        <div class="console-topbar-left">
-          <button type="button" class="console-menu-button" aria-label="打开导航" @click="openMobileNav"><Icon name="menu" size="md" /></button>
-          <div>
-            <span class="console-topbar-kicker">SHOUR OR TOKEN / 运营空间</span>
-            <strong>控制台</strong>
-          </div>
-        </div>
-        <div class="console-topbar-right">
-          <AnnouncementBell class="console-topbar-tool" />
-          <LocaleSwitcher class="console-topbar-tool console-topbar-locale-tool" />
-          <span class="console-topbar-balance"><Icon name="dollar" size="xs" />可用 {{ formatMoney(Number(user?.balance || 0)) }}</span>
-          <span class="console-topbar-status"><i></i>会话在线</span>
-          <router-link to="/profile" class="console-topbar-user" aria-label="打开个人资料"><span class="console-account-avatar">{{ userInitials }}</span><span>{{ userLabel }}</span></router-link>
-        </div>
-      </header>
-
-      <main class="console-content">
-      <div class="console-shell">
+  <AppLayout>
+    <div class="console-shell">
       <header class="console-hero">
         <div class="console-hero-copy">
           <div class="console-eyebrow"><span class="console-live-dot"></span> SHOUR OR TOKEN / 运行控制台</div>
@@ -172,20 +104,16 @@
 
         <footer class="console-footer"><span><i class="console-live-dot"></i>{{ userLabel }} · 仅展示当前账号可见信息</span><span>{{ lastSyncedLabel }}</span></footer>
       </template>
-      </div>
-      </main>
     </div>
-  </div>
+  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
-import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
-import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
-import { useAppStore, useAuthStore } from '@/stores'
+import { useAuthStore } from '@/stores'
 import {
   usageAPI,
   type UserDashboardStats,
@@ -194,10 +122,8 @@ import {
 import keysAPI from '@/api/keys'
 import userGroupsAPI from '@/api/groups'
 import { getMyPlatformQuotas } from '@/api/user'
-import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import type {
   ApiKey,
-  CustomMenuItem,
   Group,
   GroupStat,
   ModelStat,
@@ -207,24 +133,9 @@ import type {
   UserErrorRequest,
 } from '@/types'
 import { formatDateLocalInput } from '@/utils/format'
-import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 
 type IconName = 'chart' | 'key' | 'dollar' | 'clock'
 type Tone = 'green' | 'amber' | 'blue' | 'ink'
-type ConsoleNavIcon = 'home' | 'key' | 'grid' | 'image' | 'chart' | 'chartBar' | 'server' | 'creditCard' | 'document' | 'gift' | 'users' | 'user'
-
-interface ConsoleNavItem {
-  path: string
-  query?: Record<string, string>
-  label: string
-  icon: ConsoleNavIcon
-}
-
-interface ConsoleNavSection {
-  id: string
-  label: string
-  items: ConsoleNavItem[]
-}
 
 interface KpiCard {
   label: string
@@ -265,11 +176,7 @@ interface QuotaRow extends PlatformQuotaItem {
   usage: number
 }
 
-const route = useRoute()
-const router = useRouter()
-const appStore = useAppStore()
 const authStore = useAuthStore()
-const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const stats = ref<UserDashboardStats | null>(null)
 const trendData = ref<TrendDataPoint[]>([])
 const modelStats = ref<ModelStat[]>([])
@@ -284,61 +191,12 @@ const refreshing = ref(false)
 const loadError = ref('')
 const sectionErrors = ref<string[]>([])
 const lastSyncedAt = ref<Date | null>(null)
-const mobileNavOpen = ref(false)
-const navCollapsed = ref(false)
-const isDarkMode = ref(document.documentElement.classList.contains('dark'))
-
-const consoleNavSections = computed<ConsoleNavSection[]>(() => {
-  const simpleMode = authStore.isSimpleMode
-  const workspace: ConsoleNavItem[] = [
-    { path: '/dashboard', label: '运行总览', icon: 'home' },
-    { path: '/keys', label: '密钥中枢', icon: 'key' },
-    { path: '/model-square', label: '模型广场', icon: 'grid' },
-    { path: '/canvas', label: '绘图工作站', icon: 'image' },
-    { path: '/leaderboard', label: '总排行榜', icon: 'chart' },
-  ]
-  if (isFeatureFlagEnabled(FeatureFlags.modelPlaza)) {
-    workspace.push({ path: '/model-plaza', query: { embedded: '1' }, label: '模型行情', icon: 'grid' })
-  }
-
-  const traffic: ConsoleNavItem[] = []
-  if (!simpleMode && canUseBatchImage.value) traffic.push({ path: '/batch-image', label: '批量生图', icon: 'image' })
-  if (!simpleMode) traffic.push({ path: '/usage', label: '请求账本', icon: 'chartBar' })
-  if (!simpleMode && isFeatureFlagEnabled(FeatureFlags.availableChannels)) traffic.push({ path: '/available-channels', label: '可用节点', icon: 'server' })
-  if (isFeatureFlagEnabled(FeatureFlags.channelMonitor)) traffic.push({ path: '/monitor', label: '渠道状态', icon: 'server' })
-
-  const account: ConsoleNavItem[] = []
-  if (!simpleMode) account.push({ path: '/subscriptions', label: '我的订阅', icon: 'creditCard' })
-  if (!simpleMode && isFeatureFlagEnabled(FeatureFlags.payment)) {
-    account.push({ path: '/purchase', label: '购买订阅', icon: 'creditCard' })
-    account.push({ path: '/orders', label: '订单记录', icon: 'document' })
-  }
-  if (!simpleMode) account.push({ path: '/redeem', label: '兑换中心', icon: 'gift' })
-  if (!simpleMode && isFeatureFlagEnabled(FeatureFlags.affiliate)) account.push({ path: '/affiliate', label: '推广中心', icon: 'users' })
-  account.push({ path: '/profile', label: '个人资料', icon: 'user' })
-
-  const customMenuItems = (appStore.cachedPublicSettings?.custom_menu_items ?? [])
-    .filter((item: CustomMenuItem) => item.visibility === 'user')
-    .sort((a: CustomMenuItem, b: CustomMenuItem) => a.sort_order - b.sort_order)
-    .map((item: CustomMenuItem): ConsoleNavItem => ({ path: `/custom/${item.id}`, label: item.label, icon: 'grid' }))
-
-  return [
-    { id: 'workspace', label: '工作台', items: workspace },
-    { id: 'traffic', label: '调用与资源', items: traffic },
-    { id: 'account', label: '账户与订阅', items: account },
-    { id: 'custom', label: '扩展入口', items: customMenuItems },
-  ].filter((section) => section.items.length > 0)
-})
 
 const startDate = formatDateLocalInput(new Date(Date.now() - 6 * 86400000))
 const endDate = formatDateLocalInput(new Date())
 
 const user = computed(() => authStore.user)
 const userLabel = computed(() => user.value?.username || user.value?.email?.split('@')[0] || '当前账号')
-const userInitials = computed(() => {
-  const source = userLabel.value.trim()
-  return source.slice(0, 2).toUpperCase() || 'ST'
-})
 const todayLabel = computed(() => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date()))
 const lastSyncedLabel = computed(() => (lastSyncedAt.value ? `同步于 ${formatDateTime(lastSyncedAt.value.toISOString())}` : '等待同步'))
 
@@ -477,33 +335,6 @@ const quotaRows = computed<QuotaRow[]>(() => platformQuotas.value.map((quota) =>
 
 const errorTotal = computed(() => recentErrors.value.length)
 
-function isNavActive(path: string) {
-  return path === '/dashboard' ? route.path === path : route.path === path || route.path.startsWith(`${path}/`)
-}
-
-function openMobileNav() {
-  mobileNavOpen.value = true
-}
-
-function closeMobileNav() {
-  mobileNavOpen.value = false
-}
-
-function toggleNavCollapse() {
-  navCollapsed.value = !navCollapsed.value
-}
-
-function toggleConsoleTheme() {
-  isDarkMode.value = !isDarkMode.value
-  document.documentElement.classList.toggle('dark', isDarkMode.value)
-  localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
-}
-
-async function logoutFromConsole() {
-  await authStore.logout().catch(() => undefined)
-  await router.push('/login')
-}
-
 async function loadDashboard() {
   if (refreshing.value) return
   refreshing.value = true
@@ -613,584 +444,10 @@ function platformTone(platform: string) {
 
 onMounted(() => {
   void loadDashboard()
-  void refreshBatchImageAccess()
 })
 </script>
 
 <style scoped>
-.scheme3-dashboard {
-  --paper: #f4f2ec;
-  --card: #fbfaf6;
-  --card-hover: #f6f3eb;
-  --line: #dad5c8;
-  --line-soft: #e9e5db;
-  --ink: #16150f;
-  --muted: #716d61;
-  --green: #1e5c42;
-  --amber: #b7791f;
-  --blue: #315b76;
-  --red: #9e4d3d;
-  --alert-error-border: #d8a69c;
-  --alert-error-background: #fbefec;
-  --alert-error-ink: #7d372d;
-  --alert-warn-border: #dfc693;
-  --alert-warn-background: #fff7e6;
-  --alert-warn-ink: #80591a;
-  --kpi-green-background: #edf3ef;
-  --kpi-blue-background: #edf2f5;
-  --kpi-amber-background: #fbf3e4;
-  --kpi-ink-background: #eeece5;
-  --bar-track: #f0eee8;
-  --progress-track: #e8e5dc;
-  --muted-tone: #aaa496;
-  --row-hover: #f4f1e9;
-  min-width: 0;
-  min-height: calc(100vh - 7rem);
-  overflow: hidden;
-  border: 1px solid var(--line);
-  background: var(--paper);
-  color: var(--ink);
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-.scheme3-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-  border-bottom: 1px solid var(--line);
-  padding: 1.4rem 1.25rem 1.25rem;
-}
-
-.scheme3-kicker,
-.scheme3-label,
-.scheme3-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.scheme3-kicker {
-  color: var(--green);
-  font-size: 0.67rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-}
-
-.scheme3-title {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 2.25rem;
-  font-weight: 400;
-  line-height: 1;
-  letter-spacing: 0;
-}
-
-.scheme3-date,
-.scheme3-subtitle,
-.scheme3-muted,
-.scheme3-route-meta,
-.scheme3-table-sub,
-.scheme3-side-note,
-.scheme3-footer {
-  color: var(--muted);
-}
-
-.scheme3-date {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.68rem;
-  letter-spacing: 0.05em;
-}
-
-.scheme3-subtitle {
-  margin-top: 0.65rem;
-  max-width: 44rem;
-  font-size: 0.78rem;
-  line-height: 1.55;
-}
-
-.scheme3-refresh,
-.scheme3-alert-action {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.45rem;
-  border: 1px solid var(--green);
-  background: var(--green);
-  padding: 0.55rem 0.8rem;
-  color: var(--paper);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.68rem;
-  letter-spacing: 0.05em;
-  transition: opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.scheme3-refresh:hover:not(:disabled),
-.scheme3-alert-action:hover {
-  opacity: 0.82;
-  box-shadow: 0 0.25rem 0.8rem rgb(20 50 37 / 12%);
-  transform: translateY(-1px);
-}
-
-.scheme3-refresh:active:not(:disabled),
-.scheme3-alert-action:active {
-  box-shadow: none;
-  transform: translateY(1px) scale(0.98);
-}
-
-.scheme3-refresh:focus-visible,
-.scheme3-alert-action:focus-visible,
-.scheme3-link:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 3px;
-}
-
-.scheme3-refresh:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
-.scheme3-alert {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
-  margin: 1rem 1.25rem 0;
-  border: 1px solid var(--line);
-  padding: 0.75rem 0.8rem;
-  font-size: 0.78rem;
-}
-
-.scheme3-alert-error {
-  border-color: var(--alert-error-border);
-  background: var(--alert-error-background);
-  color: var(--alert-error-ink);
-}
-
-.scheme3-alert-warn {
-  border-color: var(--alert-warn-border);
-  background: var(--alert-warn-background);
-  color: var(--alert-warn-ink);
-}
-
-.scheme3-alert-action {
-  border-color: currentColor;
-  background: transparent;
-  color: inherit;
-}
-
-.scheme3-loading {
-  display: flex;
-  min-height: 22rem;
-  align-items: center;
-  justify-content: center;
-  gap: 0.65rem;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.scheme3-kpis,
-.scheme3-content-grid {
-  padding: 1.25rem;
-}
-
-.scheme3-kpis {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  border-bottom: 1px solid var(--line);
-  background: var(--line);
-}
-
-.scheme3-kpi {
-  min-width: 0;
-  background: var(--card);
-  padding: 1rem;
-  transition: background-color 0.18s ease, transform 0.18s ease;
-}
-
-.scheme3-kpi:hover {
-  background: var(--card-hover);
-  transform: translateY(-1px);
-}
-
-.scheme3-label {
-  color: var(--muted);
-  font-size: 0.62rem;
-  letter-spacing: 0.15em;
-}
-
-.scheme3-kpi-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border: 1px solid currentColor;
-}
-
-.scheme3-kpi-icon-green { color: var(--green); background: var(--kpi-green-background); }
-.scheme3-kpi-icon-blue { color: var(--blue); background: var(--kpi-blue-background); }
-.scheme3-kpi-icon-amber { color: var(--amber); background: var(--kpi-amber-background); }
-.scheme3-kpi-icon-ink { color: var(--ink); background: var(--kpi-ink-background); }
-
-.scheme3-kpi-value {
-  margin-top: 0.7rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 1.65rem;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-}
-
-.scheme3-kpi-note {
-  margin-top: 0.45rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 0.68rem;
-}
-
-.scheme3-content-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem);
-  align-items: start;
-  gap: 1.25rem;
-}
-
-.scheme3-primary-column,
-.scheme3-side-column {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.scheme3-section {
-  min-width: 0;
-  border: 1px solid var(--line);
-  background: var(--card);
-}
-
-.scheme3-section-heading {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-  border-bottom: 1px solid var(--line);
-  padding: 0.85rem 1rem;
-}
-
-.scheme3-section-heading-compact {
-  align-items: center;
-}
-
-.scheme3-section-title {
-  margin-top: 0.28rem;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.15rem;
-  font-weight: 400;
-  line-height: 1.15;
-}
-
-.scheme3-total-number {
-  margin-top: 0.2rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 1rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.scheme3-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.15rem;
-  color: var(--green);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.65rem;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  transition: color 0.15s ease, transform 0.15s ease;
-}
-
-.scheme3-link:hover { text-decoration: underline; transform: translateX(2px); }
-.scheme3-link:active { transform: translateX(0) scale(0.97); }
-
-.scheme3-trend {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  align-items: end;
-  gap: 0.65rem;
-  min-height: 12rem;
-  padding: 1.15rem 1rem 0.8rem;
-}
-
-.scheme3-bar-column {
-  display: flex;
-  min-width: 0;
-  height: 10.5rem;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.4rem;
-}
-
-.scheme3-bar-value,
-.scheme3-bar-label {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.59rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.scheme3-bar-track {
-  display: flex;
-  width: min(100%, 2.5rem);
-  height: 8rem;
-  align-items: flex-end;
-  border: 1px solid var(--line);
-  background: var(--bar-track);
-}
-
-.scheme3-bar-fill {
-  width: 100%;
-  min-height: 0;
-  background: var(--green);
-  transition: height 0.25s ease;
-}
-
-.scheme3-empty {
-  display: flex;
-  min-height: 8rem;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.scheme3-empty-chart { min-height: 12rem; flex-direction: column; }
-.scheme3-empty-small { min-height: 5.5rem; padding: 1rem; text-align: center; }
-
-.scheme3-route-list,
-.scheme3-model-list,
-.scheme3-node-list,
-.scheme3-quota-list,
-.scheme3-error-list { padding: 0.25rem 1rem 0.75rem; }
-
-.scheme3-route-row {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  border-bottom: 1px solid var(--line-soft);
-  padding: 0.75rem 0;
-  transition: background-color 0.18s ease, transform 0.18s ease;
-}
-
-.scheme3-route-row:hover,
-.scheme3-model-row:hover,
-.scheme3-node-row:hover,
-.scheme3-error-row:hover {
-  background: var(--row-hover);
-  transform: translateX(2px);
-}
-
-.scheme3-route-row:last-child,
-.scheme3-model-row:last-child,
-.scheme3-node-row:last-child,
-.scheme3-quota-row:last-child,
-.scheme3-error-row:last-child { border-bottom: 0; }
-
-.scheme3-route-mark {
-  width: 0.3rem;
-  align-self: stretch;
-  min-height: 2.2rem;
-}
-
-.tone-green { background: var(--green); }
-.tone-blue { background: var(--blue); }
-.tone-amber { background: var(--amber); }
-.tone-ink { background: var(--ink); }
-.tone-red { background: var(--red); }
-.tone-muted { background: var(--muted-tone); }
-
-.scheme3-tag {
-  border: 1px solid var(--line);
-  padding: 0.12rem 0.3rem;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.56rem;
-}
-
-.scheme3-route-meta,
-.scheme3-table-sub {
-  margin-top: 0.25rem;
-  font-size: 0.65rem;
-  line-height: 1.35;
-}
-
-.scheme3-table-wrap { overflow-x: auto; }
-
-.scheme3-table {
-  width: 100%;
-  min-width: 38rem;
-  border-collapse: collapse;
-  text-align: left;
-  font-size: 0.72rem;
-}
-
-.scheme3-table th {
-  border-bottom: 1px solid var(--line);
-  padding: 0.55rem 1rem;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.6rem;
-  font-weight: 400;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.scheme3-table td {
-  border-bottom: 1px solid var(--line-soft);
-  padding: 0.65rem 1rem;
-  vertical-align: middle;
-}
-
-.scheme3-table tbody tr { transition: background-color 0.18s ease; }
-.scheme3-table tbody tr:hover { background: var(--row-hover); }
-
-.scheme3-endpoint {
-  display: inline-block;
-  max-width: 12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  border: 1px solid var(--line);
-  padding: 0.18rem 0.35rem;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.6rem;
-}
-
-.scheme3-model-row,
-.scheme3-node-row,
-.scheme3-error-row {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  border-bottom: 1px solid var(--line-soft);
-  padding: 0.72rem 0;
-  transition: background-color 0.18s ease, transform 0.18s ease;
-}
-
-.scheme3-rank {
-  width: 1.4rem;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.62rem;
-}
-
-.scheme3-progress {
-  height: 0.28rem;
-  overflow: hidden;
-  background: var(--progress-track);
-}
-
-.scheme3-progress span {
-  display: block;
-  height: 100%;
-  background: var(--green);
-  transition: width 0.2s ease;
-}
-
-.scheme3-status-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  flex-shrink: 0;
-  border-radius: 999px;
-}
-
-.scheme3-status-observed { background: var(--blue); }
-.scheme3-status-error { background: var(--red); }
-.scheme3-green { color: var(--green); }
-.scheme3-side-note { padding: 0.55rem 0 0.2rem; font-size: 0.62rem; line-height: 1.45; }
-
-.scheme3-quota-row { border-bottom: 1px solid var(--line-soft); padding: 0.72rem 0; }
-.scheme3-error-count { color: var(--red); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 0.8rem; }
-
-.scheme3-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  border-top: 1px solid var(--line);
-  padding: 0.85rem 1.25rem 1rem;
-  font-size: 0.65rem;
-}
-
-@media (max-width: 1023px) {
-  .scheme3-content-grid { grid-template-columns: minmax(0, 1fr); }
-  .scheme3-side-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
-}
-
-@media (max-width: 767px) {
-  .scheme3-header { align-items: flex-start; flex-direction: column; padding: 1.15rem 0.9rem 1rem; }
-  .scheme3-title { font-size: 1.75rem; }
-  .scheme3-refresh { align-self: stretch; justify-content: center; }
-  .scheme3-alert { margin-left: 0.9rem; margin-right: 0.9rem; }
-  .scheme3-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0.9rem; }
-  .scheme3-kpis,
-  .scheme3-content-grid { padding-left: 0.9rem; padding-right: 0.9rem; }
-  .scheme3-kpi { padding: 0.8rem; }
-  .scheme3-kpi-value { font-size: 1.25rem; }
-  .scheme3-content-grid { gap: 0.9rem; padding-top: 0.9rem; }
-  .scheme3-primary-column,
-  .scheme3-side-column { gap: 0.9rem; }
-  .scheme3-side-column { display: flex; }
-  .scheme3-trend { gap: 0.3rem; padding-left: 0.65rem; padding-right: 0.65rem; }
-  .scheme3-footer { align-items: flex-start; flex-direction: column; padding-left: 0.9rem; padding-right: 0.9rem; }
-}
-
-/* The host app applies its theme on <html>. Keep these overrides scoped to
-   the console so the scheme-three palette follows AppLayout without changing
-   the rest of the upstream screens. */
-:global(.dark .scheme3-dashboard) {
-  --paper: #101714;
-  --card: #16211c;
-  --card-hover: #1c2a23;
-  --line: #35463d;
-  --line-soft: #293830;
-  --ink: #edf3ed;
-  --muted: #a9b8ad;
-  --green: #71d1a2;
-  --amber: #e5ba73;
-  --blue: #86c4e5;
-  --red: #ee9581;
-  --alert-error-border: #77483f;
-  --alert-error-background: #2a1b19;
-  --alert-error-ink: #f1b1a2;
-  --alert-warn-border: #735d36;
-  --alert-warn-background: #2b2418;
-  --alert-warn-ink: #f0ca81;
-  --kpi-green-background: #1c3429;
-  --kpi-blue-background: #1d303b;
-  --kpi-amber-background: #352b1c;
-  --kpi-ink-background: #222b27;
-  --bar-track: #202c26;
-  --progress-track: #2b3b32;
-  --muted-tone: #6f8176;
-  --row-hover: #1d2b24;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .scheme3-dashboard *,
-  .scheme3-dashboard *::before,
-  .scheme3-dashboard *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-    transition-duration: 0.001ms !important;
-  }
-}
 
 /* Ledger operations console. The data layer above stays bound to the
    upstream user APIs; these styles give the console its own visual system. */
@@ -1562,105 +819,6 @@ onMounted(() => {
 .console-footer { display: flex; justify-content: space-between; gap: 1rem; border-top: 1px solid var(--console-line); padding: 0.85rem 1.5rem 1rem; letter-spacing: 0; }
 .console-footer .console-live-dot { width: 0.34rem; height: 0.34rem; margin-right: 0.32rem; box-shadow: none; }
 
-/* 独立控制台外壳：仪表盘不再复用上游的 AppHeader/AppSidebar 视觉。 */
-.console-app {
-  --console-frame-ink: #16150f;
-  --console-frame-muted: #6b695f;
-  --console-frame-line: #dad5c8;
-  --console-frame-surface: rgba(251, 250, 246, 0.9);
-  --console-frame-bg: #f4f2ec;
-  display: grid;
-  grid-template-columns: 15.5rem minmax(0, 1fr);
-  min-height: 100vh;
-  background: var(--console-frame-bg);
-  color: var(--console-frame-ink);
-  transition: grid-template-columns 220ms ease;
-}
-
-.console-app-collapsed { grid-template-columns: 5.2rem minmax(0, 1fr); }
-.console-nav { position: sticky; top: 0; z-index: 50; display: flex; height: 100vh; min-width: 0; flex-direction: column; border-right: 1px solid var(--console-frame-line); background: rgba(251, 250, 246, 0.92); backdrop-filter: blur(22px); }
-.console-nav-brand { display: flex; min-height: 5.25rem; align-items: center; gap: 0.7rem; border-bottom: 1px solid var(--console-frame-line); padding: 1rem; }
-.console-brand-mark { display: inline-flex; width: 2.35rem; height: 2.35rem; flex-shrink: 0; align-items: center; justify-content: center; overflow: hidden; border: 1px solid rgba(30, 92, 66, 0.35); border-radius: 9px; background: #1e5c42; color: #f4f2ec; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.08em; box-shadow: 0 8px 18px rgba(30, 92, 66, 0.18); }
-.console-brand-mark img { width: 100%; height: 100%; object-fit: contain; }
-.console-brand-copy { min-width: 0; }
-.console-brand-copy strong { display: block; overflow: hidden; color: var(--console-frame-ink); font-size: 0.76rem; font-weight: 800; letter-spacing: 0.02em; text-overflow: ellipsis; white-space: nowrap; }
-.console-brand-copy span { display: block; margin-top: 0.18rem; color: var(--console-frame-muted); font-size: 0.62rem; }
-.console-nav-close { display: none; margin-left: auto; border: 0; background: transparent; color: var(--console-frame-muted); }
-.console-nav-caption { padding: 1.2rem 1rem 0.5rem; color: var(--console-frame-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.16em; }
-.console-nav-links { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 0.8rem; overflow-y: auto; padding: 0 0.65rem 0.9rem; }
-.console-nav-section { display: flex; flex-direction: column; gap: 0.26rem; }
-.console-nav-section-label { padding: 0.5rem 0.65rem 0.2rem; color: var(--console-frame-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 0.54rem; font-weight: 700; letter-spacing: 0.13em; }
-.console-nav-link { display: flex; min-width: 0; min-height: 2.5rem; align-items: center; gap: 0.65rem; border: 1px solid transparent; border-radius: 7px; padding: 0.55rem 0.65rem; color: var(--console-frame-muted); font-size: 0.72rem; font-weight: 700; transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 150ms ease; }
-.console-nav-link:hover { border-color: var(--console-frame-line); background: rgba(255, 255, 255, 0.72); color: var(--console-frame-ink); transform: translateX(2px); }
-.console-nav-link:active { transform: translateX(2px) scale(0.98); }
-.console-nav-link-active { border-color: rgba(30, 92, 66, 0.28); background: rgba(30, 92, 66, 0.08); color: #1e5c42; box-shadow: inset 3px 0 0 #1e5c42; }
-.console-nav-icon { display: inline-flex; flex-shrink: 0; color: currentColor; }
-.console-nav-link-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.console-nav-current { margin-left: auto; border-radius: 999px; padding: 0.16rem 0.35rem; background: rgba(30, 92, 66, 0.1); color: #1e5c42; font-size: 0.54rem; font-weight: 800; }
-.console-nav-foot { margin-top: auto; border-top: 1px solid var(--console-frame-line); padding: 0.8rem 0.65rem; }
-.console-nav-account { display: flex; min-width: 0; align-items: center; gap: 0.55rem; padding: 0.45rem; }
-.console-account-avatar { display: inline-flex; width: 1.85rem; height: 1.85rem; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 7px; background: #16150f; color: #f4f2ec; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 0.6rem; font-weight: 800; }
-.console-account-copy { min-width: 0; }
-.console-account-copy strong { display: block; overflow: hidden; color: var(--console-frame-ink); font-size: 0.67rem; text-overflow: ellipsis; white-space: nowrap; }
-.console-account-copy span { display: block; margin-top: 0.12rem; color: var(--console-frame-muted); font-size: 0.58rem; }
-.console-nav-action { display: flex; width: 100%; min-height: 2.2rem; align-items: center; gap: 0.6rem; border: 1px solid transparent; border-radius: 7px; padding: 0.45rem 0.65rem; background: transparent; color: var(--console-frame-muted); font-size: 0.65rem; font-weight: 700; text-align: left; transition: color 150ms ease, background-color 150ms ease, transform 150ms ease; }
-.console-nav-action:hover { background: rgba(255, 255, 255, 0.72); color: var(--console-frame-ink); }
-.console-nav-action:active { transform: scale(0.98); }
-.console-nav-logout { color: #9e4d3d; }
-.console-nav-logout:hover { color: #7d372d; background: rgba(158, 77, 61, 0.1); }
-.console-workspace { min-width: 0; }
-.console-topbar { position: sticky; top: 0; z-index: 30; display: flex; min-height: 4.25rem; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--console-frame-line); padding: 0.75rem 1.5rem; background: rgba(244, 242, 236, 0.9); backdrop-filter: blur(20px); }
-.console-topbar-left { display: flex; min-width: 0; align-items: center; gap: 0.75rem; }
-.console-topbar-kicker { display: block; color: var(--console-frame-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 0.55rem; letter-spacing: 0.13em; }
-.console-topbar-left strong { display: block; margin-top: 0.18rem; color: var(--console-frame-ink); font-family: Georgia, "Times New Roman", serif; font-size: 1.15rem; font-weight: 400; }
-.console-topbar-right { display: flex; min-width: 0; align-items: center; gap: 0.75rem; }
-.console-topbar-balance,.console-topbar-status { display: inline-flex; align-items: center; gap: 0.28rem; color: var(--console-frame-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 0.61rem; white-space: nowrap; }
-.console-topbar-balance { color: #b7791f; }
-.console-topbar-status i { width: 0.36rem; height: 0.36rem; border-radius: 999px; background: #1e5c42; box-shadow: 0 0 0 0.2rem rgba(30, 92, 66, 0.13); }
-.console-topbar-user { display: inline-flex; min-width: 0; align-items: center; gap: 0.45rem; color: var(--console-frame-ink); font-size: 0.67rem; font-weight: 700; }
-.console-menu-button { display: none; align-items: center; justify-content: center; border: 1px solid var(--console-frame-line); border-radius: 7px; padding: 0.45rem; background: var(--console-frame-surface); color: var(--console-frame-ink); }
-.console-nav-overlay { display: none; }
-.console-content { min-width: 0; overflow-x: hidden; padding: 1.15rem 1.35rem 1.6rem; }
-.console-content > .console-shell { min-height: calc(100vh - 7rem); }
-
-:global(.dark .console-app) { --console-frame-ink: #f4f2ec; --console-frame-muted: #aaa69a; --console-frame-line: #47443a; --console-frame-surface: rgba(36, 35, 31, 0.94); --console-frame-bg: #1b1b18; background: var(--console-frame-bg); }
-:global(.dark .console-nav) { background: rgba(36, 35, 31, 0.94); }
-:global(.dark .console-topbar) { background: rgba(27, 27, 24, 0.92); }
-:global(.dark .console-nav-link:hover),:global(.dark .console-nav-action:hover) { background: rgba(143, 194, 165, 0.08); }
-:global(.dark .console-brand-mark) { border-color: rgba(143, 194, 165, 0.38); background: #8fc2a5; color: #1b1b18; }
-:global(.dark .console-account-avatar) { background: #f4f2ec; color: #1b1b18; }
-:global(.dark .console-nav-link-active) { border-color: rgba(143, 194, 165, 0.3); background: rgba(143, 194, 165, 0.1); color: #8fc2a5; box-shadow: inset 3px 0 0 #8fc2a5; }
-:global(.dark .console-nav-current) { background: rgba(143, 194, 165, 0.12); color: #8fc2a5; }
-:global(.dark .console-chart-track),:global(.dark .console-progress) { background: rgba(71, 68, 58, 0.74); }
-:global(.dark .console-brand-copy strong),:global(.dark .console-account-copy strong),:global(.dark .console-topbar-left strong),:global(.dark .console-topbar-user) { color: var(--console-frame-ink); }
-
-.console-app-collapsed .console-brand-copy,.console-app-collapsed .console-nav-caption,.console-app-collapsed .console-nav-section-label,.console-app-collapsed .console-nav-link-text,.console-app-collapsed .console-nav-current,.console-app-collapsed .console-account-copy,.console-app-collapsed .console-nav-action span { display: none; }
-.console-app-collapsed .console-nav-brand,.console-app-collapsed .console-nav-account { justify-content: center; }
-.console-app-collapsed .console-nav-link,.console-app-collapsed .console-nav-action { justify-content: center; padding-right: 0.4rem; padding-left: 0.4rem; }
-.console-app-collapsed .console-nav-link-active { box-shadow: inset 3px 0 0 #1e5c42; }
-
-@media (max-width: 1023px) {
-  .console-app,.console-app-collapsed { display: block; }
-  .console-nav { position: fixed; left: 0; top: 0; width: 15.5rem; transform: translateX(-102%); transition: transform 220ms ease; }
-  .console-nav.console-nav-open { transform: translateX(0); box-shadow: 18px 0 40px rgba(14, 30, 58, 0.18); }
-  .console-nav-close { display: inline-flex; align-items: center; justify-content: center; }
-  .console-nav-overlay { position: fixed; z-index: 40; inset: 0; display: block; background: rgba(9, 18, 32, 0.38); backdrop-filter: blur(2px); }
-  .console-menu-button { display: inline-flex; }
-  .console-nav-foot { padding-bottom: 1rem; }
-  .console-topbar { padding-right: 1rem; padding-left: 1rem; }
-}
-
-@media (max-width: 640px) {
-  .console-content { padding: 0.7rem 0.65rem 1rem; }
-  .console-topbar { min-height: 3.85rem; padding: 0.65rem; }
-  .console-topbar-kicker { font-size: 0.49rem; }
-  .console-topbar-left strong { font-size: 1rem; }
-  .console-topbar-right { gap: 0.45rem; }
-  .console-topbar-locale-tool { display: none; }
-  .console-topbar-balance { display: none; }
-  .console-topbar-user > span:last-child { display: none; }
-}
-
 @keyframes console-rise {
   from { opacity: 0; transform: translateY(9px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1691,6 +849,8 @@ onMounted(() => {
 :global(.dark .console-shell::before) { background: linear-gradient(105deg, rgba(143, 194, 165, 0.08), transparent 38%, rgba(211, 165, 90, 0.06)); }
 :global(.dark .console-route-card) { background: rgba(36, 35, 31, 0.88); }
 :global(.dark .console-kpi-icon) { background: rgba(255, 255, 255, 0.07); }
+:global(.dark .console-chart-track),
+:global(.dark .console-progress) { background: rgba(71, 68, 58, 0.74); }
 
 @media (max-width: 1023px) {
   .console-layout { grid-template-columns: minmax(0, 1fr); }

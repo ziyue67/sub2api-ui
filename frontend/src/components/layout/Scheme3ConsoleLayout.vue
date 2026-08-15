@@ -8,13 +8,13 @@
   >
     <aside class="scheme3-console-sidebar" :class="{ 'scheme3-console-sidebar-open': mobileNavOpen }" :aria-label="adminMode ? '运维导航' : '空间导航'">
       <div class="scheme3-console-brand">
-        <router-link :to="homePath" class="scheme3-console-brand-mark" :aria-label="adminMode ? '返回运维总览' : '返回控制台'" @click="closeMobileNav">
-          <img v-if="!adminMode && appStore.siteLogo" :src="appStore.siteLogo" alt="" />
+        <router-link :to="homePath" class="scheme3-console-brand-mark" :aria-label="adminMode ? '返回运维总览' : '返回控制台'" @click="handleNavItemClick(homePath)">
+          <img v-if="siteLogo" :src="siteLogo" alt="" />
           <span v-else>ST</span>
         </router-link>
         <div class="scheme3-console-brand-copy">
-          <strong>Shour or ToKen</strong>
-          <span>{{ adminMode ? '运维控制空间' : '个人工作空间' }}</span>
+          <strong>{{ siteName }}</strong>
+          <span>{{ adminMode ? '运维控制空间' : '个人工作空间' }}<template v-if="appStore.siteVersion"> · {{ appStore.siteVersion }}</template></span>
         </div>
         <button type="button" class="scheme3-console-close" aria-label="关闭导航" @click="closeMobileNav">
           <Icon name="x" size="sm" />
@@ -22,29 +22,68 @@
       </div>
 
       <div class="scheme3-console-caption">{{ adminMode ? '运维导航' : '空间导航' }}</div>
-      <nav class="scheme3-console-links">
+      <nav ref="sidebarNavRef" class="scheme3-console-links">
         <section v-for="section in consoleNavSections" :key="section.id" class="scheme3-console-section">
-          <div class="scheme3-console-section-label">{{ section.label }}</div>
-          <router-link
-            v-for="item in section.items"
-            :key="item.path"
-            :to="{ path: item.path, query: item.query }"
-            class="scheme3-console-link"
-            :class="{ 'scheme3-console-link-active': isNavActive(item.path) }"
-            @click="closeMobileNav"
-          >
-            <span class="scheme3-console-link-icon"><Icon :name="item.icon" size="sm" /></span>
-            <span class="scheme3-console-link-text">{{ item.label }}</span>
-            <span v-if="isNavActive(item.path)" class="scheme3-console-current">当前</span>
-          </router-link>
+          <div v-if="section.showLabel" class="scheme3-console-section-label">{{ section.label }}</div>
+          <template v-for="item in section.items" :key="item.path">
+            <button
+              v-if="item.children?.length"
+              type="button"
+              class="scheme3-console-link scheme3-console-group"
+              :class="{
+                'scheme3-console-link-active': isGroupActive(item) && !isGroupExpanded(item),
+                'scheme3-console-link-collapsed': navCollapsed,
+              }"
+              :title="navCollapsed ? item.label : undefined"
+              @click="toggleNavGroup(item)"
+            >
+              <span v-if="item.iconSvg" class="scheme3-console-link-icon scheme3-console-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+              <span v-else class="scheme3-console-link-icon"><Icon :name="item.icon" size="sm" /></span>
+              <span class="scheme3-console-link-text" :aria-hidden="navCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              <Icon v-if="!navCollapsed" name="chevronDown" size="xs" class="scheme3-console-group-chevron" :class="{ 'is-expanded': isGroupExpanded(item) }" />
+            </button>
+            <div v-if="item.children?.length && !navCollapsed && isGroupExpanded(item)" class="scheme3-console-subnav">
+              <router-link
+                v-for="child in item.children"
+                :key="child.path"
+                :to="{ path: child.path, query: child.query }"
+                class="scheme3-console-link scheme3-console-subnav-link"
+                :class="{ 'scheme3-console-link-active': isNavActive(child.path, true) }"
+                @click="handleNavItemClick(child.path)"
+              >
+                <span v-if="child.iconSvg" class="scheme3-console-link-icon scheme3-console-svg-icon" v-html="sanitizeSvg(child.iconSvg)"></span>
+                <span v-else class="scheme3-console-link-icon"><Icon :name="child.icon" size="sm" /></span>
+                <span class="scheme3-console-link-text">{{ child.label }}</span>
+                <span v-if="isNavActive(child.path, true)" class="scheme3-console-current">当前</span>
+              </router-link>
+            </div>
+            <router-link
+              v-else-if="!item.children?.length"
+              :to="{ path: item.path, query: item.query }"
+              class="scheme3-console-link"
+              :class="{ 'scheme3-console-link-active': isNavActive(item.path), 'scheme3-console-link-collapsed': navCollapsed }"
+              :title="navCollapsed ? item.label : undefined"
+              :id="navTourId(item.path)"
+              :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
+              @click="handleNavItemClick(item.path)"
+            >
+              <span v-if="item.iconSvg" class="scheme3-console-link-icon scheme3-console-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+              <span v-else class="scheme3-console-link-icon"><Icon :name="item.icon" size="sm" /></span>
+              <span class="scheme3-console-link-text" :aria-hidden="navCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              <span v-if="isNavActive(item.path)" class="scheme3-console-current">当前</span>
+            </router-link>
+          </template>
         </section>
       </nav>
 
       <div class="scheme3-console-foot">
-        <div class="scheme3-console-account">
+        <router-link to="/profile" class="scheme3-console-account" aria-label="打开个人资料" :title="userEmail">
           <span class="scheme3-console-avatar">{{ userInitials }}</span>
-          <div class="scheme3-console-account-copy"><strong>{{ userLabel }}</strong><span>已登录</span></div>
-        </div>
+          <div class="scheme3-console-account-copy">
+            <strong>{{ userLabel }}</strong>
+            <span>{{ accountRoleLabel }}<template v-if="userEmail"> · {{ userEmail }}</template></span>
+          </div>
+        </router-link>
         <button type="button" class="scheme3-console-action" @click="toggleTheme">
           <Icon :name="isDarkMode ? 'sun' : 'moon'" size="sm" />
           <span>{{ isDarkMode ? '切换浅色' : '切换深色' }}</span>
@@ -52,6 +91,15 @@
         <button type="button" class="scheme3-console-action" @click="toggleNavCollapse">
           <Icon :name="navCollapsed ? 'chevronRight' : 'chevronLeft'" size="sm" />
           <span>{{ navCollapsed ? '展开导航' : '收起导航' }}</span>
+        </button>
+        <button
+          v-if="showOnboardingButton"
+          type="button"
+          class="scheme3-console-action"
+          @click="handleReplayGuide"
+        >
+          <Icon name="questionCircle" size="sm" />
+          <span>{{ t('onboarding.restartTour') }}</span>
         </button>
         <button type="button" class="scheme3-console-action scheme3-console-logout" @click="logout">
           <Icon name="login" size="sm" />
@@ -75,12 +123,21 @@
         </div>
         <div class="scheme3-console-topbar-right">
           <AnnouncementBell v-if="authStore.user" class="scheme3-console-tool" />
+          <a v-if="docUrl" :href="docUrl" target="_blank" rel="noopener noreferrer" class="scheme3-console-doc-link">
+            <Icon name="book" size="sm" />
+            <span>{{ t('nav.docs') }}</span>
+          </a>
+          <router-link v-if="authStore.user && modelPlazaEnabled" :to="{ path: '/model-plaza', query: { embedded: '1' } }" class="scheme3-console-doc-link">
+            <Icon name="grid" size="sm" />
+            <span>{{ t('nav.modelPlaza') }}</span>
+          </router-link>
           <LocaleSwitcher class="scheme3-console-tool scheme3-console-locale-tool" />
-            <span class="scheme3-console-balance"><Icon name="dollar" size="xs" />{{ adminMode ? '账户余额' : '可用' }} {{ formatMoney(Number(user?.balance || 0)) }}</span>
+          <SubscriptionProgressMini v-if="authStore.user" class="scheme3-console-subscription" />
+          <span class="scheme3-console-balance"><Icon name="dollar" size="xs" />{{ adminMode ? '管理员余额' : '可用余额' }} {{ formatMoney(Number(user?.balance || 0)) }}</span>
           <span class="scheme3-console-status"><i></i>会话在线</span>
-          <router-link to="/profile" class="scheme3-console-user" aria-label="打开个人资料">
+          <router-link to="/profile" class="scheme3-console-user" aria-label="打开个人资料" :title="userEmail">
             <span class="scheme3-console-avatar">{{ userInitials }}</span>
-            <span>{{ userLabel }}</span>
+            <span class="scheme3-console-user-copy"><strong>{{ userLabel }}</strong><small>{{ accountRoleLabel }}</small></span>
           </router-link>
         </div>
       </header>
@@ -95,15 +152,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { useAdminSettingsStore, useAppStore, useAuthStore } from '@/stores'
+import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import type { CustomMenuItem } from '@/types'
-import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
+import { resolveDisplaySiteName } from '@/utils/branding'
+import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
+import { sanitizeSvg } from '@/utils/sanitize'
+import { sanitizeUrl } from '@/utils/url'
 
 type ConsoleNavIcon =
   | 'home'
@@ -123,212 +185,279 @@ type ConsoleNavIcon =
   | 'bell'
   | 'shield'
   | 'cog'
+  | 'book'
 
 interface ConsoleNavItem {
   path: string
   query?: Record<string, string>
   label: string
   icon: ConsoleNavIcon
+  iconSvg?: string
+  hideInSimpleMode?: boolean
+  featureFlag?: () => boolean | undefined
+  children?: ConsoleNavItem[]
+  expandOnly?: boolean
 }
 
 interface ConsoleNavSection {
   id: string
   label: string
+  showLabel?: boolean
   items: ConsoleNavItem[]
 }
 
 const props = withDefaults(defineProps<{ adminMode?: boolean }>(), { adminMode: false })
 const adminMode = computed(() => props.adminMode)
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const adminSettingsStore = useAdminSettingsStore()
+const onboardingStore = useOnboardingStore()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const mobileNavOpen = ref(false)
 const navCollapsed = ref(localStorage.getItem('scheme3-nav-collapsed') === '1')
 const isDarkMode = ref(document.documentElement.classList.contains('dark'))
+const expandedNavGroups = ref<Set<string>>(new Set())
+const sidebarNavRef = ref<HTMLElement | null>(null)
 
 const user = computed(() => authStore.user)
 const homePath = computed(() => (adminMode.value ? '/admin/dashboard' : '/dashboard'))
 const userLabel = computed(() => user.value?.username || user.value?.email?.split('@')[0] || '当前账号')
+const userEmail = computed(() => user.value?.email || '')
+const accountRoleLabel = computed(() => (authStore.isAdmin ? '管理员身份' : '用户身份'))
 const userInitials = computed(() => userLabel.value.trim().slice(0, 2).toUpperCase() || 'ST')
+const showOnboardingButton = computed(() => adminMode.value && !authStore.isSimpleMode && authStore.isAdmin)
+const siteName = computed(() => resolveDisplaySiteName(appStore.siteName))
+const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
+const docUrl = computed(() => sanitizeUrl(appStore.docUrl || ''))
 
 const pageTitle = computed(() => {
-  const titles: Record<string, string> = {
-    '/dashboard': '控制台总览',
-    '/scheme3-dashboard': '控制台总览',
-    '/keys': '密钥中枢',
-    '/model-square': '模型广场',
-    '/model-plaza': '模型行情',
-    '/canvas': '绘图工作站',
-    '/chat': 'AI 聊天',
-    '/chat-studio': 'AI 聊天',
-    '/chat-images': '聊天生图',
-    '/chat-images/native': '聊天生图',
-    '/studio-bridge/launch': '聊天生图',
-    '/image-creator': '图片创作',
-    '/image-manager': '图片库',
-    '/leaderboard': '总排行榜',
-    '/docs/batch-image': '批量生图',
-    '/batch-image': '批量生图',
-    '/usage': '请求账本',
-    '/available-channels': '可用节点',
-    '/monitor': '渠道状态',
-    '/subscriptions': '我的订阅',
-    '/purchase': '购买订阅',
-    '/orders': '订单记录',
-    '/redeem': '兑换中心',
-    '/affiliate': '推广中心',
-    '/profile': '个人资料',
-    '/payment/qrcode': '扫码支付',
-    '/payment/stripe': '在线支付',
-    '/payment/airwallex': '在线支付',
-    '/admin/dashboard': '运维总览',
-    '/admin/ops': '运行监控',
-    '/admin/users': '用户管理',
-    '/admin/groups': '分组管理',
-    '/admin/channels/pricing': '渠道定价',
-    '/admin/channels/monitor': '渠道监控',
-    '/admin/risk-control': '内容风控',
-    '/admin/prompt-audit': '提示审计',
-    '/admin/subscriptions': '订阅管理',
-    '/admin/accounts': '账号管理',
-    '/admin/announcements': '公告中心',
-    '/admin/proxies': '代理节点',
-    '/admin/redeem': '兑换码',
-    '/admin/promo-codes': '优惠码',
-    '/admin/usage': '用量账本',
-    '/admin/leaderboard': '管理员排行榜',
-    '/admin/audit-logs': '操作日志',
-    '/admin/settings': '系统设置',
-    '/admin/affiliates/invites': '推广邀请',
-    '/admin/affiliates/rebates': '推广返利',
-    '/admin/affiliates/transfers': '推广转账',
-    '/admin/orders/dashboard': '支付总览',
-    '/admin/orders': '订单管理',
-    '/admin/orders/plans': '订阅方案',
+  if (route.name === 'CustomPage' || route.path.startsWith('/custom/')) {
+    const id = String(route.params.id || route.path.split('/').pop() || '')
+    const publicItem = appStore.cachedPublicSettings?.custom_menu_items?.find((item: CustomMenuItem) => item.id === id)
+    const adminItem = authStore.isAdmin
+      ? adminSettingsStore.customMenuItems.find((item: CustomMenuItem) => item.id === id)
+      : undefined
+    if (publicItem?.label || adminItem?.label) return publicItem?.label || adminItem?.label || '扩展页面'
+    return '扩展页面'
   }
-  if (route.path.startsWith('/custom/')) return '扩展页面'
-  return titles[route.path] || '控制台'
+  const titleKey = route.meta.titleKey as string | undefined
+  if (titleKey) return t(titleKey)
+  return (route.meta.title as string | undefined) || '控制台'
 })
 
-const consoleNavSections = computed<ConsoleNavSection[]>(() => {
-  if (adminMode.value) {
-    const adminSections: ConsoleNavSection[] = [
-      {
-        id: 'admin-overview',
-        label: '运行观测',
-        items: [
-          { path: '/admin/dashboard', label: '运维总览', icon: 'home' },
-          { path: '/admin/ops', label: '运行监控', icon: 'chartBar' },
-          { path: '/admin/usage', label: '用量账本', icon: 'chart' },
-          { path: '/admin/leaderboard', label: '管理员排行榜', icon: 'chart' },
-          { path: '/admin/audit-logs', label: '操作日志', icon: 'shield' },
-        ],
-      },
-      {
-        id: 'admin-routing',
-        label: '路由与资源',
-        items: [
-          { path: '/model-square', label: '模型广场', icon: 'grid' },
-          { path: '/admin/channels/pricing', label: '渠道定价', icon: 'creditCard' },
-          { path: '/admin/channels/monitor', label: '渠道监控', icon: 'server' },
-          { path: '/admin/accounts', label: '账号管理', icon: 'globe' },
-          { path: '/admin/proxies', label: '代理节点', icon: 'server' },
-        ],
-      },
-      {
-        id: 'admin-access',
-        label: '用户与权限',
-        items: [
-          { path: '/admin/users', label: '用户管理', icon: 'users' },
-          { path: '/admin/groups', label: '分组管理', icon: 'folder' },
-          { path: '/admin/subscriptions', label: '订阅管理', icon: 'creditCard' },
-          { path: '/admin/redeem', label: '兑换码', icon: 'gift' },
-          { path: '/admin/promo-codes', label: '优惠码', icon: 'gift' },
-          { path: '/admin/risk-control', label: '内容风控', icon: 'shield' },
-          { path: '/admin/prompt-audit', label: '提示审计', icon: 'shield' },
-        ],
-      },
-      {
-        id: 'admin-governance',
-        label: '治理与配置',
-        items: [
-          { path: '/admin/announcements', label: '公告中心', icon: 'bell' },
-          { path: '/admin/settings', label: '系统设置', icon: 'cog' },
-        ],
-      },
-    ]
-    const affiliateItems: ConsoleNavItem[] = [
-      { path: '/admin/affiliates/invites', label: '推广邀请', icon: 'users' },
-      { path: '/admin/affiliates/rebates', label: '推广返利', icon: 'chart' },
-      { path: '/admin/affiliates/transfers', label: '推广转账', icon: 'creditCard' },
-    ]
-    const paymentItems: ConsoleNavItem[] = [
-      { path: '/admin/orders/dashboard', label: '支付总览', icon: 'chartBar' },
-      { path: '/admin/orders', label: '订单管理', icon: 'document' },
-      { path: '/admin/orders/plans', label: '订阅方案', icon: 'creditCard' },
-    ]
-    if (isFeatureFlagEnabled(FeatureFlags.affiliate)) {
-      adminSections[2].items.push(...affiliateItems)
-    }
-    if (isFeatureFlagEnabled(FeatureFlags.payment)) {
-      adminSections[2].items.push(...paymentItems)
-    }
-    const customAdminItems = adminSettingsStore.customMenuItems
-      .filter((item: CustomMenuItem) => item.visibility === 'admin')
-      .sort((a: CustomMenuItem, b: CustomMenuItem) => a.sort_order - b.sort_order)
-      .map((item: CustomMenuItem): ConsoleNavItem => ({ path: `/custom/${item.id}`, label: item.label, icon: 'grid' }))
-    if (customAdminItems.length) {
-      adminSections.push({ id: 'admin-custom', label: '扩展入口', items: customAdminItems })
-    }
-    return adminSections.filter((section) => section.items.length > 0)
-  }
+const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
+const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
+const flagModelPlaza = makeSidebarFlag(FeatureFlags.modelPlaza)
+const flagPayment = makeSidebarFlag(FeatureFlags.payment)
+const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
+const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
+const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
+const flagAdminPayment = () => adminSettingsStore.paymentEnabled
+const flagBatchImageAccess = () => canUseBatchImage.value
+const modelPlazaEnabled = computed(() => flagModelPlaza())
 
-  const simpleMode = authStore.isSimpleMode
-  const workspace: ConsoleNavItem[] = [
-    { path: '/dashboard', label: '运行总览', icon: 'home' },
-    { path: '/keys', label: '密钥中枢', icon: 'key' },
+function applyNavVisibility(items: ConsoleNavItem[]): ConsoleNavItem[] {
+  const visible: ConsoleNavItem[] = []
+  for (const item of items) {
+    if (authStore.isSimpleMode && item.hideInSimpleMode) continue
+    if (item.featureFlag && item.featureFlag() === false) continue
+    if (item.children) {
+      const children = applyNavVisibility(item.children)
+      if (children.length > 0) visible.push({ ...item, children })
+      continue
+    }
+    visible.push(item)
+  }
+  return visible
+}
+
+function buildSelfNavItems(withDashboard: boolean): ConsoleNavItem[] {
+  const items: ConsoleNavItem[] = []
+  if (withDashboard) items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: 'home' })
+  items.push(
+    { path: '/keys', label: t('nav.apiKeys'), icon: 'key' },
     { path: '/model-square', label: '模型广场', icon: 'grid' },
     { path: '/canvas', label: '绘图工作站', icon: 'image' },
     { path: '/leaderboard', label: '总排行榜', icon: 'chart' },
-  ]
-  if (isFeatureFlagEnabled(FeatureFlags.modelPlaza)) {
-    workspace.push({ path: '/model-plaza', query: { embedded: '1' }, label: '模型行情', icon: 'grid' })
-  }
+    { path: '/batch-image', label: t('nav.batchImage'), icon: 'image', hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
+    { path: '/usage', label: t('nav.usage'), icon: 'chartBar', hideInSimpleMode: true },
+    { path: '/available-channels', label: t('nav.availableChannels'), icon: 'server', hideInSimpleMode: true, featureFlag: flagAvailableChannels },
+    { path: '/monitor', label: t('nav.channelStatus'), icon: 'server', featureFlag: flagChannelMonitor },
+    { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: 'creditCard', hideInSimpleMode: true },
+    { path: '/purchase', label: t('nav.buySubscription'), icon: 'creditCard', hideInSimpleMode: true, featureFlag: flagPayment },
+    { path: '/orders', label: t('nav.myOrders'), icon: 'document', hideInSimpleMode: true, featureFlag: flagPayment },
+    { path: '/redeem', label: t('nav.redeem'), icon: 'gift', hideInSimpleMode: true },
+    { path: '/affiliate', label: t('nav.affiliate'), icon: 'users', hideInSimpleMode: true, featureFlag: flagAffiliate },
+    { path: '/profile', label: t('nav.profile'), icon: 'user' },
+  )
 
-  const traffic: ConsoleNavItem[] = []
-  if (!simpleMode && canUseBatchImage.value) traffic.push({ path: '/batch-image', label: '批量生图', icon: 'image' })
-  if (!simpleMode) traffic.push({ path: '/usage', label: '请求账本', icon: 'chartBar' })
-  if (!simpleMode && isFeatureFlagEnabled(FeatureFlags.availableChannels)) traffic.push({ path: '/available-channels', label: '可用节点', icon: 'server' })
-  if (isFeatureFlagEnabled(FeatureFlags.channelMonitor)) traffic.push({ path: '/monitor', label: '渠道状态', icon: 'server' })
-
-  const account: ConsoleNavItem[] = []
-  if (!simpleMode) account.push({ path: '/subscriptions', label: '我的订阅', icon: 'creditCard' })
-  if (!simpleMode && isFeatureFlagEnabled(FeatureFlags.payment)) {
-    account.push({ path: '/purchase', label: '购买订阅', icon: 'creditCard' })
-    account.push({ path: '/orders', label: '订单记录', icon: 'document' })
-  }
-  if (!simpleMode) account.push({ path: '/redeem', label: '兑换中心', icon: 'gift' })
-  if (!simpleMode && isFeatureFlagEnabled(FeatureFlags.affiliate)) account.push({ path: '/affiliate', label: '推广中心', icon: 'users' })
-  account.push({ path: '/profile', label: '个人资料', icon: 'user' })
-
-  const customMenuItems = (appStore.cachedPublicSettings?.custom_menu_items ?? [])
+  const customUserItems = (appStore.cachedPublicSettings?.custom_menu_items ?? [])
     .filter((item: CustomMenuItem) => item.visibility === 'user')
     .sort((a: CustomMenuItem, b: CustomMenuItem) => a.sort_order - b.sort_order)
-    .map((item: CustomMenuItem): ConsoleNavItem => ({ path: `/custom/${item.id}`, label: item.label, icon: 'grid' }))
+    .map((item: CustomMenuItem): ConsoleNavItem => ({ path: `/custom/${item.id}`, label: item.label, icon: 'grid', iconSvg: item.icon_svg }))
+  items.push(...customUserItems)
+  return items
+}
 
-  return [
-    { id: 'workspace', label: '工作台', items: workspace },
-    { id: 'traffic', label: '调用与资源', items: traffic },
-    { id: 'account', label: '账户与订阅', items: account },
-    { id: 'custom', label: '扩展入口', items: customMenuItems },
-  ].filter((section) => section.items.length > 0)
+function buildAdminNavItems(): ConsoleNavItem[] {
+  const items: ConsoleNavItem[] = [
+    { path: '/admin/dashboard', label: t('nav.dashboard'), icon: 'home' },
+    { path: '/model-square', label: '模型广场', icon: 'grid' },
+    { path: '/admin/ops', label: t('nav.ops'), icon: 'chartBar', featureFlag: flagOpsMonitoring },
+    { path: '/admin/users', label: t('nav.users'), icon: 'users', hideInSimpleMode: true },
+    { path: '/admin/groups', label: t('nav.groups'), icon: 'folder', hideInSimpleMode: true },
+    {
+      path: '/admin/channels',
+      label: t('nav.channelManagement'),
+      icon: 'grid',
+      hideInSimpleMode: true,
+      expandOnly: true,
+      children: [
+        { path: '/admin/channels/pricing', label: t('nav.channelPricing'), icon: 'creditCard' },
+        { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), icon: 'server', featureFlag: flagChannelMonitor },
+      ],
+    },
+    { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: 'creditCard', hideInSimpleMode: true },
+    { path: '/admin/accounts', label: t('nav.accounts'), icon: 'globe' },
+    { path: '/admin/announcements', label: t('nav.announcements'), icon: 'bell' },
+    { path: '/admin/proxies', label: t('nav.proxies'), icon: 'server' },
+    {
+      path: '/admin/security-audit',
+      label: t('nav.securityAudit'),
+      icon: 'shield',
+      expandOnly: true,
+      featureFlag: flagRiskControl,
+      children: [
+        { path: '/admin/risk-control', label: t('nav.contentModeration'), icon: 'shield' },
+        { path: '/admin/prompt-audit', label: t('nav.promptAudit'), icon: 'shield' },
+      ],
+    },
+    { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: 'gift', hideInSimpleMode: true },
+    { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: 'gift', hideInSimpleMode: true },
+    {
+      path: '/admin/affiliates',
+      label: t('nav.affiliateManagement'),
+      icon: 'users',
+      hideInSimpleMode: true,
+      expandOnly: true,
+      featureFlag: flagAffiliate,
+      children: [
+        { path: '/admin/affiliates/invites', label: t('nav.affiliateInviteRecords'), icon: 'users' },
+        { path: '/admin/affiliates/rebates', label: t('nav.affiliateRebateRecords'), icon: 'chart' },
+        { path: '/admin/affiliates/transfers', label: t('nav.affiliateTransferRecords'), icon: 'creditCard' },
+      ],
+    },
+    {
+      path: '/admin/orders',
+      label: t('nav.orderManagement'),
+      icon: 'document',
+      hideInSimpleMode: true,
+      expandOnly: true,
+      featureFlag: flagAdminPayment,
+      children: [
+        { path: '/admin/orders/dashboard', label: t('nav.paymentDashboard'), icon: 'chartBar' },
+        { path: '/admin/orders', label: t('nav.orderManagement'), icon: 'document' },
+        { path: '/admin/orders/plans', label: t('nav.paymentPlans'), icon: 'creditCard' },
+      ],
+    },
+    { path: '/admin/usage', label: t('nav.usage'), icon: 'chart' },
+    { path: '/admin/leaderboard', label: t('nav.leaderboard'), icon: 'chart' },
+    { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: 'shield', hideInSimpleMode: true },
+  ]
+
+  const customAdminItems = adminSettingsStore.customMenuItems
+    .filter((item: CustomMenuItem) => item.visibility === 'admin')
+    .sort((a: CustomMenuItem, b: CustomMenuItem) => a.sort_order - b.sort_order)
+    .map((item: CustomMenuItem): ConsoleNavItem => ({ path: `/custom/${item.id}`, label: item.label, icon: 'grid', iconSvg: item.icon_svg }))
+
+  const visible = applyNavVisibility(items)
+  if (authStore.isSimpleMode) {
+    // Keep the upstream simple-mode order: own keys, system settings, custom items.
+    visible.push({ path: '/keys', label: t('nav.apiKeys'), icon: 'key' })
+    visible.push({ path: '/admin/settings', label: t('nav.settings'), icon: 'cog' })
+    visible.push(...customAdminItems)
+    return visible
+  }
+
+  visible.push({ path: '/admin/settings', label: t('nav.settings'), icon: 'cog' })
+  visible.push(...customAdminItems)
+  return visible
+}
+
+const consoleNavSections = computed<ConsoleNavSection[]>(() => {
+  if (adminMode.value) {
+    const sections: ConsoleNavSection[] = [
+      { id: 'admin-routing', label: '管理空间', showLabel: false, items: buildAdminNavItems() },
+    ]
+    if (!authStore.isSimpleMode) {
+      sections.push({ id: 'personal', label: t('nav.myAccount'), showLabel: true, items: applyNavVisibility(buildSelfNavItems(false)) })
+    }
+    return sections.filter((section) => section.items.length > 0)
+  }
+
+  if (appStore.backendModeEnabled) return []
+
+  // The upstream sidebar has one flat user section. Keep the same order and
+  // avoid making dashboard and every other authenticated route use different tabs.
+  const items = applyNavVisibility(buildSelfNavItems(true))
+  return items.length > 0 ? [{ id: 'user', label: '用户导航', showLabel: false, items }] : []
 })
 
-function isNavActive(path: string) {
-  return path === '/dashboard' ? route.path === path : route.path === path || route.path.startsWith(`${path}/`)
+function isNavActive(path: string, exact = false) {
+  if (path === '/dashboard' && route.path === '/scheme3-dashboard') return true
+  if (exact || path === '/dashboard') return route.path === path
+  return route.path === path || route.path.startsWith(`${path}/`)
+}
+
+function navTourId(path: string): string | undefined {
+  if (path === '/admin/accounts') return 'sidebar-channel-manage'
+  if (path === '/admin/groups') return 'sidebar-group-manage'
+  if (path === '/admin/redeem') return 'sidebar-wallet'
+  return undefined
+}
+
+function handleNavItemClick(itemPath: string) {
+  closeMobileNav()
+
+  const selector: Record<string, string> = {
+    '/admin/groups': '#sidebar-group-manage',
+    '/admin/accounts': '#sidebar-channel-manage',
+    '/keys': '[data-tour="sidebar-my-keys"]',
+  }
+  const tourSelector = selector[itemPath]
+  if (tourSelector && onboardingStore.isCurrentStep(tourSelector)) {
+    void onboardingStore.nextStep(500).catch(() => undefined)
+  }
+}
+
+function handleReplayGuide() {
+  onboardingStore.replay()
+}
+
+function isGroupActive(item: ConsoleNavItem): boolean {
+  return Boolean(item.children?.some((child) => isNavActive(child.path, true)))
+}
+
+function isGroupExpanded(item: ConsoleNavItem): boolean {
+  return expandedNavGroups.value.has(item.path) || isGroupActive(item)
+}
+
+function toggleNavGroup(item: ConsoleNavItem) {
+  if (navCollapsed.value) return
+  if (!item.expandOnly) {
+    if (route.path !== item.path) void router.push({ path: item.path, query: item.query })
+    const next = new Set(expandedNavGroups.value)
+    next.add(item.path)
+    expandedNavGroups.value = next
+    return
+  }
+  const next = new Set(expandedNavGroups.value)
+  if (next.has(item.path)) next.delete(item.path)
+  else next.add(item.path)
+  expandedNavGroups.value = next
 }
 
 function openMobileNav() { mobileNavOpen.value = true }
@@ -351,11 +480,27 @@ async function logout() {
 }
 
 watch(() => route.fullPath, closeMobileNav)
+watch(
+  adminMode,
+  (enabled) => {
+    if (enabled) void adminSettingsStore.fetch()
+  },
+  { immediate: true },
+)
 onMounted(() => {
   document.body.classList.add(adminMode.value ? 'scheme3-admin-context' : 'scheme3-user-context')
-  if (!adminMode.value) void refreshBatchImageAccess()
+  // API-key-backed capabilities belong to the authenticated user, including
+  // an admin account. The upstream sidebar evaluates this for both identities.
+  void refreshBatchImageAccess()
+  if (adminMode.value) void adminSettingsStore.fetch()
+  if (appStore.sidebarScrollTop > 0) {
+    void nextTick(() => {
+      if (sidebarNavRef.value) sidebarNavRef.value.scrollTop = appStore.sidebarScrollTop
+    })
+  }
 })
 onBeforeUnmount(() => {
+  if (sidebarNavRef.value) appStore.sidebarScrollTop = sidebarNavRef.value.scrollTop
   document.body.classList.remove(adminMode.value ? 'scheme3-admin-context' : 'scheme3-user-context')
 })
 </script>
@@ -403,14 +548,25 @@ onBeforeUnmount(() => {
 .scheme3-console-link:active { transform: translateX(2px) scale(.98); }
 .scheme3-console-link-active { border-color: rgba(30,92,66,.28); background: rgba(30,92,66,.08); color: #1e5c42; box-shadow: inset 3px 0 0 #1e5c42; }
 .scheme3-console-link-icon { display: inline-flex; flex-shrink: 0; color: currentColor; }
+.scheme3-console-svg-icon :deep(svg) { width: 1rem; height: 1rem; }
 .scheme3-console-link-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scheme3-console-current { margin-left: auto; border-radius: 999px; padding: .16rem .35rem; background: rgba(30,92,66,.1); color: #1e5c42; font-size: .54rem; font-weight: 800; }
+.scheme3-console-group { width: 100%; cursor: pointer; text-align: left; }
+.scheme3-console-group-chevron { flex-shrink: 0; margin-left: auto; transition: transform 160ms ease; }
+.scheme3-console-group-chevron.is-expanded { transform: rotate(180deg); }
+.scheme3-console-subnav { display: flex; flex-direction: column; gap: .2rem; margin: 0 0 .2rem .82rem; border-left: 1px solid var(--scheme3-line); padding-left: .42rem; }
+.scheme3-console-subnav-link { min-height: 2.2rem; padding-top: .42rem; padding-bottom: .42rem; font-size: .67rem; }
+.scheme3-console-subnav-link .scheme3-console-link-icon :deep(svg) { width: .88rem; height: .88rem; }
+.scheme3-console-doc-link { display: inline-flex; align-items: center; gap: .32rem; border: 1px solid transparent; border-radius: 6px; padding: .32rem .45rem; color: var(--scheme3-muted); font-size: .62rem; font-weight: 700; white-space: nowrap; }
+.scheme3-console-doc-link:hover { border-color: var(--scheme3-line); background: rgba(255,255,255,.72); color: var(--scheme3-ink); }
+.scheme3-console-subscription { flex-shrink: 0; }
 .scheme3-console-foot { margin-top: auto; border-top: 1px solid var(--scheme3-line); padding: .8rem .65rem; }
-.scheme3-console-account { display: flex; min-width: 0; align-items: center; gap: .55rem; padding: .45rem; }
+.scheme3-console-account { display: flex; min-width: 0; align-items: center; gap: .55rem; border-radius: 7px; padding: .45rem; color: inherit; text-decoration: none; }
+.scheme3-console-account:hover { background: rgba(255,255,255,.72); }
 .scheme3-console-avatar { display: inline-flex; width: 1.85rem; height: 1.85rem; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 7px; background: #16150f; color: #f4f2ec; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .6rem; font-weight: 800; }
 .scheme3-console-account-copy { min-width: 0; }
 .scheme3-console-account-copy strong { display: block; overflow: hidden; color: var(--scheme3-ink); font-size: .67rem; text-overflow: ellipsis; white-space: nowrap; }
-.scheme3-console-account-copy span { display: block; margin-top: .12rem; color: var(--scheme3-muted); font-size: .58rem; }
+.scheme3-console-account-copy span { display: block; overflow: hidden; margin-top: .12rem; color: var(--scheme3-muted); font-size: .56rem; text-overflow: ellipsis; white-space: nowrap; }
 .scheme3-console-action { display: flex; width: 100%; min-height: 2.2rem; align-items: center; gap: .6rem; border: 1px solid transparent; border-radius: 7px; padding: .45rem .65rem; background: transparent; color: var(--scheme3-muted); font-size: .65rem; font-weight: 700; text-align: left; transition: color 150ms ease,background-color 150ms ease,transform 150ms ease; }
 .scheme3-console-action:hover { background: rgba(255,255,255,.72); color: var(--scheme3-ink); }
 .scheme3-console-action:active { transform: scale(.98); }
@@ -425,7 +581,10 @@ onBeforeUnmount(() => {
 .scheme3-console-balance,.scheme3-console-status { display: inline-flex; align-items: center; gap: .28rem; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .61rem; white-space: nowrap; }
 .scheme3-console-balance { color: #b7791f; }
 .scheme3-console-status i { width: .36rem; height: .36rem; border-radius: 999px; background: #1e5c42; box-shadow: 0 0 0 .2rem rgba(30,92,66,.13); }
-.scheme3-console-user { display: inline-flex; min-width: 0; align-items: center; gap: .45rem; color: var(--scheme3-ink); font-size: .67rem; font-weight: 700; }
+.scheme3-console-user { display: inline-flex; min-width: 0; align-items: center; gap: .45rem; color: var(--scheme3-ink); font-size: .67rem; font-weight: 700; text-decoration: none; }
+.scheme3-console-user-copy { display: grid; min-width: 0; gap: .08rem; }
+.scheme3-console-user-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-console-user-copy small { color: var(--scheme3-muted); font-size: .52rem; font-weight: 700; }
 .scheme3-console-menu-button { display: none; align-items: center; justify-content: center; border: 1px solid var(--scheme3-line); border-radius: 7px; padding: .45rem; background: var(--scheme3-card); color: var(--scheme3-ink); }
 .scheme3-console-overlay { display: none; }
 .scheme3-console-content { min-width: 0; padding: 1.15rem 1.35rem 1.6rem; }
@@ -1466,8 +1625,12 @@ onBeforeUnmount(() => {
   .scheme3-console-topbar-kicker { font-size: .49rem; }
   .scheme3-console-topbar-left strong { font-size: 1rem; }
   .scheme3-console-topbar-right { gap: .45rem; }
-  .scheme3-console-balance,.scheme3-console-topbar-right .scheme3-console-locale-tool { display: none; }
-  .scheme3-console-user > span:last-child { display: none; }
+  .scheme3-console-doc-link,
+  .scheme3-console-topbar-right .scheme3-console-subscription,
+  .scheme3-console-status,
+  .scheme3-console-topbar-right .scheme3-console-locale-tool { display: none; }
+  .scheme3-console-balance { display: none; }
+  .scheme3-console-user-copy { display: none; }
   :global(body.scheme3-user-context .scheme3-toast) { min-width: 0 !important; width: calc(100vw - 2rem); }
 }
 </style>
