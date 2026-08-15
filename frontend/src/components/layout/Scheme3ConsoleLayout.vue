@@ -1386,6 +1386,67 @@ onBeforeUnmount(() => {
 :global(html.dark body.scheme3-admin-context [class*="dark:border-dark-500"]),
 :global(html.dark body.scheme3-admin-context [class*="dark:border-dark-600"]) { border-color: #47443a !important; }
 
+/* Finish the dark utility remap for legacy components rendered inside the
+   third-version shell. These classes are common in settings, groups, keys,
+   and teleported dialogs, so keeping them on the original slate surfaces
+   makes the old skin visible even after the page-frame remap. */
+:global(html.dark body.scheme3-user-context [class*="dark:bg-dark-700"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:bg-dark-700"]),
+:global(html.dark body.scheme3-user-context [class*="dark:bg-gray-700"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:bg-gray-700"]) {
+  background-color: #2b2924 !important;
+  background-image: none !important;
+}
+:global(html.dark body.scheme3-user-context [class*="dark:bg-dark-800"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:bg-dark-800"]),
+:global(html.dark body.scheme3-user-context [class*="dark:bg-gray-800"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:bg-gray-800"]) {
+  background-color: #24231f !important;
+  background-image: none !important;
+}
+:global(html.dark body.scheme3-user-context [class*="dark:border-dark-700"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:border-dark-700"]),
+:global(html.dark body.scheme3-user-context [class*="dark:border-gray-700"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:border-gray-700"]),
+:global(html.dark body.scheme3-user-context [class*="dark:border-gray-800"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:border-gray-800"]) {
+  border-color: #47443a !important;
+}
+:global(html.dark body.scheme3-user-context [class*="dark:text-gray-100"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:text-gray-100"]),
+:global(html.dark body.scheme3-user-context [class*="dark:text-gray-200"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:text-gray-200"]) {
+  color: #f4f2ec !important;
+}
+:global(html.dark body.scheme3-user-context [class*="dark:text-gray-300"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:text-gray-300"]),
+:global(html.dark body.scheme3-user-context [class*="dark:text-gray-400"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:text-gray-400"]),
+:global(html.dark body.scheme3-user-context [class*="dark:text-gray-500"]),
+:global(html.dark body.scheme3-admin-context [class*="dark:text-gray-500"]) {
+  color: #aaa69a !important;
+}
+:global(html.dark body.scheme3-user-context [class*="dark:hover:bg-dark-700"]:hover),
+:global(html.dark body.scheme3-admin-context [class*="dark:hover:bg-dark-700"]:hover),
+:global(html.dark body.scheme3-user-context [class*="dark:hover:bg-gray-700"]:hover),
+:global(html.dark body.scheme3-admin-context [class*="dark:hover:bg-gray-700"]:hover) {
+  background-color: #2b2924 !important;
+  background-image: none !important;
+}
+:global(html.dark body.scheme3-user-context [class*="dark:hover:bg-dark-800"]:hover),
+:global(html.dark body.scheme3-admin-context [class*="dark:hover:bg-dark-800"]:hover),
+:global(html.dark body.scheme3-user-context [class*="dark:hover:bg-gray-800"]:hover),
+:global(html.dark body.scheme3-admin-context [class*="dark:hover:bg-gray-800"]:hover) {
+  background-color: #24231f !important;
+  background-image: none !important;
+}
+:global(html.dark body.scheme3-user-context [class*="dark:hover:text-gray-300"]:hover),
+:global(html.dark body.scheme3-admin-context [class*="dark:hover:text-gray-300"]:hover),
+:global(html.dark body.scheme3-user-context [class*="dark:hover:text-gray-400"]:hover),
+:global(html.dark body.scheme3-admin-context [class*="dark:hover:text-gray-400"]:hover) {
+  color: #f4f2ec !important;
+}
+
 .scheme3-console-layout-collapsed .scheme3-console-brand-copy,.scheme3-console-layout-collapsed .scheme3-console-caption,.scheme3-console-layout-collapsed .scheme3-console-section-label,.scheme3-console-layout-collapsed .scheme3-console-link-text,.scheme3-console-layout-collapsed .scheme3-console-current,.scheme3-console-layout-collapsed .scheme3-console-account-copy,.scheme3-console-layout-collapsed .scheme3-console-action span { display: none; }
 .scheme3-console-layout-collapsed .scheme3-console-brand,.scheme3-console-layout-collapsed .scheme3-console-account { justify-content: center; }
 .scheme3-console-layout-collapsed .scheme3-console-link,.scheme3-console-layout-collapsed .scheme3-console-action { justify-content: center; padding-right: .4rem; padding-left: .4rem; }
