@@ -1,6 +1,6 @@
 # Sub2API Deployment Files
 
-This directory contains files for deploying Sub2API on Linux servers and Apple-silicon Macs. The Docker Compose files use `ghcr.io/ziyue67/sub2api:latest` by default.
+This directory contains files for deploying Sub2API on Linux servers and Apple-silicon Macs. The Docker Compose files use `ghcr.io/ziyue67/sub2api-ui:latest` by default.
 
 ## Deployment Methods
 
@@ -56,10 +56,10 @@ Use the automated preparation script for the easiest setup:
 
 ```bash
 # Download and run the preparation script
-curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/docker-deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api-ui/main/deploy/docker-deploy.sh | bash
 
 # Or download first, then run
-curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/docker-deploy.sh -o docker-deploy.sh
+curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api-ui/main/deploy/docker-deploy.sh -o docker-deploy.sh
 chmod +x docker-deploy.sh
 ./docker-deploy.sh
 ```
@@ -92,7 +92,7 @@ If you prefer manual control:
 
 ```bash
 # Clone repository
-git clone https://github.com/ziyue67/sub2api.git
+git clone https://github.com/ziyue67/sub2api-ui.git
 cd sub2api/deploy
 
 # Configure environment
@@ -121,7 +121,7 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 ### Updating the Fork Image
 
-The Compose files pull `ghcr.io/ziyue67/sub2api:latest`. Update only the
+The Compose files pull `ghcr.io/ziyue67/sub2api-ui:latest`. Update only the
 application container without changing PostgreSQL or Redis data:
 
 ```bash

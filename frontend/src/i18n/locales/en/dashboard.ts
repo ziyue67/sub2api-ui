@@ -571,8 +571,8 @@ export default {
       subscription: 'Subscription'
     },
     detail: {
-      channelCount: 'channels',
       noModels: 'No models configured for this group',
+      channelCount: '{count} channels',
       noPricing: 'Pricing not configured',
       peakNote: 'Peak hours {window}: billing rate ×{multiplier}'
     },
