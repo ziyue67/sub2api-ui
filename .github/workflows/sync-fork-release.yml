@@ -3,7 +3,7 @@ name: Sync Fork Release
 on:
   workflow_run:
     workflows:
-      - GitHub Container Registry
+      - Publish GHCR image
     types:
       - completed
 
@@ -34,14 +34,17 @@ jobs:
         run: |
           VERSION="$(tr -d '[:space:]' < backend/cmd/server/VERSION)"
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid VERSION: $VERSION" >&2
-            exit 1
+            echo "publishable=false" >> "$GITHUB_OUTPUT"
+            echo "No SemVer VERSION on this main commit; image publishing will not create a release."
+            exit 0
           fi
+          echo "publishable=true" >> "$GITHUB_OUTPUT"
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Skip an existing release
         id: existing
+        if: steps.version.outputs.publishable == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -54,7 +57,7 @@ jobs:
           fi
 
       - name: Build fork release notes
-        if: steps.existing.outputs.exists != 'true'
+        if: steps.version.outputs.publishable == 'true' && steps.existing.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -81,27 +84,26 @@ jobs:
                   break
 
           version = os.environ["VERSION"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          image = f"ghcr.io/{repo.lower()}"
           images = "\n".join([
-              "## Docker 镜像（ziyue67/sub2api）",
+              f"## Docker 镜像（{image}）",
               "",
               "```text",
-              "ziyue67/sub2api:latest",
-              f"ziyue67/sub2api:{version}",
-              "ghcr.io/ziyue67/sub2api:latest",
-              f"ghcr.io/ziyue67/sub2api:{version}",
+              f"{image}:latest",
+              f"{image}:{version}",
               "```",
               "",
               "拉取示例：",
               "",
               "```bash",
-              f"docker pull ziyue67/sub2api:{version}",
-              f"docker pull ghcr.io/ziyue67/sub2api:{version}",
+              f"docker pull {image}:{version}",
               "```",
               "",
               "## 文档",
               "",
-              "- [GitHub Repository](https://github.com/ziyue67/sub2api)",
-              "- [Deployment Guide](https://github.com/ziyue67/sub2api/tree/main/deploy)",
+              f"- [GitHub Repository](https://github.com/{repo})",
+              f"- [Deployment Guide](https://github.com/{repo}/tree/main/deploy)",
           ])
           Path("release-notes.md").write_text(
               f"{body}\n\n---\n\n{images}", encoding="utf-8"
@@ -109,7 +111,7 @@ jobs:
           PY
 
       - name: Create fork release
-        if: steps.existing.outputs.exists != 'true'
+        if: steps.version.outputs.publishable == 'true' && steps.existing.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
