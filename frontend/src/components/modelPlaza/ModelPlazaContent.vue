@@ -1,5 +1,5 @@
 <template>
-  <div class="scheme3-model-plaza space-y-5">
+  <div class="space-y-5">
     <!-- 页头(独立形态下展示标题;后台形态 AppHeader 已有页面标题) -->
     <div v-if="!embedded">
       <h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-3xl">{{ t('modelPlaza.title') }}</h1>
@@ -9,7 +9,7 @@
     <!-- 全局价格说明(管理员配置,Markdown) -->
     <div
       v-if="descriptionHtml"
-      class="scheme3-model-plaza-description plaza-description"
+      class="plaza-description rounded-2xl border border-gray-100 bg-white px-5 py-4 text-sm shadow-card dark:border-dark-700/50 dark:bg-dark-800/50"
       v-html="descriptionHtml"
     ></div>
 
@@ -28,7 +28,7 @@
     </div>
     <div
       v-else-if="error"
-      class="scheme3-model-plaza-error"
+      class="rounded-2xl border border-red-200 bg-red-50 px-5 py-8 text-center text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
     >
       {{ t('modelPlaza.loadFailed') }}
     </div>
@@ -54,7 +54,7 @@
       </div>
       <div
         v-else
-        class="scheme3-model-plaza-empty"
+        class="rounded-2xl border border-dashed border-gray-300 px-5 py-12 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-dark-400"
       >
         {{ searchActive ? t('modelPlaza.noSearchResult') : t('modelPlaza.empty') }}
       </div>
@@ -154,14 +154,6 @@ const filteredGroups = computed(() => {
 </script>
 
 <style scoped>
-.scheme3-model-plaza { --plaza-ink: var(--scheme3-ink,#16150f); --plaza-muted: var(--scheme3-muted,#6b695f); --plaza-line: var(--scheme3-line,#dad5c8); --plaza-card: var(--scheme3-card,#fbfaf6); color: var(--plaza-ink); }
-.scheme3-model-plaza-description { border: 1px solid var(--plaza-line); border-radius: 7px; padding: .8rem 1rem; background: #f4f2ec; box-shadow: none; font-size: .7rem; }
-.scheme3-model-plaza-error { border: 1px solid rgba(158,77,61,.3); border-radius: 7px; padding: 1.5rem; background: rgba(158,77,61,.07); color: #9e4d3d; font-size: .72rem; text-align: center; }
-.scheme3-model-plaza-empty { border: 1px dashed var(--plaza-line); border-radius: 7px; padding: 3rem 1.25rem; color: var(--plaza-muted); font-size: .72rem; text-align: center; }
-.scheme3-model-plaza :deep(.scheme3-model-plaza-filters) { border-bottom: 1px solid var(--plaza-line); padding: .2rem 0 1rem; }
-.scheme3-model-plaza :deep(.scheme3-model-plaza-group) { overflow: hidden; border: 1px solid var(--plaza-line) !important; border-radius: 7px; background: var(--plaza-card); box-shadow: 0 8px 18px rgba(54,48,34,.045); }
-:global(html.dark) .scheme3-model-plaza-description,:global(html.dark) .scheme3-model-plaza-group { border-color: #47443a; background: #24231f; color: #f4f2ec; }
-:global(html.dark) .scheme3-model-plaza-description { background: #1b1b18; }
 .plaza-description {
   line-height: 1.7;
   overflow-wrap: anywhere;

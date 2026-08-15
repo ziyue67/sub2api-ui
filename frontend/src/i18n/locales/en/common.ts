@@ -44,7 +44,6 @@ export default {
     inactive: 'Inactive',
     more: 'More',
     close: 'Close',
-    clear: 'Clear',
     toggleMenu: 'Toggle menu',
     userMenu: 'User menu',
     pageNotFound: 'Page not found',
@@ -158,9 +157,8 @@ export default {
 
   // Navigation
   nav: {
-    dashboard: 'Dashboard',
-    scheme3Workspace: 'Shour or ToKen Console',
-    announcements: 'Announcements',
+   dashboard: 'Dashboard',
+   announcements: 'Announcements',
    apiKeys: 'API Keys',
     leaderboard: 'Admin Leaderboard',
    batchImage: 'Batch Images',
@@ -212,14 +210,6 @@ export default {
 
   // Auth
   auth: {
-    scheme3: {
-      kicker: 'ACCOUNT / ACCESS LEDGER',
-      subtitle: 'Unified request and routing desk',
-      loginEyebrow: 'SIGN-IN / VERIFY IDENTITY',
-      registerEyebrow: 'REGISTRATION / CREATE ACCOUNT',
-      otherEntry: 'Other sign-in options',
-      copyright: 'Account services'
-    },
     welcomeBack: 'Welcome Back',
     signInToAccount: 'Sign in to your account to continue',
     signIn: 'Sign In',

@@ -1,12 +1,12 @@
 <template>
-  <div class="scheme3-stripe-popup flex min-h-screen items-center justify-center p-4">
+  <div class="flex min-h-screen items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
     <div
-      class="scheme3-stripe-popup-panel w-full max-w-md space-y-4 p-6"
+      class="w-full max-w-md space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-lg dark:border-slate-700 dark:bg-slate-900"
     >
       <!-- Amount + Order ID -->
       <div v-if="amount" class="text-center">
-        <p class="scheme3-stripe-popup-amount text-3xl font-bold">¥{{ amount }}</p>
-        <p v-if="orderId" class="scheme3-stripe-popup-order mt-1 text-sm">
+        <p class="text-3xl font-bold" :style="{ color: methodColor }">¥{{ amount }}</p>
+        <p v-if="orderId" class="mt-1 text-sm text-gray-500 dark:text-slate-400">
           {{ t('payment.orders.orderId') }}: {{ orderId }}
         </p>
       </div>
@@ -14,12 +14,13 @@
       <!-- Error -->
       <div v-if="error" class="space-y-3">
         <div
-          class="scheme3-stripe-popup-error p-3 text-sm"
+          class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-700 dark:bg-red-900/30 dark:text-red-400"
         >
           {{ error }}
         </div>
         <button
-          class="scheme3-stripe-popup-close w-full text-sm underline"
+          class="w-full text-sm underline dark:text-blue-400 dark:hover:text-blue-300"
+          :style="{ color: methodColor }"
           @click="closeWindow"
         >
           {{ t('common.close') }}
@@ -28,10 +29,11 @@
 
       <!-- Success -->
       <div v-else-if="success" class="space-y-3 py-4 text-center">
-        <div class="scheme3-stripe-popup-success-mark text-5xl">✓</div>
-        <p class="scheme3-stripe-popup-order text-sm">{{ t('payment.result.success') }}</p>
+        <div class="text-5xl text-green-600 dark:text-green-400">✓</div>
+        <p class="text-sm text-gray-500 dark:text-slate-400">{{ t('payment.result.success') }}</p>
         <button
-          class="scheme3-stripe-popup-close text-sm underline"
+          class="text-sm underline dark:text-blue-400 dark:hover:text-blue-300"
+          :style="{ color: methodColor }"
           @click="closeWindow"
         >
           {{ t('common.close') }}
@@ -41,16 +43,17 @@
       <!-- Loading / Redirecting -->
       <div v-else class="flex items-center justify-center py-8">
         <div
-          class="scheme3-stripe-popup-spinner h-8 w-8 animate-spin rounded-full border-2 border-t-transparent"
+          class="h-8 w-8 animate-spin rounded-full border-2 border-t-transparent"
+          :style="{ borderColor: methodColor, borderTopColor: 'transparent' }"
         />
-        <span class="scheme3-stripe-popup-order ml-3 text-sm">{{ hint }}</span>
+        <span class="ml-3 text-sm text-gray-500 dark:text-slate-400">{{ hint }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { extractI18nErrorMessage } from '@/utils/apiError'
@@ -61,12 +64,20 @@ interface StripeWithWechatPay {
   confirmWechatPayPayment(clientSecret: string, options: Record<string, unknown>): Promise<{ error?: { message?: string }; paymentIntent?: { status: string } }>
 }
 
+const METHOD_COLORS: Record<string, string> = {
+  alipay: '#00AEEF',
+  wechat_pay: '#07C160',
+}
+const DEFAULT_METHOD_COLOR = '#635bff'
+
 const { t } = useI18n()
 const route = useRoute()
 
 const orderId = String(route.query.order_id || '')
 const method = String(route.query.method || 'alipay')
 const amount = String(route.query.amount || '')
+
+const methodColor = computed(() => METHOD_COLORS[method] || DEFAULT_METHOD_COLOR)
 
 const error = ref('')
 const success = ref(false)
@@ -185,22 +196,3 @@ function startPolling() {
   }, 3000)
 }
 </script>
-
-<style scoped>
-.scheme3-stripe-popup { background: #f4f2ec; color: #27251f; }
-.scheme3-stripe-popup-panel { border: 1px solid #d8d2c3; border-radius: 8px; background: #fffefa; box-shadow: 0 18px 38px rgba(54,48,34,.12); }
-.scheme3-stripe-popup-amount { color: #1e5c42; font-family: Georgia, 'Times New Roman', serif; }
-.scheme3-stripe-popup-order { color: #777266; }
-.scheme3-stripe-popup-error { border: 1px solid rgba(158,77,61,.3); border-radius: 7px; background: rgba(158,77,61,.08); color: #9e4d3d; }
-.scheme3-stripe-popup-close { color: #1e5c42; text-underline-offset: 3px; transition: color 150ms ease; }
-.scheme3-stripe-popup-close:hover { color: #174a35; }
-.scheme3-stripe-popup-success-mark { color: #1e5c42; }
-.scheme3-stripe-popup-spinner { border-color: #1e5c42; border-top-color: transparent; }
-
-:global(.dark .scheme3-stripe-popup) { background: #1b1b18; color: #f4f2ec; }
-:global(.dark .scheme3-stripe-popup-panel) { border-color: #47443a; background: #24231f; box-shadow: 0 18px 38px rgba(0,0,0,.26); }
-:global(.dark .scheme3-stripe-popup-amount),:global(.dark .scheme3-stripe-popup-success-mark),:global(.dark .scheme3-stripe-popup-close) { color: #8fc2a5; }
-:global(.dark .scheme3-stripe-popup-order) { color: #aaa69a; }
-:global(.dark .scheme3-stripe-popup-error) { border-color: rgba(211,139,121,.32); background: rgba(211,139,121,.12); color: #d38b79; }
-:global(.dark .scheme3-stripe-popup-spinner) { border-color: #8fc2a5; border-top-color: transparent; }
-</style>

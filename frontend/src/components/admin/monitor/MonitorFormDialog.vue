@@ -3,17 +3,16 @@
     :show="show"
     :title="editing ? t('admin.channelMonitor.editTitle') : t('admin.channelMonitor.createTitle')"
     width="wide"
-    content-class="scheme3-monitor-dialog"
     @close="$emit('close')"
   >
-    <form id="channel-monitor-form" class="scheme3-monitor-dialog-form space-y-5" @submit.prevent="handleSubmit">
+    <form id="channel-monitor-form" @submit.prevent="handleSubmit" class="space-y-5">
       <div>
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.name') }} <span class="scheme3-monitor-required">*</span></label>
-        <input v-model="form.name" type="text" required class="scheme3-monitor-input" :placeholder="t('admin.channelMonitor.form.namePlaceholder')" />
+        <label class="input-label">{{ t('admin.channelMonitor.form.name') }} <span class="text-red-500">*</span></label>
+        <input v-model="form.name" type="text" required class="input" :placeholder="t('admin.channelMonitor.form.namePlaceholder')" />
       </div>
 
       <div>
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.provider') }} <span class="scheme3-monitor-required">*</span></label>
+        <label class="input-label">{{ t('admin.channelMonitor.form.provider') }} <span class="text-red-500">*</span></label>
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <button
             v-for="opt in providerOptions"
@@ -21,8 +20,8 @@
             type="button"
             :data-testid="`monitor-provider-${opt.value}`"
             :aria-pressed="form.provider === opt.value"
-            class="scheme3-monitor-choice"
-            :class="{ 'is-active': form.provider === opt.value }"
+            class="flex items-center justify-center gap-2 rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors"
+            :class="providerPickerClass(opt.value, form.provider === opt.value)"
             @click="selectProvider(opt.value)"
           >
             <ProviderIcon :provider="opt.value" :size="18" />
@@ -31,16 +30,16 @@
         </div>
       </div>
 
-      <div v-if="form.provider === PROVIDER_OPENAI" class="scheme3-monitor-notice">
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.apiMode') }}</label>
+      <div v-if="form.provider === PROVIDER_OPENAI" class="rounded-lg border border-blue-100 bg-blue-50/50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
+        <label class="input-label">{{ t('admin.channelMonitor.form.apiMode') }}</label>
         <div class="grid gap-3 sm:grid-cols-2">
           <button
             v-for="opt in apiModeOptions"
             :key="opt.value"
             type="button"
             :aria-pressed="form.api_mode === opt.value"
-            class="scheme3-monitor-choice w-full !justify-start text-left"
-            :class="{ 'is-active': form.api_mode === opt.value }"
+            class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
+            :class="apiModeButtonClass(opt.value)"
             @click="form.api_mode = opt.value"
           >
             <span class="block text-sm font-semibold">{{ opt.label }}</span>
@@ -50,98 +49,95 @@
       </div>
 
       <div>
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.endpoint') }} <span class="scheme3-monitor-required">*</span></label>
+        <label class="input-label">{{ t('admin.channelMonitor.form.endpoint') }} <span class="text-red-500">*</span></label>
         <div class="flex gap-2">
-          <input v-model="form.endpoint" data-testid="monitor-endpoint" type="text" required class="scheme3-monitor-input flex-1" :placeholder="t('admin.channelMonitor.form.endpointPlaceholder')" />
-          <button type="button" class="scheme3-monitor-button whitespace-nowrap" @click="useCurrentDomain">
+          <input v-model="form.endpoint" data-testid="monitor-endpoint" type="text" required class="input flex-1" :placeholder="t('admin.channelMonitor.form.endpointPlaceholder')" />
+          <button type="button" @click="useCurrentDomain" class="btn btn-secondary whitespace-nowrap">
             {{ t('admin.channelMonitor.form.useCurrentDomain') }}
           </button>
         </div>
       </div>
 
       <div>
-        <label class="scheme3-monitor-label">
-          {{ t('admin.channelMonitor.form.apiKey') }}<span v-if="!editing" class="scheme3-monitor-required"> *</span>
+        <label class="input-label">
+          {{ t('admin.channelMonitor.form.apiKey') }}<span v-if="!editing" class="text-red-500"> *</span>
         </label>
         <div class="flex gap-2">
           <input
             v-model="form.api_key"
             type="password"
             :required="!editing"
-            class="scheme3-monitor-input flex-1"
+            class="input flex-1"
             :placeholder="editing ? t('admin.channelMonitor.form.apiKeyEditPlaceholder') : t('admin.channelMonitor.form.apiKeyPlaceholder')"
           />
-          <button type="button" class="scheme3-monitor-button whitespace-nowrap" @click="openMyKeyPicker">
+          <button type="button" @click="openMyKeyPicker" class="btn btn-secondary whitespace-nowrap">
             {{ t('admin.channelMonitor.form.useMyKey') }}
           </button>
         </div>
-        <p v-if="editing && editing.api_key_masked" class="scheme3-monitor-hint mt-1 text-xs">{{ editing.api_key_masked }}</p>
+        <p v-if="editing && editing.api_key_masked" class="mt-1 text-xs text-gray-400">{{ editing.api_key_masked }}</p>
       </div>
 
       <div>
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.primaryModel') }} <span class="scheme3-monitor-required">*</span></label>
+        <label class="input-label">{{ t('admin.channelMonitor.form.primaryModel') }} <span class="text-red-500">*</span></label>
         <input
           v-model="form.primary_model"
           data-testid="monitor-primary-model"
           type="text"
           required
-          class="scheme3-monitor-input font-medium"
+          class="input font-medium"
+          :class="getPlatformTextClass(form.provider)"
           :placeholder="t('admin.channelMonitor.form.primaryModelPlaceholder')"
         />
       </div>
 
       <div>
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.extraModels') }}</label>
-        <div class="scheme3-monitor-model-tags">
-          <ModelTagInput
-            :models="form.extra_models"
-            :platform="form.provider"
-            :placeholder="t('admin.channelMonitor.form.extraModelsPlaceholder')"
-            @update:models="form.extra_models = $event"
-          />
-        </div>
+        <label class="input-label">{{ t('admin.channelMonitor.form.extraModels') }}</label>
+        <ModelTagInput
+          :models="form.extra_models"
+          :platform="form.provider"
+          :placeholder="t('admin.channelMonitor.form.extraModelsPlaceholder')"
+          @update:models="form.extra_models = $event"
+        />
       </div>
 
       <div>
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.groupName') }}</label>
-        <input v-model="form.group_name" type="text" class="scheme3-monitor-input" :placeholder="t('admin.channelMonitor.form.groupNamePlaceholder')" />
+        <label class="input-label">{{ t('admin.channelMonitor.form.groupName') }}</label>
+        <input v-model="form.group_name" type="text" class="input" :placeholder="t('admin.channelMonitor.form.groupNamePlaceholder')" />
       </div>
 
       <div>
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.intervalSeconds') }} <span class="scheme3-monitor-required">*</span></label>
-        <input v-model.number="form.interval_seconds" type="number" min="15" max="3600" required class="scheme3-monitor-input" />
-        <p class="scheme3-monitor-hint mt-1 text-xs">{{ t('admin.channelMonitor.form.intervalSecondsHint') }}</p>
+        <label class="input-label">{{ t('admin.channelMonitor.form.intervalSeconds') }} <span class="text-red-500">*</span></label>
+        <input v-model.number="form.interval_seconds" type="number" min="15" max="3600" required class="input" />
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.intervalSecondsHint') }}</p>
       </div>
 
       <div>
-        <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.form.jitterSeconds') }}</label>
-        <input v-model.number="form.jitter_seconds" type="number" min="0" :max="maxJitterSeconds" class="scheme3-monitor-input" />
-        <p class="scheme3-monitor-hint mt-1 text-xs">{{ t('admin.channelMonitor.form.jitterSecondsHint') }}</p>
+        <label class="input-label">{{ t('admin.channelMonitor.form.jitterSeconds') }}</label>
+        <input v-model.number="form.jitter_seconds" type="number" min="0" :max="maxJitterSeconds" class="input" />
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.jitterSecondsHint') }}</p>
       </div>
 
       <div class="flex items-center justify-between">
-        <label class="scheme3-monitor-label mb-0">{{ t('admin.channelMonitor.form.enabled') }}</label>
-        <Scheme3V2Toggle v-model="form.enabled" />
+        <label class="input-label mb-0">{{ t('admin.channelMonitor.form.enabled') }}</label>
+        <Toggle v-model="form.enabled" />
       </div>
 
       <!-- 高级设置区：请求模板 + 自定义 headers/body -->
-      <details class="scheme3-monitor-details">
-        <summary class="scheme3-monitor-summary cursor-pointer text-sm font-medium">
+      <details class="rounded-lg border border-gray-200 bg-gray-50/50 p-3 dark:border-dark-700 dark:bg-dark-900/30">
+        <summary class="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.channelMonitor.advanced.section') }}
         </summary>
-        <p class="scheme3-monitor-hint mt-1 text-xs">{{ t('admin.channelMonitor.advanced.sectionHint') }}</p>
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.advanced.sectionHint') }}</p>
 
         <div class="mt-4 space-y-4">
           <div>
-            <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.templateField.label') }}</label>
+            <label class="input-label">{{ t('admin.channelMonitor.templateField.label') }}</label>
             <Select
               v-model="templateSelectValue"
-              scheme3
               :options="templateOptions"
               :placeholder="t('admin.channelMonitor.templateField.placeholder')"
-              class="scheme3-monitor-select"
             />
-            <p class="scheme3-monitor-hint mt-1 text-xs">{{ t('admin.channelMonitor.templateField.applyHint') }}</p>
+            <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.templateField.applyHint') }}</p>
           </div>
 
           <MonitorAdvancedRequestConfig
@@ -160,14 +156,14 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button type="button" class="scheme3-monitor-button" @click="$emit('close')">
+        <button @click="$emit('close')" type="button" class="btn btn-secondary">
           {{ t('common.cancel') }}
         </button>
         <button
           type="submit"
           form="channel-monitor-form"
           :disabled="submitting"
-          class="scheme3-monitor-button is-primary"
+          class="btn btn-primary"
         >
           {{ submitting
             ? t('common.submitting')
@@ -207,12 +203,14 @@ import type {
 import type { ChannelMonitorTemplate } from '@/api/admin/channelMonitorTemplate'
 import type { ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import Select from '@/components/common/Select.vue'
 import ModelTagInput from '@/components/admin/channel/ModelTagInput.vue'
+import { getPlatformTextClass } from '@/components/admin/channel/types'
 import MonitorKeyPickerDialog from '@/components/admin/monitor/MonitorKeyPickerDialog.vue'
 import MonitorAdvancedRequestConfig from '@/components/admin/monitor/MonitorAdvancedRequestConfig.vue'
 import ProviderIcon from '@/components/user/monitor/ProviderIcon.vue'
-import Scheme3V2Toggle from '@/features/channel-monitor-v2/Scheme3V2Toggle.vue'
+import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import {
   PROVIDER_OPENAI,
   PROVIDER_ANTHROPIC,
@@ -237,6 +235,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const { providerPickerClass } = useChannelMonitorFormat()
 
 // System-configured default interval for new monitors. Falls back to the static
 // constant when public settings haven't loaded yet or store the legacy 0 value.
@@ -368,6 +367,14 @@ const apiModeOptions = computed<{ value: APIMode; label: string; hint: string }[
 
 function normalizeAPIMode(mode: APIMode | undefined | null): APIMode {
   return mode === API_MODE_RESPONSES ? API_MODE_RESPONSES : API_MODE_CHAT_COMPLETIONS
+}
+
+function apiModeButtonClass(mode: APIMode): string {
+  const active = form.api_mode === mode
+  if (active) {
+    return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
+  }
+  return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
 }
 
 function templateOptionLabel(tpl: ChannelMonitorTemplate): string {

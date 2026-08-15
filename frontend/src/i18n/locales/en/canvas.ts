@@ -50,7 +50,6 @@ export default {
       canceled: 'Canceled'
     },
     nodeInspector: 'Node Parameters',
-    nodeTypesTitle: 'Node Types',
     nodeTitle: 'Node name',
     nodeConfigDefault: 'Default',
     nodeConfigDefaultWebp: 'Default (WebP)',

@@ -1,12 +1,10 @@
 <template>
   <AppLayout>
-    <div class="scheme3-user-usage space-y-6">
-      <div class="scheme3-user-usage-stats">
-        <UsageStatsCards :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
-      </div>
+    <div class="space-y-6">
+      <UsageStatsCards :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
 
       <div class="space-y-4">
-        <div class="scheme3-user-usage-filter card p-4">
+        <div class="card p-4">
           <div class="flex flex-wrap items-center gap-4">
             <div class="flex items-center gap-2">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
@@ -29,7 +27,6 @@
           <ModelDistributionChart
             v-model:metric="modelDistributionMetric"
             :model-stats="requestedModelStats"
-            :palette="usageDistributionPalette"
             :loading="modelStatsLoading"
             :show-source-toggle="false"
             :show-metric-toggle="true"
@@ -41,7 +38,6 @@
           <GroupDistributionChart
             v-model:metric="groupDistributionMetric"
             :group-stats="groupStats"
-            :palette="usageDistributionPalette"
             :loading="chartsLoading"
             :show-metric-toggle="true"
             :enable-breakdown="false"
@@ -56,7 +52,6 @@
             v-model:source="endpointDistributionSource"
             v-model:metric="endpointDistributionMetric"
             :endpoint-stats="inboundEndpointStats"
-            :palette="usageDistributionPalette"
             :upstream-endpoint-stats="upstreamEndpointStats"
             :endpoint-path-stats="endpointPathStats"
             :loading="endpointStatsLoading"
@@ -67,11 +62,11 @@
             :start-date="startDate"
             :end-date="endDate"
           />
-          <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" :palette="usageTrendPalette" :labels="usageTrendLabels" />
+          <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
         </div>
       </div>
 
-      <div class="scheme3-user-usage-log-panel card p-6">
+      <div class="card p-6">
         <div class="flex flex-wrap items-end justify-between gap-4">
           <div v-if="activeTab === 'errors'" class="flex flex-1 flex-wrap items-end gap-4">
             <div class="w-full sm:w-auto sm:min-w-[220px]">
@@ -145,7 +140,7 @@
               </button>
               <div
                 v-if="showColumnDropdown"
-                class="scheme3-user-usage-column-dropdown absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+                class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
               >
                 <button
                   v-for="col in currentToggleableColumns"
@@ -166,7 +161,7 @@
         </div>
       </div>
 
-      <div v-if="errorViewEnabled" class="scheme3-user-usage-tabs flex gap-2 border-b border-gray-200 dark:border-dark-700">
+      <div v-if="errorViewEnabled" class="flex gap-2 border-b border-gray-200 dark:border-dark-700">
         <button class="tab" :class="{ 'tab-active': activeTab === 'usage' }" @click="activeTab = 'usage'">
           {{ t('usage.tabs.usage') }}
         </button>
@@ -259,35 +254,6 @@ const appStore = useAppStore()
 
 type DistributionMetric = 'tokens' | 'actual_cost'
 type EndpointSource = 'inbound' | 'upstream' | 'path'
-
-const usageDistributionPalette = [
-  '#2f6e4d',
-  '#a56613',
-  '#9e4d3d',
-  '#4c665d',
-  '#7b6040',
-  '#6e8b7e',
-  '#3f7a5e',
-  '#655f53',
-]
-
-const usageTrendPalette = {
-  input: '#2f6e4d',
-  output: '#3f7a5e',
-  cacheCreation: '#b7791f',
-  cacheRead: '#4c665d',
-  cacheHitRate: '#9e4d3d',
-}
-
-const usageTrendLabels = {
-  input: '输入',
-  output: '输出',
-  cacheCreation: '缓存写入',
-  cacheRead: '缓存读取',
-  cacheHitRate: '缓存命中率',
-  actualCost: '实际扣费',
-  standardCost: '标准费用',
-}
 
 const usageStats = ref<UsageStatsResponse | null>(null)
 const usageLogs = ref<UsageLog[]>([])
@@ -922,323 +888,3 @@ watch(endpointDistributionSource, () => {
   // Endpoint source switching is handled by the chart component using already loaded stats.
 })
 </script>
-
-<style scoped>
-.scheme3-user-usage {
-  --usage-ink: #27251f;
-  --usage-muted: #777266;
-  --usage-line: #d8d2c3;
-  --usage-card: #fffefa;
-  --usage-subtle: #f1eee6;
-  --usage-accent: #1e5c42;
-  color: var(--usage-ink);
-}
-
-.scheme3-user-usage :deep(.card) {
-  border-color: var(--usage-line);
-  border-radius: 8px;
-  background: var(--usage-card);
-  box-shadow: 0 10px 24px rgba(54, 48, 34, 0.055);
-}
-
-.scheme3-user-usage-filter { background: var(--usage-subtle) !important; }
-
-.scheme3-user-usage :deep(.date-picker-trigger) {
-  border-color: var(--usage-line);
-  border-radius: 7px;
-  background: var(--usage-card);
-  color: var(--usage-ink);
-}
-
-.scheme3-user-usage :deep(.date-picker-trigger-open),
-.scheme3-user-usage :deep(.date-picker-trigger:focus) {
-  border-color: var(--usage-accent);
-  box-shadow: 0 0 0 3px rgba(30, 92, 66, 0.12);
-}
-
-.scheme3-user-usage :deep(.date-picker-dropdown) {
-  border-color: var(--usage-line);
-  border-radius: 8px;
-  background: var(--usage-card);
-  box-shadow: 0 18px 36px rgba(54, 48, 34, 0.16);
-}
-
-.scheme3-user-usage :deep(.date-picker-preset:hover),
-.scheme3-user-usage :deep(.date-picker-preset-active) {
-  background: rgba(30, 92, 66, 0.1);
-  color: var(--usage-accent);
-}
-
-.scheme3-user-usage :deep(.date-picker-divider) { border-color: var(--usage-line); }
-
-.scheme3-user-usage :deep(.date-picker-input) {
-  border-color: var(--usage-line);
-  border-radius: 6px;
-  background: var(--usage-subtle);
-  color: var(--usage-ink);
-}
-
-.scheme3-user-usage :deep(.date-picker-input:focus) {
-  border-color: var(--usage-accent);
-  box-shadow: 0 0 0 3px rgba(30, 92, 66, 0.1);
-}
-
-.scheme3-user-usage :deep(.date-picker-apply) {
-  border-radius: 6px;
-  background: var(--usage-accent);
-}
-
-.scheme3-user-usage :deep(.inline-flex.rounded-lg.border.border-gray-200),
-.scheme3-user-usage :deep(.inline-flex.rounded-lg.bg-gray-100) {
-  border-color: var(--usage-line);
-  background: var(--usage-subtle);
-}
-
-.scheme3-user-usage :deep(.inline-flex.rounded-lg.border.border-gray-200 > button.bg-white),
-.scheme3-user-usage :deep(.inline-flex.rounded-lg.bg-gray-100 > button.bg-white) {
-  background: var(--usage-card);
-  color: var(--usage-ink);
-  box-shadow: 0 2px 5px rgba(54, 48, 34, 0.08);
-}
-
-.scheme3-user-usage :deep(.inline-flex.rounded-lg.border.border-gray-200 > button:not(.bg-white)),
-.scheme3-user-usage :deep(.inline-flex.rounded-lg.bg-gray-100 > button:not(.bg-white)) {
-  color: var(--usage-muted);
-}
-
-.scheme3-user-usage :deep(.scheme3-user-usage-column-dropdown) {
-  border-color: var(--usage-line) !important;
-  border-radius: 8px;
-  background: var(--usage-card) !important;
-  box-shadow: 0 18px 36px rgba(54, 48, 34, 0.16);
-}
-
-.scheme3-user-usage :deep(.scheme3-user-usage-column-dropdown button:hover) { background: var(--usage-subtle); }
-.scheme3-user-usage :deep(.scheme3-user-usage-column-dropdown .text-primary-500) { color: var(--usage-accent) !important; }
-
-.scheme3-user-usage-log-panel { background: var(--usage-card); }
-.scheme3-user-usage-tabs { border-color: var(--usage-line) !important; }
-.scheme3-user-usage-tabs :deep(.tab) { border-bottom-color: transparent; color: var(--usage-muted); }
-.scheme3-user-usage-tabs :deep(.tab:hover),
-.scheme3-user-usage-tabs :deep(.tab-active) { border-bottom-color: var(--usage-accent); color: var(--usage-accent); }
-
-.scheme3-user-usage :deep(table thead),
-.scheme3-user-usage :deep(table thead tr) { background: var(--usage-subtle); }
-.scheme3-user-usage :deep(table th),
-.scheme3-user-usage :deep(table td) { border-color: var(--usage-line); }
-
-.scheme3-user-usage :deep(.text-blue-600),
-.scheme3-user-usage :deep(.text-blue-500),
-.scheme3-user-usage :deep(.text-indigo-800),
-.scheme3-user-usage :deep(.text-purple-600),
-.scheme3-user-usage :deep(.text-violet-600),
-.scheme3-user-usage :deep(.text-sky-600),
-.scheme3-user-usage :deep(.text-cyan-600) { color: var(--usage-accent) !important; }
-
-.scheme3-user-usage-stats :deep(.card) { border-color: #d8d2c3; border-radius: 8px; background: #fffefa; box-shadow: 0 10px 24px rgba(54,48,34,.055); }
-.scheme3-user-usage-stats :deep(.bg-blue-100), .scheme3-user-usage-stats :deep(.bg-green-100) { border: 1px solid rgba(30,92,66,.2); border-radius: 7px; background: rgba(30,92,66,.1) !important; color: #1e5c42 !important; }
-.scheme3-user-usage-stats :deep(.bg-amber-100) { border: 1px solid rgba(183,121,31,.22); border-radius: 7px; background: rgba(183,121,31,.1) !important; color: #a56613 !important; }
-.scheme3-user-usage-stats :deep(.bg-purple-100) { border: 1px solid #d8d2c3; border-radius: 7px; background: #f1eee6 !important; color: #655f53 !important; }
-.scheme3-user-usage-stats :deep(.text-green-600) { color: #1e5c42 !important; }
-.scheme3-user-usage-stats :deep(.text-orange-500) { color: #b7791f !important; }
-
-:global(.dark .scheme3-user-usage-stats :deep(.card)) { border-color: #47443a; background: #24231f; box-shadow: 0 10px 24px rgba(0,0,0,.16); }
-:global(.dark .scheme3-user-usage-stats :deep(.bg-blue-100)), :global(.dark .scheme3-user-usage-stats :deep(.bg-green-100)) { border-color: rgba(143,194,165,.24); background: rgba(143,194,165,.1) !important; color: #8fc2a5 !important; }
-:global(.dark .scheme3-user-usage-stats :deep(.bg-amber-100)) { border-color: rgba(214,166,93,.24); background: rgba(214,166,93,.1) !important; color: #d6a65d !important; }
-:global(.dark .scheme3-user-usage-stats :deep(.bg-purple-100)) { border-color: #47443a; background: #2b2924 !important; color: #c4c0b6 !important; }
-:global(.dark .scheme3-user-usage-stats :deep(.text-green-600)) { color: #8fc2a5 !important; }
-
-:global(.dark .scheme3-user-usage) {
-  --usage-ink: #f4f2ec;
-  --usage-muted: #aaa69a;
-  --usage-line: #47443a;
-  --usage-card: #24231f;
-  --usage-subtle: #2b2924;
-  --usage-accent: #8fc2a5;
-}
-
-:global(.dark .scheme3-user-usage :deep(.card)) {
-  border-color: var(--usage-line);
-  background: var(--usage-card);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
-}
-
-:global(.dark .scheme3-user-usage-filter) { background: var(--usage-subtle) !important; }
-
-:global(.dark .scheme3-user-usage :deep(.date-picker-trigger)),
-:global(.dark .scheme3-user-usage :deep(.date-picker-dropdown)) {
-  border-color: var(--usage-line);
-  background: var(--usage-card);
-  color: var(--usage-ink);
-}
-
-:global(.dark .scheme3-user-usage :deep(.date-picker-trigger-open)),
-:global(.dark .scheme3-user-usage :deep(.date-picker-trigger:focus)) {
-  border-color: var(--usage-accent);
-  box-shadow: 0 0 0 3px rgba(143, 194, 165, 0.13);
-}
-
-:global(.dark .scheme3-user-usage :deep(.date-picker-preset:hover)),
-:global(.dark .scheme3-user-usage :deep(.date-picker-preset-active)) {
-  background: rgba(143, 194, 165, 0.1);
-  color: var(--usage-accent);
-}
-
-:global(.dark .scheme3-user-usage :deep(.date-picker-input)) {
-  border-color: var(--usage-line);
-  background: var(--usage-subtle);
-  color: var(--usage-ink);
-}
-
-:global(.dark .scheme3-user-usage :deep(.date-picker-apply)) {
-  background: var(--usage-accent);
-  color: #1b1b18;
-}
-
-:global(.dark .scheme3-user-usage :deep(.inline-flex.rounded-lg.border.border-gray-200)),
-:global(.dark .scheme3-user-usage :deep(.inline-flex.rounded-lg.bg-gray-100)) {
-  border-color: var(--usage-line);
-  background: var(--usage-subtle);
-}
-
-:global(.dark .scheme3-user-usage :deep(.inline-flex.rounded-lg.border.border-gray-200 > button.bg-white)),
-:global(.dark .scheme3-user-usage :deep(.inline-flex.rounded-lg.bg-gray-100 > button.bg-white)) {
-  background: var(--usage-card);
-  color: var(--usage-ink);
-}
-
-:global(.dark .scheme3-user-usage :deep(.scheme3-user-usage-column-dropdown)) {
-  border-color: var(--usage-line) !important;
-  background: var(--usage-card) !important;
-  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.3);
-}
-
-:global(.dark .scheme3-user-usage :deep(.scheme3-user-usage-column-dropdown button:hover)) { background: var(--usage-subtle); }
-:global(.dark .scheme3-user-usage-tabs) { border-color: var(--usage-line) !important; }
-:global(.dark .scheme3-user-usage-tabs :deep(.tab)) { color: var(--usage-muted); }
-:global(.dark .scheme3-user-usage-tabs :deep(.tab:hover)),
-:global(.dark .scheme3-user-usage-tabs :deep(.tab-active)) { border-bottom-color: var(--usage-accent); color: var(--usage-accent); }
-
-:global(.dark .scheme3-user-usage :deep(table thead)),
-:global(.dark .scheme3-user-usage :deep(table thead tr)) { background: var(--usage-subtle); }
-:global(.dark .scheme3-user-usage :deep(table th)),
-:global(.dark .scheme3-user-usage :deep(table td)) { border-color: var(--usage-line); }
-:global(.dark .scheme3-user-usage :deep(.text-blue-600)),
-:global(.dark .scheme3-user-usage :deep(.text-blue-500)),
-:global(.dark .scheme3-user-usage :deep(.text-indigo-800)),
-:global(.dark .scheme3-user-usage :deep(.text-purple-600)),
-:global(.dark .scheme3-user-usage :deep(.text-violet-600)),
-:global(.dark .scheme3-user-usage :deep(.text-sky-600)),
-:global(.dark .scheme3-user-usage :deep(.text-cyan-600)) { color: var(--usage-accent) !important; }
-</style>
-
-<style>
-/* The statistics cards and select/date-picker controls use components whose
-   scoped styles are compiled in separate SFCs. Keep their user-console dark
-   overrides global and gated by the body context marker. */
-body.scheme3-user-context .scheme3-user-usage-stats .card {
-  border-color: #d8d2c3;
-  background: #fffefa;
-}
-
-body.scheme3-user-context .scheme3-user-usage-stats .bg-blue-100,
-body.scheme3-user-context .scheme3-user-usage-stats .bg-green-100 {
-  border: 1px solid rgba(30, 92, 66, 0.2);
-  background: rgba(30, 92, 66, 0.1) !important;
-  color: #1e5c42 !important;
-}
-
-body.scheme3-user-context .scheme3-user-usage-stats .bg-purple-100 {
-  border: 1px solid #d8d2c3;
-  background: #f1eee6 !important;
-  color: #655f53 !important;
-}
-
-body.scheme3-user-context .scheme3-user-usage .select-trigger {
-  border-color: #d8d2c3 !important;
-  border-radius: 7px;
-  background: #fffefa !important;
-  color: #27251f !important;
-}
-
-body.scheme3-user-context .scheme3-user-usage .select-trigger:hover,
-body.scheme3-user-context .scheme3-user-usage .select-trigger-open {
-  border-color: #1e5c42 !important;
-  box-shadow: 0 0 0 3px rgba(30, 92, 66, 0.11);
-}
-
-body.scheme3-user-context .scheme3-user-usage .table-wrapper .table-header,
-body.scheme3-user-context .scheme3-user-usage .sticky-header-cell {
-  background: #f1eee6 !important;
-}
-
-body.scheme3-user-context .scheme3-user-usage .table-body,
-body.scheme3-user-context .scheme3-user-usage tbody .sticky-col {
-  background: #fffefa !important;
-}
-
-body.scheme3-user-context .scheme3-user-usage .empty-state > div {
-  background: #f1eee6 !important;
-  color: #777266;
-}
-
-body.scheme3-user-context .scheme3-user-usage .empty-state-icon {
-  color: #1e5c42;
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage-stats .card {
-  border-color: #47443a;
-  background: #24231f;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage-stats .bg-blue-100,
-html.dark body.scheme3-user-context .scheme3-user-usage-stats .bg-green-100 {
-  border-color: rgba(143, 194, 165, 0.24);
-  background: rgba(143, 194, 165, 0.1) !important;
-  color: #8fc2a5 !important;
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage-stats .bg-amber-100 {
-  border-color: rgba(214, 166, 93, 0.24);
-  background: rgba(214, 166, 93, 0.1) !important;
-  color: #d6a65d !important;
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage-stats .bg-purple-100 {
-  border-color: #47443a;
-  background: #2b2924 !important;
-  color: #c4c0b6 !important;
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage .select-trigger {
-  border-color: #47443a !important;
-  background: #24231f !important;
-  color: #f4f2ec !important;
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage .select-trigger:hover,
-html.dark body.scheme3-user-context .scheme3-user-usage .select-trigger-open {
-  border-color: #8fc2a5 !important;
-  box-shadow: 0 0 0 3px rgba(143, 194, 165, 0.13);
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage .table-wrapper .table-header,
-html.dark body.scheme3-user-context .scheme3-user-usage .sticky-header-cell {
-  background: #2b2924 !important;
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage .table-body,
-html.dark body.scheme3-user-context .scheme3-user-usage tbody .sticky-col {
-  background: #24231f !important;
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage .empty-state > div {
-  background: #2b2924 !important;
-  color: #aaa69a;
-}
-
-html.dark body.scheme3-user-context .scheme3-user-usage .empty-state-icon {
-  color: #8fc2a5;
-}
-</style>

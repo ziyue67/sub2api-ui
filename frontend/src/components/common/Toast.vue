@@ -17,28 +17,36 @@
           v-for="toast in toasts"
           :key="toast.id"
           :class="[
-            'scheme3-toast',
-            `scheme3-toast--${toast.type}`
+            'pointer-events-auto min-w-[320px] max-w-md overflow-hidden rounded-lg shadow-lg',
+            'bg-white dark:bg-dark-800',
+            'border-l-4',
+            getBorderColor(toast.type)
           ]"
         >
-          <div class="scheme3-toast-content">
-            <div class="scheme3-toast-row">
+          <div class="p-4">
+            <div class="flex items-start gap-3">
               <!-- Icon -->
-              <div class="scheme3-toast-icon">
+              <div class="mt-0.5 flex-shrink-0">
                 <Icon
                   :name="getToastIconName(toast.type)"
                   size="md"
+                  :class="getIconColor(toast.type)"
                   aria-hidden="true"
                 />
               </div>
 
               <!-- Content -->
-              <div class="scheme3-toast-copy">
-                <p v-if="toast.title" class="scheme3-toast-title">
+              <div class="min-w-0 flex-1">
+                <p v-if="toast.title" class="text-sm font-semibold text-gray-900 dark:text-white">
                   {{ toast.title }}
                 </p>
                 <p
-                  :class="['scheme3-toast-message', { 'scheme3-toast-message-with-title': toast.title }]"
+                  :class="[
+                    'text-sm leading-relaxed',
+                    toast.title
+                      ? 'mt-1 text-gray-600 dark:text-gray-300'
+                      : 'text-gray-900 dark:text-white'
+                  ]"
                 >
                   {{ toast.message }}
                 </p>
@@ -47,8 +55,8 @@
               <!-- Close button -->
               <button
                 @click="removeToast(toast.id)"
-                class="scheme3-toast-close"
-                aria-label="关闭通知"
+                class="-m-1 flex-shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-dark-700 dark:hover:text-gray-300"
+                aria-label="Close notification"
               >
                 <Icon name="x" size="sm" />
               </button>
@@ -56,9 +64,9 @@
           </div>
 
           <!-- Progress bar -->
-          <div v-if="toast.duration" class="scheme3-toast-track">
+          <div v-if="toast.duration" class="h-1 bg-gray-100 dark:bg-dark-700">
             <div
-              class="scheme3-toast-progress"
+              :class="['h-full toast-progress', getProgressBarColor(toast.type)]"
               :style="{ animationDuration: `${toast.duration}ms` }"
             ></div>
           </div>
@@ -91,65 +99,47 @@ const getToastIconName = (type: string): 'checkCircle' | 'xCircle' | 'exclamatio
   }
 }
 
+const getIconColor = (type: string): string => {
+  const colors: Record<string, string> = {
+    success: 'text-green-500',
+    error: 'text-red-500',
+    warning: 'text-yellow-500',
+    info: 'text-blue-500'
+  }
+  return colors[type] || colors.info
+}
+
+const getBorderColor = (type: string): string => {
+  const colors: Record<string, string> = {
+    success: 'border-green-500',
+    error: 'border-red-500',
+    warning: 'border-yellow-500',
+    info: 'border-blue-500'
+  }
+  return colors[type] || colors.info
+}
+
+const getProgressBarColor = (type: string): string => {
+  const colors: Record<string, string> = {
+    success: 'bg-green-500',
+    error: 'bg-red-500',
+    warning: 'bg-yellow-500',
+    info: 'bg-blue-500'
+  }
+  return colors[type] || colors.info
+}
+
 const removeToast = (id: string) => {
   appStore.hideToast(id)
 }
 </script>
 
 <style scoped>
-.scheme3-toast {
-  --toast-paper: #fffefa;
-  --toast-ink: #24231f;
-  --toast-muted: #777266;
-  --toast-line: #d8d2c3;
-  --toast-accent: #39706c;
-  pointer-events: auto;
-  min-width: min(20rem, calc(100vw - 2rem));
-  max-width: 26rem;
-  overflow: hidden;
-  border: 1px solid var(--toast-line);
-  border-left: 4px solid var(--toast-accent);
-  border-radius: 7px;
-  background: var(--toast-paper);
-  box-shadow: 0 14px 30px rgba(54, 48, 34, .14);
-}
-
-.scheme3-toast--success { --toast-accent: #1e5c42; }
-.scheme3-toast--error { --toast-accent: #a14234; }
-.scheme3-toast--warning { --toast-accent: #a36a1d; }
-.scheme3-toast--info { --toast-accent: #39706c; }
-
-.scheme3-toast-content { padding: .82rem .9rem .78rem; }
-.scheme3-toast-row { display: flex; align-items: flex-start; gap: .68rem; }
-.scheme3-toast-icon { display: inline-flex; flex: 0 0 auto; margin-top: .08rem; color: var(--toast-accent); }
-.scheme3-toast-copy { min-width: 0; flex: 1; }
-.scheme3-toast-title { margin: 0; color: var(--toast-ink); font-size: .82rem; font-weight: 800; line-height: 1.45; }
-.scheme3-toast-message { margin: 0; color: var(--toast-ink); font-size: .78rem; line-height: 1.55; overflow-wrap: anywhere; }
-.scheme3-toast-message-with-title { margin-top: .16rem; color: var(--toast-muted); }
-.scheme3-toast-close { display: inline-flex; width: 1.65rem; height: 1.65rem; flex: 0 0 auto; align-items: center; justify-content: center; border: 0; border-radius: 5px; background: transparent; color: var(--toast-muted); cursor: pointer; transition: background-color 150ms ease, color 150ms ease, transform 150ms ease; }
-.scheme3-toast-close:hover { background: #f1eee6; color: var(--toast-ink); }
-.scheme3-toast-close:active { transform: scale(.95); }
-.scheme3-toast-track { height: 3px; background: #ece8de; }
-
-.scheme3-toast-progress {
+.toast-progress {
   width: 100%;
-  height: 100%;
-  background: var(--toast-accent);
   animation-name: toast-progress-shrink;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
-}
-
-:global(html.dark .scheme3-toast) { --toast-paper: #24231f; --toast-ink: #f4f2ec; --toast-muted: #aaa69a; --toast-line: #47443a; box-shadow: 0 16px 34px rgba(0, 0, 0, .3); }
-:global(html.dark .scheme3-toast--success) { --toast-accent: #8fc2a5; }
-:global(html.dark .scheme3-toast--error) { --toast-accent: #e7988b; }
-:global(html.dark .scheme3-toast--warning) { --toast-accent: #e7bf78; }
-:global(html.dark .scheme3-toast--info) { --toast-accent: #82b8ae; }
-:global(html.dark .scheme3-toast-close:hover) { background: #2e2c27; }
-:global(html.dark .scheme3-toast-track) { background: #34322c; }
-
-@media (max-width: 480px) {
-  .scheme3-toast { min-width: min(20rem, calc(100vw - 2rem)); max-width: calc(100vw - 2rem); }
 }
 
 @keyframes toast-progress-shrink {

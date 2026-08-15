@@ -1,22 +1,26 @@
 <template>
   <AuthLayout>
-    <div class="auth-panel">
-      <header class="auth-panel-heading">
-        <p class="auth-eyebrow">{{ t('auth.scheme3.loginEyebrow') }}</p>
-        <h2 class="auth-panel-title">{{ t('auth.welcomeBack') }}</h2>
-        <p class="auth-panel-subtitle">{{ t('auth.signInToAccount') }}</p>
-      </header>
-
-      <div v-if="errorMessage" class="auth-alert auth-alert-error" role="alert">
-        <Icon name="exclamationCircle" size="sm" />
-        <span>{{ errorMessage }}</span>
+    <div class="space-y-6">
+      <!-- Title -->
+      <div class="text-center">
+        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
+          {{ t('auth.welcomeBack') }}
+        </h2>
+        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+          {{ t('auth.signInToAccount') }}
+        </p>
       </div>
-
-      <form class="auth-form" @submit.prevent="handleLogin">
-        <div class="auth-field">
-          <label for="email" class="auth-label">{{ t('auth.emailLabel') }}</label>
-          <div class="auth-input-shell">
-            <Icon name="mail" size="sm" class="auth-input-icon" />
+      <!-- Login Form -->
+      <form @submit.prevent="handleLogin" class="space-y-5">
+        <!-- Email Input -->
+        <div>
+          <label for="email" class="input-label">
+            {{ t('auth.emailLabel') }}
+          </label>
+          <div class="relative">
+            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
+              <Icon name="mail" size="md" class="text-gray-400 dark:text-dark-500" />
+            </div>
             <input
               id="email"
               v-model="formData.email"
@@ -25,18 +29,22 @@
               autofocus
               autocomplete="email"
               :disabled="authActionDisabled"
-              class="auth-input"
-              :class="{ 'auth-input-invalid': errors.email }"
+              class="input pl-11"
+              :class="{ 'input-error': errors.email }"
               :placeholder="t('auth.emailPlaceholder')"
             />
           </div>
-          <p v-if="errors.email" class="auth-field-error">{{ errors.email }}</p>
         </div>
 
-        <div class="auth-field">
-          <label for="password" class="auth-label">{{ t('auth.passwordLabel') }}</label>
-          <div class="auth-input-shell">
-            <Icon name="lock" size="sm" class="auth-input-icon" />
+        <!-- Password Input -->
+        <div>
+          <label for="password" class="input-label">
+            {{ t('auth.passwordLabel') }}
+          </label>
+          <div class="relative">
+            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
+              <Icon name="lock" size="md" class="text-gray-400 dark:text-dark-500" />
+            </div>
             <input
               id="password"
               v-model="formData.password"
@@ -44,35 +52,34 @@
               required
               autocomplete="current-password"
               :disabled="authActionDisabled"
-              class="auth-input auth-input-with-action"
-              :class="{ 'auth-input-invalid': errors.password }"
+              class="input pl-11 pr-11"
+              :class="{ 'input-error': errors.password }"
               :placeholder="t('auth.passwordPlaceholder')"
             />
             <button
               type="button"
-              class="auth-input-action"
-              :disabled="authActionDisabled"
-              :aria-label="showPassword ? '隐藏密码' : '显示密码'"
               @click="showPassword = !showPassword"
+              :disabled="authActionDisabled"
+              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
             >
-              <Icon v-if="showPassword" name="eyeOff" size="sm" />
-              <Icon v-else name="eye" size="sm" />
+              <Icon v-if="showPassword" name="eyeOff" size="md" />
+              <Icon v-else name="eye" size="md" />
             </button>
           </div>
-          <div class="auth-field-meta">
+          <div class="mt-1 flex items-center justify-between">
             <span></span>
             <router-link
               v-if="passwordResetEnabled && !backendModeEnabled"
               to="/forgot-password"
-              class="auth-link"
+              class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
             >
               {{ t('auth.forgotPassword') }}
             </router-link>
           </div>
-          <p v-if="errors.password" class="auth-field-error">{{ errors.password }}</p>
         </div>
 
-        <div v-if="captchaEnabled" class="auth-captcha">
+        <!-- Turnstile Widget -->
+        <div v-if="captchaEnabled">
           <TurnstileWidget
             ref="turnstileRef"
             :turnstile-enabled="turnstileEnabled"
@@ -88,8 +95,37 @@
             @expire="onTurnstileExpire"
             @error="onTurnstileError"
           />
-          <p v-if="errors.turnstile" class="auth-field-error">{{ errors.turnstile }}</p>
         </div>
+
+        <!-- Submit Button -->
+        <button
+          type="submit"
+          :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
+          class="btn btn-primary w-full"
+        >
+          <svg
+            v-if="isLoading"
+            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            ></circle>
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            ></path>
+          </svg>
+          <Icon v-else name="login" size="md" class="mr-2" />
+          {{ isLoading ? t('auth.signingIn') : t('auth.signIn') }}
+        </button>
 
         <LoginAgreementPrompt
           v-if="loginAgreementEnabled"
@@ -103,77 +139,78 @@
           @open="showAgreementModal = true"
         />
 
-        <button
-          type="submit"
-          class="auth-submit"
-          :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
-        >
-          <svg v-if="isLoading" class="auth-spinner" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <Icon v-else name="login" size="sm" />
-          <span>{{ isLoading ? t('auth.signingIn') : t('auth.signIn') }}</span>
-        </button>
+        <div v-if="showPasskeyLogin || showOAuthLogin" class="space-y-3 pt-1">
+          <div class="flex items-center gap-3">
+            <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
+            <span class="text-xs text-gray-500 dark:text-dark-400">
+              {{ t('auth.oauthOrContinue') }}
+            </span>
+            <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
+          </div>
+
+          <button
+            v-if="showPasskeyLogin"
+            type="button"
+            class="btn btn-secondary w-full"
+            :disabled="authActionDisabled"
+            @click="handlePasskeyLogin"
+          >
+            <Icon name="key" size="md" class="mr-2" />
+            {{ passkeyLoading ? t('auth.passkeySigningIn') : t('auth.passkeySignIn') }}
+          </button>
+
+          <EmailOAuthButtons
+            :disabled="authActionDisabled"
+            :github-enabled="githubOAuthEnabled"
+            :google-enabled="googleOAuthEnabled"
+            :show-divider="false"
+            @start="handleOAuthStart"
+          />
+
+          <LinuxDoOAuthSection
+            v-if="linuxdoOAuthEnabled"
+            :disabled="authActionDisabled"
+            :show-divider="false"
+            @start="handleOAuthStart"
+          />
+          <DingTalkOAuthSection
+            v-if="dingtalkOAuthEnabled"
+            :disabled="authActionDisabled"
+            :show-divider="false"
+            @start="handleOAuthStart"
+          />
+          <WechatOAuthSection
+            v-if="wechatOAuthEnabled"
+            :disabled="authActionDisabled"
+            :show-divider="false"
+            @start="handleOAuthStart"
+          />
+          <OidcOAuthSection
+            v-if="oidcOAuthEnabled"
+            :disabled="authActionDisabled"
+            :provider-name="oidcOAuthProviderName"
+            :show-divider="false"
+            @start="handleOAuthStart"
+          />
+        </div>
       </form>
-
-      <div v-if="showPasskeyLogin || showOAuthLogin" class="auth-alternatives">
-        <div class="auth-divider"><span>{{ t('auth.scheme3.otherEntry') }}</span></div>
-
-        <button
-          v-if="showPasskeyLogin"
-          type="button"
-          class="auth-secondary"
-          :disabled="authActionDisabled"
-          @click="handlePasskeyLogin"
-        >
-          <Icon name="key" size="sm" />
-          <span>{{ passkeyLoading ? t('auth.passkeySigningIn') : t('auth.passkeySignIn') }}</span>
-        </button>
-
-        <EmailOAuthButtons
-          :disabled="authActionDisabled"
-          :github-enabled="githubOAuthEnabled"
-          :google-enabled="googleOAuthEnabled"
-          :show-divider="false"
-          @start="handleOAuthStart"
-        />
-        <LinuxDoOAuthSection
-          v-if="linuxdoOAuthEnabled"
-          :disabled="authActionDisabled"
-          :show-divider="false"
-          @start="handleOAuthStart"
-        />
-        <DingTalkOAuthSection
-          v-if="dingtalkOAuthEnabled"
-          :disabled="authActionDisabled"
-          :show-divider="false"
-          @start="handleOAuthStart"
-        />
-        <WechatOAuthSection
-          v-if="wechatOAuthEnabled"
-          :disabled="authActionDisabled"
-          :show-divider="false"
-          @start="handleOAuthStart"
-        />
-        <OidcOAuthSection
-          v-if="oidcOAuthEnabled"
-          :disabled="authActionDisabled"
-          :provider-name="oidcOAuthProviderName"
-          :show-divider="false"
-          @start="handleOAuthStart"
-        />
-      </div>
     </div>
 
+    <!-- Footer -->
     <template v-if="!backendModeEnabled" #footer>
-      <p class="auth-footer-copy">
+      <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.dontHaveAccount') }}
-        <router-link to="/register" class="auth-link">{{ t('auth.signUp') }}</router-link>
+        <router-link
+          to="/register"
+          class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+        >
+          {{ t('auth.signUp') }}
+        </router-link>
       </p>
     </template>
   </AuthLayout>
 
+  <!-- 2FA Modal -->
   <TotpLoginModal
     v-if="show2FAModal"
     ref="totpModalRef"
@@ -695,359 +732,6 @@ function handle2FACancel(): void {
 </script>
 
 <style scoped>
-@keyframes auth-input-breathe {
-  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--auth-green) 12%, transparent); }
-  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--auth-green) 20%, transparent); }
-}
-
-.auth-panel {
-  --auth-line: #dad5c8;
-  --auth-card: #fbfaf6;
-  --auth-ink: #16150f;
-  --auth-muted: #6b695f;
-  --auth-green: #1e5c42;
-  --auth-red: #a63d32;
-}
-
-:global(html.dark .auth-panel) {
-  --auth-line: #47443a;
-  --auth-card: #24231f;
-  --auth-ink: #f4f2ec;
-  --auth-muted: #aaa69a;
-  --auth-green: #8fc2a5;
-  --auth-red: #e28b80;
-}
-
-.auth-panel-heading {
-  border-bottom: 1px solid var(--auth-line);
-  margin-bottom: 1.35rem;
-  padding-bottom: 1.1rem;
-}
-
-.auth-eyebrow,
-.auth-label,
-.auth-divider span {
-  color: var(--auth-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.68rem;
-  letter-spacing: 0.12em;
-  line-height: 1.4;
-  text-transform: uppercase;
-}
-
-.auth-panel-title {
-  margin: 0.5rem 0 0;
-  color: var(--auth-ink);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.65rem, 7vw, 2.2rem);
-  font-weight: 400;
-  letter-spacing: 0;
-  line-height: 1.05;
-}
-
-.auth-panel-subtitle {
-  margin: 0.5rem 0 0;
-  color: var(--auth-muted);
-  font-size: 0.84rem;
-  line-height: 1.55;
-}
-
-.auth-form,
-.auth-alternatives {
-  display: grid;
-  gap: 1rem;
-}
-
-.auth-field {
-  min-width: 0;
-}
-
-.auth-label {
-  display: block;
-  margin-bottom: 0.4rem;
-  color: var(--auth-ink);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-}
-
-.auth-input-shell {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-height: 2.85rem;
-  border: 1px solid var(--auth-line);
-  background: var(--auth-card);
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.auth-input-shell:focus-within {
-  border-color: var(--auth-green);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--auth-green) 16%, transparent);
-  animation: auth-input-breathe 1.8s ease-in-out infinite;
-}
-
-.auth-input-icon {
-  position: absolute;
-  left: 0.75rem;
-  color: var(--auth-muted);
-  pointer-events: none;
-}
-
-.auth-input {
-  width: 100%;
-  min-width: 0;
-  min-height: 2.8rem;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--auth-ink);
-  padding: 0.65rem 0.8rem 0.65rem 2.55rem;
-  font-size: 0.9rem;
-}
-
-.auth-input::placeholder {
-  color: color-mix(in srgb, var(--auth-muted) 72%, transparent);
-}
-
-.auth-input-with-action {
-  padding-right: 2.8rem;
-}
-
-.auth-input-invalid {
-  color: var(--auth-red);
-}
-
-.auth-input-action {
-  position: absolute;
-  right: 0.25rem;
-  display: inline-flex;
-  width: 2.25rem;
-  height: 2.25rem;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  color: var(--auth-muted);
-}
-
-.auth-input-action:hover:not(:disabled) {
-  color: var(--auth-green);
-}
-
-.auth-input-action:disabled,
-.auth-submit:disabled,
-.auth-secondary:disabled {
-  cursor: not-allowed;
-  opacity: 0.52;
-}
-
-.auth-field-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 1.2rem;
-  margin-top: 0.25rem;
-}
-
-.auth-field-error {
-  margin: 0.35rem 0 0;
-  color: var(--auth-red);
-  font-size: 0.75rem;
-  line-height: 1.4;
-}
-
-.auth-captcha {
-  display: grid;
-  justify-items: center;
-  min-width: 0;
-  border-top: 1px solid var(--auth-line);
-  border-bottom: 1px solid var(--auth-line);
-  padding: 0.85rem 0;
-}
-
-.auth-alert {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.55rem;
-  margin-bottom: 1rem;
-  border: 1px solid;
-  padding: 0.75rem 0.85rem;
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.auth-alert-error {
-  border-color: color-mix(in srgb, var(--auth-red) 35%, var(--auth-line));
-  background: #fbefec;
-  color: var(--auth-red);
-}
-
-.auth-submit,
-.auth-secondary {
-  position: relative;
-  overflow: hidden;
-  display: inline-flex;
-  min-height: 2.85rem;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  width: 100%;
-  border: 1px solid var(--auth-green);
-  padding: 0.7rem 1rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.76rem;
-  letter-spacing: 0.06em;
-  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
-}
-
-.auth-submit::after,
-.auth-secondary::after {
-  position: absolute;
-  top: -35%;
-  left: 0;
-  width: 1.5rem;
-  height: 170%;
-  background: color-mix(in srgb, white 24%, transparent);
-  content: "";
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(-150%) skewX(-18deg);
-}
-
-.auth-submit:hover:not(:disabled)::after,
-.auth-secondary:hover:not(:disabled)::after {
-  opacity: 1;
-  animation: auth-button-sheen 680ms ease-out both;
-}
-
-.auth-submit:active:not(:disabled),
-.auth-secondary:active:not(:disabled),
-.auth-input-action:active:not(:disabled) {
-  transform: translateY(1px) scale(0.98);
-}
-
-@keyframes auth-button-sheen {
-  from { transform: translateX(-150%) skewX(-18deg); }
-  to { transform: translateX(900%) skewX(-18deg); }
-}
-
-.auth-submit {
-  background: var(--auth-green);
-  color: #fbfaf6;
-}
-
-.auth-submit:hover:not(:disabled) {
-  background: #174a35;
-}
-
-.auth-secondary {
-  border-color: var(--auth-line);
-  background: var(--auth-card);
-  color: var(--auth-ink);
-}
-
-.auth-secondary:hover:not(:disabled) {
-  border-color: var(--auth-green);
-  color: var(--auth-green);
-}
-
-.auth-spinner {
-  width: 1rem;
-  height: 1rem;
-  animation: auth-spin 0.8s linear infinite;
-}
-
-@keyframes auth-spin {
-  to { transform: rotate(360deg); }
-}
-
-.auth-alternatives {
-  margin-top: 1.3rem;
-  padding-top: 1.2rem;
-  border-top: 1px solid var(--auth-line);
-}
-
-.auth-divider {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-}
-
-.auth-divider::before,
-.auth-divider::after {
-  height: 1px;
-  flex: 1;
-  background: var(--auth-line);
-  content: "";
-}
-
-.auth-link {
-  color: var(--auth-green);
-  font-weight: 600;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--auth-green) 35%, transparent);
-  text-underline-offset: 0.2em;
-}
-
-.auth-link:hover {
-  color: #174a35;
-}
-
-:global(html.dark .auth-panel .auth-link) {
-  color: var(--auth-green);
-}
-
-:global(html.dark .auth-panel .auth-link:hover) {
-  color: #b4dfc5;
-}
-
-.auth-footer-copy {
-  margin: 0;
-  color: var(--auth-muted);
-}
-
-.auth-panel :deep(.btn) {
-  min-height: 2.8rem;
-  border-radius: 0;
-  border: 1px solid var(--auth-line);
-  background: var(--auth-card);
-  color: var(--auth-ink);
-  box-shadow: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.76rem;
-  letter-spacing: 0.04em;
-}
-
-.auth-panel :deep(.btn:hover:not(:disabled)) {
-  border-color: var(--auth-green);
-  background: var(--auth-card);
-  color: var(--auth-green);
-}
-
-.auth-panel :deep(.auth-agreement) {
-  font-size: 0.78rem;
-}
-
-.auth-panel :deep(.rounded-xl),
-.auth-panel :deep(.rounded-2xl),
-.auth-panel :deep(.rounded-lg) {
-  border-radius: 0;
-}
-
-.auth-panel :deep(.bg-primary-600) {
-  background: var(--auth-green);
-}
-
-@media (max-width: 480px) {
-  .auth-panel-title {
-    font-size: 1.75rem;
-  }
-
-  .auth-panel :deep(.grid-cols-2) {
-    grid-template-columns: 1fr;
-  }
-}
-
 .fade-enter-active,
 .fade-leave-active {
   transition: all 0.3s ease;

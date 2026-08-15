@@ -220,12 +220,6 @@ const canProceedFromVerify = computed(() => {
   return verifyForm.value.password.length > 0
 })
 
-function handleEscape(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    emit('close')
-  }
-}
-
 // Generate QR code as base64 when setupData changes
 watch(
   () => setupData.value?.qr_code_url,
@@ -397,12 +391,10 @@ const handleVerify = async () => {
 }
 
 onMounted(() => {
-  document.addEventListener('keydown', handleEscape)
   loadVerificationMethod()
 })
 
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleEscape)
   if (cooldownTimer.value) {
     clearInterval(cooldownTimer.value)
     cooldownTimer.value = null

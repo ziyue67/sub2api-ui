@@ -1,62 +1,30 @@
 <template>
   <AppLayout>
-    <section class="scheme3-channel-status">
-      <header class="scheme3-channel-status-header">
-        <div class="scheme3-channel-status-heading">
-          <p class="scheme3-channel-status-kicker">运行观测 / 渠道账本</p>
-          <h1>渠道状态</h1>
-          <p class="scheme3-channel-status-subtitle">查看可用渠道的连通性、延迟和近期稳定度。</p>
-        </div>
-        <div class="scheme3-channel-status-ledger" aria-label="渠道状态概览">
-          <span>
-            <strong>{{ items.length }}</strong>
-            <small>监测渠道</small>
-          </span>
-          <span>
-            <strong class="is-positive">{{ operationalCount }}</strong>
-            <small>运行正常</small>
-          </span>
-          <span>
-            <strong :class="degradedCount > 0 ? 'is-warning' : 'is-positive'">{{ degradedCount }}</strong>
-            <small>需要留意</small>
-          </span>
-          <span>
-            <strong>{{ currentWindowLabel }}</strong>
-            <small>观测窗口</small>
-          </span>
-        </div>
-      </header>
+    <MonitorHero
+      :overall-status="overallStatus"
+      :interval-seconds="DEFAULT_INTERVAL_SECONDS"
+      :window="currentWindow"
+      :loading="loading"
+      :auto-refresh="autoRefresh"
+      @update:window="handleWindowChange"
+      @refresh="manualReload"
+    />
 
-      <div class="scheme3-channel-status-toolbar">
-        <MonitorHero
-          :overall-status="overallStatus"
-          :interval-seconds="DEFAULT_INTERVAL_SECONDS"
-          :window="currentWindow"
-          :loading="loading"
-          :auto-refresh="autoRefresh"
-          @update:window="handleWindowChange"
-          @refresh="manualReload"
-        />
-      </div>
+    <MonitorCardGrid
+      :items="items"
+      :window="currentWindow"
+      :countdown-seconds="countdown"
+      :loading="loading"
+      :detail-cache="detailCache"
+      @card-click="openDetail"
+    />
 
-      <div class="scheme3-channel-status-grid">
-        <MonitorCardGrid
-          :items="items"
-          :window="currentWindow"
-          :countdown-seconds="countdown"
-          :loading="loading"
-          :detail-cache="detailCache"
-          @card-click="openDetail"
-        />
-      </div>
-
-      <MonitorDetailDialog
-        :show="showDetail"
-        :monitor-id="detailTarget?.id ?? null"
-        :title="detailTitle"
-        @close="closeDetail"
-      />
-    </section>
+    <MonitorDetailDialog
+      :show="showDetail"
+      :monitor-id="detailTarget?.id ?? null"
+      :title="detailTitle"
+      @close="closeDetail"
+    />
   </AppLayout>
 </template>
 
@@ -116,16 +84,6 @@ const overallStatus = computed<OverallStatus>(() => {
 const detailTitle = computed(() => {
   return detailTarget.value?.name || t('channelStatus.detailTitle')
 })
-
-const operationalCount = computed(() =>
-  items.value.filter((item) => item.primary_status === STATUS_OPERATIONAL).length,
-)
-
-const degradedCount = computed(() =>
-  items.value.filter((item) => item.primary_status !== STATUS_OPERATIONAL).length,
-)
-
-const currentWindowLabel = computed(() => t(`channelStatus.windowTab.${currentWindow.value}`))
 
 // ── Loaders ──
 async function reload(silent = false) {
@@ -212,145 +170,3 @@ onBeforeUnmount(() => {
   if (abortController) abortController.abort()
 })
 </script>
-
-<style scoped>
-.scheme3-channel-status {
-  --monitor-paper: #f4f2ec;
-  --monitor-card: #fffefa;
-  --monitor-ink: #27251f;
-  --monitor-muted: #777266;
-  --monitor-soft: #a49e90;
-  --monitor-line: #d8d2c3;
-  --monitor-accent: #1e5c42;
-  --monitor-amber: #b7791f;
-  --monitor-danger: #9e4d3d;
-  color: var(--monitor-ink);
-}
-
-.scheme3-channel-status-header {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 1.25rem;
-  margin-bottom: 0.9rem;
-  border-bottom: 1px solid var(--monitor-line);
-  padding: 0.1rem 0 1rem;
-}
-
-.scheme3-channel-status-kicker {
-  margin: 0;
-  color: var(--monitor-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.61rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-}
-
-.scheme3-channel-status-heading h1 {
-  margin: 0.34rem 0 0;
-  color: var(--monitor-ink);
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: clamp(1.55rem, 2.6vw, 2.1rem);
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
-.scheme3-channel-status-subtitle {
-  max-width: 31rem;
-  margin: 0.42rem 0 0;
-  color: var(--monitor-muted);
-  font-size: 0.74rem;
-  line-height: 1.55;
-}
-
-.scheme3-channel-status-ledger {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  border: 1px solid var(--monitor-line);
-  border-radius: 7px;
-  background: var(--monitor-card);
-}
-
-.scheme3-channel-status-ledger span {
-  display: grid;
-  min-width: 4.8rem;
-  gap: 0.08rem;
-  border-right: 1px solid var(--monitor-line);
-  padding: 0.48rem 0.68rem;
-  text-align: right;
-}
-
-.scheme3-channel-status-ledger span:last-child { border-right: 0; }
-
-.scheme3-channel-status-ledger strong {
-  color: var(--monitor-accent);
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 1rem;
-  font-weight: 600;
-  line-height: 1.1;
-}
-
-.scheme3-channel-status-ledger strong.is-positive { color: var(--monitor-accent); }
-.scheme3-channel-status-ledger strong.is-warning { color: var(--monitor-amber); }
-
-.scheme3-channel-status-ledger small {
-  color: var(--monitor-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.52rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.scheme3-channel-status-toolbar {
-  border-bottom: 1px solid var(--monitor-line);
-  padding-bottom: 0.75rem;
-}
-
-.scheme3-channel-status-grid { padding-top: 0.9rem; }
-
-.scheme3-channel-status :deep(.scheme3-monitor-empty) {
-  border: 1px dashed var(--monitor-line);
-  border-radius: 8px;
-  background: rgba(255, 254, 250, 0.72);
-}
-
-:global(.dark .scheme3-channel-status) {
-  --monitor-paper: #1b1b18;
-  --monitor-card: #24231f;
-  --monitor-ink: #f4f2ec;
-  --monitor-muted: #aaa69a;
-  --monitor-soft: #827e72;
-  --monitor-line: #47443a;
-  --monitor-accent: #8fc2a5;
-  --monitor-amber: #d3a55a;
-  --monitor-danger: #d38b79;
-}
-
-:global(html.dark .scheme3-channel-status .scheme3-monitor-empty) {
-  background: rgba(36, 35, 31, 0.72);
-}
-
-@media (max-width: 767px) {
-  .scheme3-channel-status-header {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 0.8rem;
-    margin-bottom: 0.7rem;
-  }
-
-  .scheme3-channel-status-ledger {
-    width: 100%;
-    justify-content: stretch;
-  }
-
-  .scheme3-channel-status-ledger span {
-    min-width: 0;
-    flex: 1 1 45%;
-    padding: 0.48rem 0.42rem;
-  }
-
-  .scheme3-channel-status-toolbar { padding-bottom: 0.55rem; }
-  .scheme3-channel-status-grid { padding-top: 0.7rem; }
-}
-</style>

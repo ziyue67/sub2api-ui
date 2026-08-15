@@ -1,10 +1,10 @@
 <template>
-  <BaseDialog :show="show" :title="dialogTitle" width="narrow" content-class="scheme3-payment-qr-dialog" @close="handleClose">
+  <BaseDialog :show="show" :title="dialogTitle" width="narrow" @close="handleClose">
     <!-- QR Code + Polling State -->
     <div v-if="!success" class="flex flex-col items-center space-y-4">
       <!-- QR Code mode -->
       <template v-if="qrUrl">
-        <div class="scheme3-payment-qr-canvas p-4">
+        <div class="rounded-2xl bg-white p-4 shadow-sm dark:bg-dark-800">
           <canvas ref="qrCanvas" class="mx-auto"></canvas>
         </div>
         <p v-if="scanHint" class="text-center text-sm text-gray-500 dark:text-gray-400">
@@ -37,7 +37,7 @@
         <Icon name="check" size="lg" class="text-green-500" />
       </div>
       <p class="text-lg font-bold text-gray-900 dark:text-white">{{ t('payment.result.success') }}</p>
-      <div v-if="paidOrder" class="scheme3-payment-qr-summary w-full p-4">
+      <div v-if="paidOrder" class="w-full rounded-xl bg-gray-50 p-4 dark:bg-dark-800">
         <div class="space-y-2 text-sm">
           <div class="flex justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
@@ -309,21 +309,3 @@ watch(qrUrl, () => renderQR())
 
 onUnmounted(() => cleanup())
 </script>
-
-<style scoped>
-:global(.scheme3-payment-qr-dialog) { border: 1px solid #d8d2c3 !important; border-radius: 8px !important; background: #fffefa !important; box-shadow: 0 18px 38px rgba(54,48,34,.14) !important; }
-:global(.scheme3-payment-qr-dialog .modal-header),:global(.scheme3-payment-qr-dialog .modal-footer) { border-color: #d8d2c3 !important; background: #f8f6ef !important; }
-:global(.scheme3-payment-qr-dialog .modal-title) { color: #27251f !important; font-family: Georgia, 'Times New Roman', serif; }
-.scheme3-payment-qr-canvas { border: 1px solid rgba(30,92,66,.28); border-radius: 8px; background: #f8f5ed; box-shadow: 0 8px 18px rgba(54,48,34,.05); }
-.scheme3-payment-qr-summary { border: 1px solid #d8d2c3; border-radius: 7px; background: #f8f6ef; }
-:global(.scheme3-payment-qr-dialog .btn-primary) { border-radius: 7px; background: #1e5c42; color: #fffefa; box-shadow: 0 8px 16px rgba(30,92,66,.15); }
-:global(.scheme3-payment-qr-dialog .btn-secondary) { border-color: #d8d2c3; border-radius: 7px; background: #fffefa; color: #27251f; }
-
-:global(.dark .scheme3-payment-qr-dialog) { border-color: #47443a !important; background: #24231f !important; box-shadow: 0 18px 38px rgba(0,0,0,.28) !important; }
-:global(.dark .scheme3-payment-qr-dialog .modal-header),:global(.dark .scheme3-payment-qr-dialog .modal-footer) { border-color: #47443a !important; background: #1b1b18 !important; }
-:global(.dark .scheme3-payment-qr-dialog .modal-title) { color: #f4f2ec !important; }
-:global(.dark .scheme3-payment-qr-canvas) { border-color: rgba(143,194,165,.3); background: #2b2924; }
-:global(.dark .scheme3-payment-qr-summary) { border-color: #47443a; background: #2b2924; }
-:global(.dark .scheme3-payment-qr-dialog .btn-primary) { background: #8fc2a5; color: #1b1b18; }
-:global(.dark .scheme3-payment-qr-dialog .btn-secondary) { border-color: #47443a; background: #24231f; color: #f4f2ec; }
-</style>

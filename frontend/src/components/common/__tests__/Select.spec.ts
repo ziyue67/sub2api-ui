@@ -112,26 +112,4 @@ describe('Select dropdown viewport constraints', () => {
     expect(dropdown?.style.minWidth).toBe('0px')
     expect(dropdown?.style.maxWidth).toBe('0px')
   })
-
-  it('uses the scheme3 surface and semantic portal classes when opted in', async () => {
-    const wrapper = mount(Select, {
-      props: {
-        modelValue: 'example',
-        scheme3: true,
-        options: [{ value: 'example', label: 'Example' }],
-      },
-    })
-    unmountWrapper = () => wrapper.unmount()
-
-    expect(wrapper.get('button').classes()).toContain('scheme3-select-trigger')
-    expect(wrapper.get('button').classes()).not.toContain('select-trigger')
-    await wrapper.get('button').trigger('click')
-    await nextTick()
-
-    const dropdown = document.body.querySelector<HTMLElement>('.scheme3-select-dropdown-portal')
-    expect(dropdown).not.toBeNull()
-    expect(dropdown?.classList.contains('select-dropdown-portal')).toBe(false)
-    expect(dropdown?.querySelector('.scheme3-select-option-selected')).not.toBeNull()
-    expect(dropdown?.querySelector('.select-option-selected')).toBeNull()
-  })
 })

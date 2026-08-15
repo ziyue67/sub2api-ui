@@ -42,7 +42,7 @@
       </div>
     </div>
 
-    <DataTable :columns="columns" :data="orders" :loading="loading" scheme3>
+    <DataTable :columns="columns" :data="orders" :loading="loading">
       <template #cell-id="{ value }">
         <span class="font-mono text-sm">#{{ value }}</span>
       </template>

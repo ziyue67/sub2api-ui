@@ -1,5 +1,5 @@
 <template>
-  <div class="scheme3-plaza-pricing-table overflow-x-auto">
+  <div class="plaza-pricing-table overflow-x-auto" :style="accentStyle">
     <table class="w-full min-w-[860px] table-fixed border-collapse text-sm tabular-nums">
       <colgroup>
         <col class="w-[22%]" />
@@ -212,7 +212,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatScaled } from '@/utils/pricing'
-import { platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
+import { platformAccentColor, platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
 import {
   BILLING_MODE_TOKEN,
   BILLING_MODE_IMAGE,
@@ -235,6 +235,9 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+
+/** 实付分区只从平台拿一个主色,浅底/标题/下划线全部由 scoped CSS 用 color-mix 派生。 */
+const accentStyle = computed(() => ({ '--plaza-accent': platformAccentColor(props.platform ?? '') }))
 
 const PER_MILLION = 1_000_000
 
@@ -350,21 +353,40 @@ function trimZero(n: number): string {
 </script>
 
 <style scoped>
-.scheme3-plaza-pricing-table { --pz-title: #1e5c42; --pz-bg: #f1eee6; --pz-bg-hover: #e8eee9; border: 1px solid #d8d2c3; border-radius: 8px; background: #fffefa; }
-.scheme3-plaza-pricing-table table { color: #27251f; }
-.scheme3-plaza-pricing-table thead { background: #f8f5ed; }
-.scheme3-plaza-pricing-table th, .scheme3-plaza-pricing-table td { border-color: #d8d2c3 !important; }
-.scheme3-plaza-pricing-table tbody tr:hover { background: #f8f5ed !important; }
-.pz-bg, .pz-cell { background-color: var(--pz-bg); }
-.pz-cell { transition: background-color 150ms ease; }
-tbody tr:hover .pz-cell { background-color: var(--pz-bg-hover); }
-.pz-title { color: var(--pz-title); border-color: rgba(30,92,66,.22); }
-.pz-unit { color: #777266; }
+/* 实付分区配色统一从 --plaza-accent(平台主色)派生,新增平台无需扩展样式 */
+.plaza-pricing-table {
+  --pz-title: color-mix(in srgb, var(--plaza-accent) 88%, black);
+  --pz-bg: color-mix(in srgb, var(--plaza-accent) 7%, transparent);
+  --pz-bg-hover: color-mix(in srgb, var(--plaza-accent) 13%, transparent);
+}
 
-:global(.dark .scheme3-plaza-pricing-table) { --pz-title: #8fc2a5; --pz-bg: #2b2924; --pz-bg-hover: #33322c; border-color: #47443a; background: #24231f; }
-:global(.dark .scheme3-plaza-pricing-table table) { color: #f4f2ec; }
-:global(.dark .scheme3-plaza-pricing-table thead) { background: #2b2924; }
-:global(.dark .scheme3-plaza-pricing-table th), :global(.dark .scheme3-plaza-pricing-table td) { border-color: #47443a !important; }
-:global(.dark .scheme3-plaza-pricing-table tbody tr:hover) { background: #2b2924 !important; }
-:global(.dark .pz-unit) { color: #aaa69a; }
+.dark .plaza-pricing-table {
+  --pz-title: color-mix(in srgb, var(--plaza-accent) 70%, white);
+  --pz-bg: color-mix(in srgb, var(--plaza-accent) 6%, transparent);
+  --pz-bg-hover: color-mix(in srgb, var(--plaza-accent) 10%, transparent);
+}
+
+.pz-bg,
+.pz-cell {
+  background-color: var(--pz-bg);
+}
+
+.pz-cell {
+  transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+tbody tr:hover .pz-cell {
+  background-color: var(--pz-bg-hover);
+}
+
+.pz-title {
+  /* color-mix 不可用的老浏览器回退为平台原色 */
+  color: var(--plaza-accent);
+  color: var(--pz-title);
+  border-color: color-mix(in srgb, var(--pz-title) 30%, transparent);
+}
+
+.pz-unit {
+  color: color-mix(in srgb, var(--pz-title) 62%, transparent);
+}
 </style>

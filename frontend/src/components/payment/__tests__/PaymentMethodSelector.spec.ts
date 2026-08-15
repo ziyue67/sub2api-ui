@@ -48,7 +48,7 @@ describe('PaymentMethodSelector', () => {
     expect(wrapper.text()).not.toContain('payment.methods.ldc')
   })
 
-  it('uses the shared Scheme3 selected style for custom methods that contain built-in names', () => {
+  it('uses the generic selected style for custom methods that contain built-in names', () => {
     const wrapper = mount(PaymentMethodSelector, {
       props: {
         selected: 'card_alipay',
@@ -57,8 +57,7 @@ describe('PaymentMethodSelector', () => {
     })
 
     const button = wrapper.get('button')
-    expect(button.classes()).toContain('scheme3-payment-method-selected')
-    expect(button.classes()).not.toContain('border-primary-500')
+    expect(button.classes()).toContain('border-primary-500')
     expect(button.classes()).not.toContain('border-[#02A9F1]')
   })
 })

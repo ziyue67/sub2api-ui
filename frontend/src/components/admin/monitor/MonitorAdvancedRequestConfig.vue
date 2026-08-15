@@ -1,8 +1,8 @@
 <template>
-  <div class="scheme3-monitor-advanced space-y-4">
+  <div class="space-y-4">
     <!-- Headers key-value rows -->
     <div>
-      <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.advanced.headers') }}</label>
+      <label class="input-label">{{ t('admin.channelMonitor.advanced.headers') }}</label>
       <div class="space-y-1.5">
         <div
           v-for="(row, i) in headerRows"
@@ -14,7 +14,7 @@
             type="text"
             spellcheck="false"
             :placeholder="t('admin.channelMonitor.advanced.headerNamePlaceholder')"
-            class="scheme3-monitor-input w-52 flex-none font-mono text-xs"
+            class="input w-52 flex-none font-mono text-xs"
             @blur="commitHeaders"
           />
           <input
@@ -22,49 +22,53 @@
             type="text"
             spellcheck="false"
             :placeholder="t('admin.channelMonitor.advanced.headerValuePlaceholder')"
-            class="scheme3-monitor-input flex-1 font-mono text-xs"
+            class="input flex-1 font-mono text-xs"
             @blur="commitHeaders"
           />
           <button
             type="button"
-            class="scheme3-monitor-icon-button is-danger flex-none"
+            class="flex-none rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400"
             :title="t('common.delete')"
             @click="removeRow(i)"
           >
-            <Icon name="x" size="sm" />
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
         <button
           type="button"
-          class="scheme3-monitor-button scheme3-monitor-button-dashed"
+          class="inline-flex items-center gap-1 rounded border border-dashed border-gray-300 px-2 py-1 text-xs text-gray-500 hover:border-primary-400 hover:text-primary-600 dark:border-dark-600 dark:text-gray-400 dark:hover:border-primary-500 dark:hover:text-primary-400"
           @click="addRow"
         >
-          <Icon name="plus" size="sm" />
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+          </svg>
           {{ t('admin.channelMonitor.advanced.headerAddRow') }}
         </button>
       </div>
-      <p v-if="headersError" class="scheme3-monitor-error mt-1 text-xs">{{ headersError }}</p>
-      <p v-else class="scheme3-monitor-hint mt-1 text-xs">
+      <p v-if="headersError" class="mt-1 text-xs text-red-500">{{ headersError }}</p>
+      <p v-else class="mt-1 text-xs text-gray-400">
         {{ t('admin.channelMonitor.advanced.headersHint') }}
       </p>
     </div>
 
     <!-- Body mode radio -->
     <div>
-      <label class="scheme3-monitor-label">{{ t('admin.channelMonitor.advanced.bodyMode') }}</label>
+      <label class="input-label">{{ t('admin.channelMonitor.advanced.bodyMode') }}</label>
       <div class="grid grid-cols-3 gap-3">
         <button
           v-for="opt in bodyModeOptions"
           :key="opt.value"
           type="button"
-          class="scheme3-monitor-choice"
+          class="rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors"
           :class="bodyModeButtonClass(opt.value)"
           @click="updateBodyMode(opt.value)"
         >
           {{ opt.label }}
         </button>
       </div>
-      <p class="scheme3-monitor-hint mt-1 text-xs">
+      <p class="mt-1 text-xs text-gray-400">
         {{ bodyModeHint }}
       </p>
     </div>
@@ -72,10 +76,10 @@
     <!-- Body JSON (仅当 mode != off) -->
     <div v-if="bodyOverrideMode !== 'off'">
       <div class="mb-1 flex items-center justify-between">
-        <label class="scheme3-monitor-label !mb-0">{{ t('admin.channelMonitor.advanced.bodyJson') }}</label>
+        <label class="input-label !mb-0">{{ t('admin.channelMonitor.advanced.bodyJson') }}</label>
         <button
           type="button"
-          class="scheme3-monitor-inline-action text-xs"
+          class="text-xs text-primary-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400 disabled:no-underline dark:text-primary-400"
           :disabled="!bodyText.trim()"
           @click="formatBody"
         >
@@ -86,13 +90,13 @@
         v-model="bodyText"
         rows="10"
         :placeholder="bodyPlaceholder"
-        class="scheme3-monitor-input font-mono text-xs"
+        class="input font-mono text-xs"
         style="white-space: pre; overflow-wrap: normal; overflow-x: auto;"
         spellcheck="false"
         @blur="commitBody"
       />
-      <p v-if="bodyError" class="scheme3-monitor-error mt-1 text-xs">{{ bodyError }}</p>
-      <p v-else class="scheme3-monitor-hint mt-1 text-xs">
+      <p v-if="bodyError" class="mt-1 text-xs text-red-500">{{ bodyError }}</p>
+      <p v-else class="mt-1 text-xs text-gray-400">
         {{ t('admin.channelMonitor.advanced.bodyJsonHint') }}
       </p>
     </div>
@@ -102,7 +106,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import type { APIMode, BodyOverrideMode, Provider } from '@/api/admin/channelMonitor'
 import {
   API_MODE_RESPONSES,
@@ -279,7 +282,11 @@ const bodyModeOptions = computed<{ value: BodyOverrideMode; label: string }[]>((
 ])
 
 function bodyModeButtonClass(mode: BodyOverrideMode): string {
-  return props.bodyOverrideMode === mode ? 'is-active' : ''
+  const active = props.bodyOverrideMode === mode
+  if (active) {
+    return 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300 dark:border-primary-400'
+  }
+  return 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
 }
 
 const bodyModeHint = computed(() => {

@@ -1,12 +1,11 @@
 import { createI18n } from 'vue-i18n'
-import { resolveDisplaySiteName } from '@/utils/branding'
 
 type LocaleCode = 'en' | 'zh'
 
 type LocaleMessages = Record<string, any>
 
 const LOCALE_KEY = 'sub2api_locale'
-const DEFAULT_LOCALE: LocaleCode = 'zh'
+const DEFAULT_LOCALE: LocaleCode = 'en'
 
 const localeLoaders: Record<LocaleCode, () => Promise<{ default: LocaleMessages }>> = {
   en: () => import('./locales/en'),
@@ -84,7 +83,7 @@ export async function setLocale(locale: string): Promise<void> {
     ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
     ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
   ]
-  document.title = resolveRouteDocumentTitle(route, resolveDisplaySiteName(appStore.siteName), customMenuItems)
+  document.title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems)
 }
 
 export function getLocale(): LocaleCode {

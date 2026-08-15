@@ -947,7 +947,7 @@ model = "grok-4.5"
 # windows_wsl_setup_acknowledged = true
 
 [model_providers.sub2api]
-name = "Shour or ToKen Grok"
+name = "Sub2API Grok"
 base_url = "${baseUrl}"
 # Prefer env_key (variable NAME). Do not combine with experimental_bearer_token.
 env_key = "SUB2API_API_KEY"

@@ -1,25 +1,25 @@
 <template>
   <section
-    class="scheme3-v2-panel scheme3-v2-matrix-panel flex min-h-[360px] flex-col overflow-visible"
+    class="card flex min-h-[360px] flex-col overflow-visible !rounded-3xl !border-0 !p-6 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700"
   >
-    <div class="scheme3-v2-panel-header mb-4 flex shrink-0 flex-wrap items-start justify-between gap-3">
+    <div class="card-header mb-4 flex shrink-0 flex-wrap items-start justify-between gap-3 !border-0 !p-0">
       <div class="min-w-0">
-        <h2 class="scheme3-v2-panel-title flex items-center gap-2">
-          <span class="scheme3-v2-panel-icon inline-flex h-4 w-4" aria-hidden="true">
+        <h2 class="flex items-center gap-2 text-sm font-bold text-gray-900 dark:text-white">
+          <span class="inline-flex h-4 w-4 text-emerald-500" aria-hidden="true">
             <Icon name="grid" size="sm" />
           </span>
           {{ t('channelMonitorV2.matrix.title') }}
         </h2>
-        <p class="scheme3-v2-panel-description mt-0.5 text-xs">
+        <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
           {{ t('channelMonitorV2.matrix.description') }}
         </p>
       </div>
-      <div class="scheme3-v2-panel-tools flex w-full min-w-0 flex-wrap items-center justify-end gap-2 text-xs sm:w-auto">
-        <span class="scheme3-v2-panel-badge shrink-0">{{ bucketLabel }}</span>
-        <span class="scheme3-v2-panel-hint hidden text-[11px] sm:inline">{{ t('channelMonitorV2.matrix.wheelZoomX') }}</span>
+      <div class="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 text-xs text-gray-500 dark:text-gray-400 sm:w-auto">
+        <span class="badge badge-gray shrink-0">{{ bucketLabel }}</span>
+        <span class="hidden text-[11px] text-gray-400 dark:text-dark-400 sm:inline">{{ t('channelMonitorV2.matrix.wheelZoomX') }}</span>
         <button
           type="button"
-          class="scheme3-v2-panel-action inline-flex shrink-0 items-center px-2 py-1 text-[11px] font-semibold disabled:opacity-50"
+          class="inline-flex shrink-0 items-center rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-800"
           :disabled="!zoomed"
           @click="resetMatrixZoom"
         >
@@ -28,16 +28,16 @@
       </div>
     </div>
 
-    <div class="scheme3-v2-panel-body min-h-0 flex-1">
+    <div class="card-body min-h-0 flex-1 !p-0">
       <div
         v-if="rows.length"
         ref="scrollRef"
-        class="matrix-scroll scheme3-v2-matrix-scroll max-h-[min(42vh,420px)] max-w-full overflow-auto p-2"
+        class="matrix-scroll max-h-[min(42vh,420px)] max-w-full overflow-auto rounded-2xl bg-gray-50/60 p-2 dark:bg-dark-900/30"
         @wheel="onMatrixWheel"
       >
         <div class="matrix-table w-full" :style="tableStyle">
           <div
-            class="matrix-header matrix-row scheme3-v2-matrix-header sticky top-0 z-[3] text-[10px] font-semibold uppercase tracking-wide"
+            class="matrix-header matrix-row sticky top-0 z-[3] bg-gray-50 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-dark-900 dark:text-gray-400"
             :class="showThroughput ? 'matrix-row--with-tps' : ''"
           >
             <span>{{ t('channelMonitorV2.matrix.dimension') }}</span>
@@ -53,31 +53,31 @@
           <div
             v-for="entry in alignedRows"
             :key="rowKey(entry.row)"
-            class="matrix-row scheme3-v2-matrix-data-row"
+            class="matrix-row border-b border-gray-100/80 dark:border-dark-700/60"
             :class="showThroughput ? 'matrix-row--with-tps' : ''"
           >
-            <div class="dimension-cell scheme3-v2-matrix-surface flex min-w-0 items-center gap-2" :title="rowLabel(entry.row)">
-              <span :class="['scheme3-v2-status-dot', cellClass(entry.row.health, entry.row.metrics.request_count)]"></span>
-              <strong class="scheme3-v2-dimension-label truncate text-xs font-semibold">{{ rowLabel(entry.row) }}</strong>
+            <div class="dimension-cell flex min-w-0 items-center gap-2 bg-white dark:bg-dark-800" :title="rowLabel(entry.row)">
+              <span :class="['status-dot', cellClass(entry.row.health, entry.row.metrics.request_count)]"></span>
+              <strong class="truncate text-xs font-semibold text-gray-800 dark:text-gray-100">{{ rowLabel(entry.row) }}</strong>
             </div>
-            <strong class="summary-value scheme3-v2-matrix-surface text-xs font-medium tabular-nums">
+            <strong class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300">
               {{ successRate(entry.row.metrics) }}
             </strong>
             <strong
-              class="summary-value scheme3-v2-matrix-surface text-xs font-medium tabular-nums"
+              class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300"
               :title="latencyPrivacy(entry.row.metrics.ttft)"
             >
               {{ formatMs(entry.row.metrics.ttft.p50_ms) }}
             </strong>
             <strong
               v-if="showThroughput"
-              class="summary-value scheme3-v2-matrix-surface text-xs font-medium tabular-nums"
+              class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300"
               :title="exactTps(entry.row.metrics.tpm)"
             >
               {{ formatTps(entry.row.metrics.tpm) }}
             </strong>
             <strong
-              class="summary-value scheme3-v2-matrix-surface text-xs font-medium tabular-nums"
+              class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300"
             >
               {{ formatPercent(entry.row.metrics.cache_rate) }}
             </strong>
@@ -122,27 +122,24 @@
           </div>
         </div>
       </div>
-      <div v-else class="scheme3-v2-empty flex min-h-[200px] items-center justify-center py-8" role="status">
-        <span class="scheme3-v2-empty-mark" aria-hidden="true">
-          <Icon name="grid" size="md" />
-        </span>
-        <div class="scheme3-v2-empty-copy">
-          <strong>{{ t('channelMonitorV2.matrix.emptyTitle') }}</strong>
-          <p>{{ t('channelMonitorV2.empty.description') }}</p>
-        </div>
+      <div v-else class="flex min-h-[200px] items-center justify-center py-8">
+        <EmptyState
+          :title="t('channelMonitorV2.matrix.emptyTitle')"
+          :description="t('channelMonitorV2.empty.description')"
+        />
       </div>
 
-      <div class="scheme3-v2-matrix-legend mt-4 flex flex-col gap-2" :aria-label="t('channelMonitorV2.matrix.legendAria')">
-        <div class="flex items-center gap-2 text-[11px]">
+      <div class="mt-4 flex flex-col gap-2" :aria-label="t('channelMonitorV2.matrix.legendAria')">
+        <div class="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
           <span class="shrink-0">{{ t('channelMonitorV2.matrix.bad') }}</span>
           <div class="score-legend h-2.5 flex-1 overflow-hidden rounded-full"></div>
           <span class="shrink-0">{{ t('channelMonitorV2.matrix.good') }}</span>
         </div>
-        <div class="flex flex-wrap gap-4 text-[11px]">
-          <span class="inline-flex items-center gap-1.5"><i class="scheme3-v2-status-dot health-score10"></i>{{ t('channelMonitorV2.matrix.healthyLegend') }}</span>
-          <span class="inline-flex items-center gap-1.5"><i class="scheme3-v2-status-dot health-score6"></i>{{ t('channelMonitorV2.matrix.warningLegend') }}</span>
-          <span class="inline-flex items-center gap-1.5"><i class="scheme3-v2-status-dot health-score2"></i>{{ t('channelMonitorV2.matrix.criticalLegend') }}</span>
-          <span class="inline-flex items-center gap-1.5"><i class="scheme3-v2-status-dot health-unknown"></i>{{ t('channelMonitorV2.matrix.unknownLegend') }}</span>
+        <div class="flex flex-wrap gap-4 text-[11px] text-gray-500 dark:text-gray-400">
+          <span class="inline-flex items-center gap-1.5"><i class="status-dot health-score10"></i>{{ t('channelMonitorV2.matrix.healthyLegend') }}</span>
+          <span class="inline-flex items-center gap-1.5"><i class="status-dot health-score6"></i>{{ t('channelMonitorV2.matrix.warningLegend') }}</span>
+          <span class="inline-flex items-center gap-1.5"><i class="status-dot health-score2"></i>{{ t('channelMonitorV2.matrix.criticalLegend') }}</span>
+          <span class="inline-flex items-center gap-1.5"><i class="status-dot health-unknown"></i>{{ t('channelMonitorV2.matrix.unknownLegend') }}</span>
         </div>
       </div>
     </div>
@@ -178,6 +175,7 @@ import type {
   MonitorMatrixRow,
   MonitorMetric,
 } from '@/api/channelMonitorV2'
+import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
   formatLatencyPrivacy,
@@ -501,35 +499,44 @@ function formatBucketRange(value: string) {
 .pulse-track {
   min-width: 0;
 }
-.scheme3-v2-status-dot {
+.status-dot {
   display: inline-block;
-  width: .42rem;
-  height: .42rem;
+  height: 0.5rem;
+  width: 0.5rem;
   flex: none;
   border-radius: 9999px;
 }
 
-/* Restrained third-version health scale: green → amber → red. */
-.health-score10 { background: #1e5c42; }
-.health-score9  { background: #2d7655; }
-.health-score8  { background: #4e8d68; }
-.health-score7  { background: #7aa375; }
-.health-score6  { background: #b7791f; }
-.health-score5  { background: #c48d3e; }
-.health-score4  { background: #bf7740; }
-.health-score3  { background: #b65f45; }
-.health-score2  { background: #9e4d3d; }
-.health-score1  { background: #8e4439; }
-.health-score0  { background: #7d3932; }
-/* Coarse fallbacks (older payloads without score). */
-.health-healthy  { background: #1e5c42; }
-.health-warning  { background: #b7791f; }
-.health-critical { background: #9e4d3d; }
-.health-unknown  { background: #a49e90; }
+/* Multi-stop green → yellow → red (score10 best … score0 worst) */
+.health-score10 { background: #16a34a; }
+.health-score9  { background: #22c55e; }
+.health-score8  { background: #4ade80; }
+.health-score7  { background: #a3e635; }
+.health-score6  { background: #facc15; }
+.health-score5  { background: #fbbf24; }
+.health-score4  { background: #f59e0b; }
+.health-score3  { background: #f97316; }
+.health-score2  { background: #fb7185; }
+.health-score1  { background: #f87171; }
+.health-score0  { background: rgb(239, 67, 67); }
+/* Coarse fallbacks (older payloads without score) */
+.health-healthy  { background: #22c55e; }
+.health-warning  { background: #f59e0b; }
+.health-critical { background: #ef4444; }
+.health-unknown  { background: #9ca3af; }
 
 .score-legend {
-  border-color: var(--scheme3-line, #d8d2c3);
-  background: linear-gradient(90deg, #7d3932 0%, #9e4d3d 28%, #b7791f 52%, #7aa375 76%, #1e5c42 100%);
+  background: linear-gradient(
+    90deg,
+    rgb(239, 67, 67) 0%,
+    #f87171 15%,
+    #f97316 30%,
+    #f59e0b 45%,
+    #facc15 55%,
+    #a3e635 70%,
+    #22c55e 85%,
+    #16a34a 100%
+  );
 }
 
 .pulse-cell {
@@ -545,7 +552,7 @@ function formatBucketRange(value: string) {
 }
 .pulse-cell.has-data:hover,
 .pulse-cell.has-data:focus-visible {
-  outline: 2px solid rgba(30, 92, 66, .55);
+  outline: 2px solid rgb(var(--color-primary-500, 99 102 241) / 0.55);
   outline-offset: 1px;
   z-index: 5;
 }
@@ -562,37 +569,37 @@ function formatBucketRange(value: string) {
   min-width: 11.5rem;
   max-width: 16rem;
   transform: translateX(-50%) translateY(4px);
-  border-radius: 7px;
-  border: 1px solid #d8d2c3;
-  background: #fffefa;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(229 231 235);
+  background: rgb(255 255 255);
   padding: 0.5rem 0.625rem;
-  box-shadow: 0 12px 26px rgba(54, 48, 34, .14);
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.15);
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
   white-space: nowrap;
 }
 :global(.dark) .pulse-tooltip {
-  border-color: #47443a;
-  background: #24231f;
-  color: #f4f2ec;
+  border-color: rgb(55 65 81);
+  background: rgb(17 24 39);
+  color: rgb(229 231 235);
 }
 .pulse-tooltip-line {
   display: block;
   font-size: 11px;
   line-height: 1.45;
-  color: #777266;
+  color: rgb(75 85 99);
 }
 :global(.dark) .pulse-tooltip-line {
-  color: #aaa69a;
+  color: rgb(209 213 219);
 }
 .pulse-tooltip-title {
   margin-bottom: 0.2rem;
   font-weight: 600;
-  color: #27251f;
+  color: rgb(17 24 39);
 }
 :global(.dark) .pulse-tooltip-title {
-  color: #f4f2ec;
+  color: rgb(243 244 246);
 }
 .pulse-cell:hover .pulse-tooltip,
 .pulse-cell:focus-visible .pulse-tooltip {
@@ -612,34 +619,34 @@ function formatBucketRange(value: string) {
   min-width: 11.5rem;
   max-width: min(18rem, calc(100vw - 1.5rem));
   transform: translate(-50%, -100%);
-  border-radius: 7px;
-  border: 1px solid #d8d2c3;
-  background: #fffefa;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(229 231 235);
+  background: rgb(255 255 255);
   padding: 0.5rem 0.625rem;
-  box-shadow: 0 18px 40px rgba(54, 48, 34, .18);
+  box-shadow: 0 18px 40px -12px rgb(0 0 0 / 0.28);
   white-space: nowrap;
 }
 :global(.dark) .matrix-floating-tooltip {
-  border-color: #47443a;
-  background: #24231f;
-  color: #f4f2ec;
+  border-color: rgb(55 65 81);
+  background: rgb(17 24 39);
+  color: rgb(229 231 235);
 }
 .matrix-floating-tooltip-line {
   display: block;
   font-size: 11px;
   line-height: 1.45;
-  color: #777266;
+  color: rgb(75 85 99);
 }
 :global(.dark) .matrix-floating-tooltip-line {
-  color: #aaa69a;
+  color: rgb(209 213 219);
 }
 .matrix-floating-tooltip-title {
   margin-bottom: 0.2rem;
   font-weight: 600;
-  color: #27251f;
+  color: rgb(17 24 39);
 }
 :global(.dark) .matrix-floating-tooltip-title {
-  color: #f4f2ec;
+  color: rgb(243 244 246);
 }
 
 @media (max-width: 640px) {
@@ -654,50 +661,4 @@ function formatBucketRange(value: string) {
     left: 0;
   }
 }
-
-.scheme3-v2-panel {
-  border: 1px solid #d8d2c3;
-  border-radius: 8px;
-  background: #fffefa;
-  padding: 1rem 1.15rem;
-  color: #27251f;
-  box-shadow: 0 10px 24px rgba(54, 48, 34, .06);
-}
-.scheme3-v2-panel-header { border-bottom: 1px solid #d8d2c3; padding-bottom: .75rem; }
-.scheme3-v2-panel-title { color: #27251f; font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; font-weight: 600; }
-.scheme3-v2-panel-icon { color: #1e5c42; }
-.scheme3-v2-panel-description, .scheme3-v2-panel-hint, .scheme3-v2-matrix-legend { color: #777266; }
-.scheme3-v2-panel-badge { border: 1px solid #d8d2c3; border-radius: 999px; background: #f1eee6; color: #777266; padding: .18rem .42rem; font-size: .58rem; font-weight: 800; }
-.scheme3-v2-panel-action { border: 1px solid #d8d2c3; border-radius: 6px; background: #fffefa; color: #777266; }
-.scheme3-v2-panel-action:hover { background: #f1eee6; color: #27251f; }
-.scheme3-v2-matrix-scroll { border: 1px solid #d8d2c3; border-radius: 6px; background: #f1eee6; }
-.scheme3-v2-matrix-header { border-bottom: 1px solid #d8d2c3; background: #f1eee6; color: #777266; }
-.scheme3-v2-matrix-data-row { border-bottom: 1px solid #d8d2c3; }
-.scheme3-v2-matrix-data-row:last-child { border-bottom: 0; }
-.scheme3-v2-matrix-surface { background: #fffefa; color: #27251f; }
-.scheme3-v2-dimension-label { color: #27251f; }
-.scheme3-v2-matrix-legend { font-size: .62rem; }
-.scheme3-v2-panel .matrix-floating-tooltip { border-color: #d8d2c3; border-radius: 7px; background: #fffefa; color: #27251f; box-shadow: 0 18px 40px rgba(54, 48, 34, .18); }
-.scheme3-v2-panel .matrix-floating-tooltip-line { color: #777266; }
-.scheme3-v2-panel .matrix-floating-tooltip-title { color: #27251f; }
-.scheme3-v2-empty { gap: .8rem; padding: 1.5rem; text-align: left; }
-.scheme3-v2-empty-mark { display: inline-flex; width: 2.3rem; height: 2.3rem; flex: none; align-items: center; justify-content: center; border: 1px solid rgba(30,92,66,.28); border-radius: 6px; background: rgba(30,92,66,.08); color: #1e5c42; }
-.scheme3-v2-empty-copy strong { display: block; color: #27251f; font-family: Georgia, 'Times New Roman', serif; font-size: .92rem; font-weight: 600; }
-.scheme3-v2-empty-copy p { margin-top: .25rem; max-width: 26rem; color: #777266; font-size: .68rem; line-height: 1.45; }
-:global(.dark .scheme3-v2-panel) { border-color: #47443a; background: #24231f; color: #f4f2ec; box-shadow: 0 14px 28px rgba(0, 0, 0, .22); }
-:global(.dark .scheme3-v2-panel-header), :global(.dark .scheme3-v2-matrix-data-row) { border-color: #47443a; }
-:global(.dark .scheme3-v2-panel-title) { color: #f4f2ec; }
-:global(.dark .scheme3-v2-matrix-surface) { background: #24231f !important; color: #f4f2ec !important; }
-:global(.dark .scheme3-v2-dimension-label) { color: #f4f2ec; }
-:global(.dark .scheme3-v2-panel-icon) { color: #8fc2a5; }
-:global(.dark .scheme3-v2-panel-description), :global(.dark .scheme3-v2-panel-hint), :global(.dark .scheme3-v2-matrix-legend) { color: #aaa69a; }
-:global(.dark .scheme3-v2-panel-badge), :global(.dark .scheme3-v2-matrix-scroll), :global(.dark .scheme3-v2-matrix-header) { border-color: #47443a; background: #2b2924; color: #aaa69a; }
-:global(.dark .scheme3-v2-panel-action) { border-color: #47443a; background: #24231f; color: #aaa69a; }
-:global(.dark .scheme3-v2-panel-action:hover) { background: #2b2924; color: #f4f2ec; }
-:global(.dark .scheme3-v2-panel .matrix-floating-tooltip) { border-color: #47443a; background: #24231f; color: #f4f2ec; }
-:global(.dark .scheme3-v2-panel .matrix-floating-tooltip-line) { color: #aaa69a; }
-:global(.dark .scheme3-v2-panel .matrix-floating-tooltip-title) { color: #f4f2ec; }
-:global(.dark .scheme3-v2-empty-mark) { border-color: rgba(143,194,165,.28); background: rgba(143,194,165,.1); color: #8fc2a5; }
-:global(.dark .scheme3-v2-empty-copy strong) { color: #f4f2ec; }
-:global(.dark .scheme3-v2-empty-copy p) { color: #aaa69a; }
 </style>

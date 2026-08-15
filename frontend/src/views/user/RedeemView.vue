@@ -1,9 +1,9 @@
 <template>
   <AppLayout>
-    <div class="scheme3-redeem mx-auto max-w-2xl space-y-6">
+    <div class="mx-auto max-w-2xl space-y-6">
       <!-- Current Balance Card -->
-      <div class="scheme3-redeem-balance card overflow-hidden">
-        <div class="scheme3-redeem-balance-body px-6 py-8 text-center">
+      <div class="card overflow-hidden">
+        <div class="bg-gradient-to-br from-primary-500 to-primary-600 px-6 py-8 text-center">
           <div
             class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm"
           >
@@ -20,7 +20,7 @@
       </div>
 
       <!-- Redeem Form -->
-      <div class="scheme3-redeem-form card">
+      <div class="card">
         <div class="p-6">
           <form @submit.prevent="handleRedeem" class="space-y-5">
             <div>
@@ -163,7 +163,9 @@
       </transition>
 
       <!-- Information Card -->
-      <div class="scheme3-redeem-info card">
+      <div
+        class="card border-primary-200 bg-primary-50 dark:border-primary-800/50 dark:bg-primary-900/20"
+      >
         <div class="p-6">
           <div class="flex items-start gap-4">
             <div
@@ -197,7 +199,7 @@
       </div>
 
       <!-- Recent Activity -->
-      <div class="scheme3-redeem-history card">
+      <div class="card">
         <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
           <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
             {{ t('redeem.recentActivity') }}
@@ -486,16 +488,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.scheme3-redeem { --redeem-ink: var(--scheme3-ink,#16150f); --redeem-muted: var(--scheme3-muted,#6b695f); --redeem-line: var(--scheme3-line,#dad5c8); --redeem-card: var(--scheme3-card,#fbfaf6); color: var(--redeem-ink); }
-.scheme3-redeem :deep(.card) { overflow: hidden; border-color: var(--redeem-line); border-radius: 8px; background: var(--redeem-card); box-shadow: 0 9px 20px rgba(54,48,34,.05); }
-.scheme3-redeem-balance-body { background: #1e5c42; color: #f4f2ec; }
-.scheme3-redeem-balance-body > div:first-child { width: 3.25rem; height: 3.25rem; border: 1px solid rgba(244,242,236,.32); border-radius: 7px; background: rgba(244,242,236,.12); box-shadow: none; }
-.scheme3-redeem-balance-body p { color: #dcece2; }.scheme3-redeem-balance-body p:nth-of-type(2) { color: #fff; font-family: Georgia,'Times New Roman',serif; font-size: 2.4rem; line-height: 1; }.scheme3-redeem-balance-body p:nth-of-type(3) { color: #b7d9c5; }
-.scheme3-redeem :deep(.input) { border-color: var(--redeem-line); border-radius: 6px; background: var(--redeem-card); }.scheme3-redeem :deep(.btn-primary) { border-radius: 6px; background: #1e5c42; }.scheme3-redeem :deep(.btn-primary:hover) { background: #174a35; }
-.scheme3-redeem-info { border-color: rgba(30,92,66,.28) !important; background: rgba(30,92,66,.045) !important; }.scheme3-redeem-info :deep(.text-primary-800),.scheme3-redeem-info :deep(.text-primary-700) { color: #1e5c42; }.scheme3-redeem-info :deep(.bg-primary-100) { background: rgba(30,92,66,.1); }.scheme3-redeem-info :deep(.text-primary-600) { color: #1e5c42; }
-.scheme3-redeem-history :deep(.border-gray-100) { border-color: var(--redeem-line); }.scheme3-redeem-history :deep(.bg-gray-50) { background: #f4f2ec; }.scheme3-redeem-history :deep(.text-gray-900) { color: var(--redeem-ink); }
-:global(html.dark) .scheme3-redeem :deep(.card) { border-color: #47443a; background: #24231f; color: #f4f2ec; }.scheme3-redeem :deep(.text-gray-900) { color: var(--redeem-ink); }.scheme3-redeem :deep(.text-gray-500) { color: var(--redeem-muted); }
-:global(html.dark) .scheme3-redeem-info { border-color: rgba(143,194,165,.32) !important; background: rgba(143,194,165,.08) !important; }.scheme3-redeem-info :deep(.text-primary-800),.scheme3-redeem-info :deep(.text-primary-700) { color: #b7d9c5; }
 .fade-enter-active,
 .fade-leave-active {
   transition: all 0.3s ease;

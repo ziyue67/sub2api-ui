@@ -1,5 +1,5 @@
 <template>
-  <div class="scheme3-payment-method-selector">
+  <div>
     <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
       {{ t('payment.paymentMethod') }}
     </label>
@@ -14,12 +14,12 @@
         :title="methodLabel(method)"
         :disabled="!method.available"
         :class="[
-          'scheme3-payment-method relative flex h-[60px] min-w-0 flex-col items-center justify-center border px-3 transition-all',
+          'relative flex h-[60px] min-w-0 flex-col items-center justify-center rounded-lg border px-3 transition-all',
           !method.available
-            ? 'scheme3-payment-method-disabled cursor-not-allowed opacity-50'
+            ? 'cursor-not-allowed border-gray-200 bg-gray-50 opacity-50 dark:border-dark-700 dark:bg-dark-800/50'
             : selected === method.type
               ? methodSelectedClass(method.type)
-              : 'scheme3-payment-method-idle',
+              : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200 dark:hover:border-dark-500',
         ]"
         @click="method.available && emit('select', method.type)"
       >
@@ -98,22 +98,11 @@ function methodLabel(method: PaymentMethodOption): string {
   return method.display_name || t(`payment.methods.${method.type}`, method.type)
 }
 
-function methodSelectedClass(_type: string): string {
-  return 'scheme3-payment-method-selected'
+function methodSelectedClass(type: string): string {
+  if (isBuiltInAlipayMethod(type)) return 'border-[#02A9F1] bg-blue-50 text-gray-900 shadow-sm dark:bg-blue-950 dark:text-gray-100'
+  if (isBuiltInWxpayMethod(type)) return 'border-[#09BB07] bg-green-50 text-gray-900 shadow-sm dark:bg-green-950 dark:text-gray-100'
+  if (type === 'stripe') return 'border-[#676BE5] bg-indigo-50 text-gray-900 shadow-sm dark:bg-indigo-950 dark:text-gray-100'
+  if (type === 'airwallex') return 'border-[#FF6B3D] bg-orange-50 text-gray-900 shadow-sm dark:border-[#FF8E3C] dark:bg-orange-950 dark:text-gray-100'
+  return 'border-primary-500 bg-primary-50 text-gray-900 shadow-sm dark:bg-primary-950 dark:text-gray-100'
 }
 </script>
-
-<style scoped>
-.scheme3-payment-method-selector { color: #27251f; }
-.scheme3-payment-method { border-color: #d8d2c3; border-radius: 7px; background: #fffefa; color: #655f53; transition: border-color 150ms ease, background 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease; }
-.scheme3-payment-method-idle:hover { border-color: rgba(30,92,66,.35); background: #f8f5ed; color: #27251f; transform: translateY(-1px); }
-.scheme3-payment-method-selected { border-color: rgba(30,92,66,.45); background: rgba(30,92,66,.075); color: #1e5c42; box-shadow: inset 3px 0 0 #1e5c42, 0 4px 10px rgba(54,48,34,.06); }
-.scheme3-payment-method-disabled { border-color: #e4dfd4; background: #f1eee6; color: #aaa69a; }
-.scheme3-payment-method:focus-visible { outline: 3px solid rgba(30,92,66,.18); outline-offset: 2px; }
-
-:global(.dark .scheme3-payment-method-selector) { color: #f4f2ec; }
-:global(.dark .scheme3-payment-method) { border-color: #47443a; background: #24231f; color: #c4c0b6; }
-:global(.dark .scheme3-payment-method-idle:hover) { border-color: rgba(143,194,165,.38); background: #2b2924; color: #f4f2ec; }
-:global(.dark .scheme3-payment-method-selected) { border-color: rgba(143,194,165,.42); background: rgba(143,194,165,.1); color: #8fc2a5; box-shadow: inset 3px 0 0 #8fc2a5, 0 4px 10px rgba(0,0,0,.14); }
-:global(.dark .scheme3-payment-method-disabled) { border-color: #3b3932; background: #2b2924; color: #777266; }
-</style>

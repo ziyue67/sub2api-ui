@@ -1,36 +1,29 @@
 <template>
-  <div
-    v-if="!isDesktopViewport && !mobileHorizontalScroll"
-    :class="scheme3 ? 'scheme3-table-mobile-list' : 'space-y-3'"
-  >
+  <div v-if="!isDesktopViewport && !mobileHorizontalScroll" class="space-y-3">
     <template v-if="loading">
-      <div
-        v-for="i in 5"
-        :key="i"
-        :class="scheme3 ? 'scheme3-table-mobile-card scheme3-table-mobile-card-loading' : 'rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900'"
-      >
-        <div :class="scheme3 ? 'scheme3-table-mobile-stack' : 'space-y-3'">
+      <div v-for="i in 5" :key="i" class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
+        <div class="space-y-3">
           <div v-for="column in dataColumns" :key="column.key" class="flex justify-between">
-            <div :class="scheme3 ? 'scheme3-table-skeleton scheme3-table-skeleton-label' : 'h-4 w-20 animate-pulse rounded bg-gray-200 dark:bg-dark-700'"></div>
-            <div :class="scheme3 ? 'scheme3-table-skeleton scheme3-table-skeleton-value' : 'h-4 w-32 animate-pulse rounded bg-gray-200 dark:bg-dark-700'"></div>
+            <div class="h-4 w-20 animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
+            <div class="h-4 w-32 animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
           </div>
-          <div v-if="hasActionsColumn" :class="scheme3 ? 'scheme3-table-mobile-actions' : 'border-t border-gray-200 pt-3 dark:border-dark-700'">
-            <div :class="scheme3 ? 'scheme3-table-skeleton scheme3-table-skeleton-actions' : 'h-8 w-full animate-pulse rounded bg-gray-200 dark:bg-dark-700'"></div>
+          <div v-if="hasActionsColumn" class="border-t border-gray-200 pt-3 dark:border-dark-700">
+            <div class="h-8 w-full animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
           </div>
         </div>
       </div>
     </template>
 
     <template v-else-if="!data || data.length === 0">
-      <div :class="scheme3 ? 'scheme3-table-mobile-empty' : 'rounded-lg border border-gray-200 bg-white p-12 text-center dark:border-dark-700 dark:bg-dark-900'">
+      <div class="rounded-lg border border-gray-200 bg-white p-12 text-center dark:border-dark-700 dark:bg-dark-900">
         <slot name="empty">
-          <div :class="scheme3 ? 'scheme3-table-empty-content' : 'flex flex-col items-center'">
+          <div class="flex flex-col items-center">
             <Icon
               name="inbox"
               size="xl"
-              :class="scheme3 ? 'scheme3-table-empty-icon' : 'mb-4 h-12 w-12 text-gray-400 dark:text-dark-500'"
+              class="mb-4 h-12 w-12 text-gray-400 dark:text-dark-500"
             />
-            <p :class="scheme3 ? 'scheme3-table-empty-title' : 'text-lg font-medium text-gray-900 dark:text-gray-100'">
+            <p class="text-lg font-medium text-gray-900 dark:text-gray-100">
               {{ t('empty.noData') }}
             </p>
           </div>
@@ -39,11 +32,11 @@
     </template>
 
     <template v-else>
-      <div v-if="selectable" :class="scheme3 ? 'scheme3-table-select-toolbar' : 'flex items-center justify-end gap-2 px-1'">
-        <label :class="scheme3 ? 'scheme3-table-select-label' : 'flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-300'">
+      <div v-if="selectable" class="flex items-center justify-end gap-2 px-1">
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-300">
           <input
             type="checkbox"
-            :class="scheme3 ? 'scheme3-table-checkbox' : 'h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800'"
+            class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
             :checked="allVisibleSelected"
             :indeterminate="someVisibleSelected"
             data-test="select-all-mobile"
@@ -55,21 +48,18 @@
       <div
         v-for="(row, index) in sortedData"
         :key="resolveRowKey(row, index)"
-        :class="[
-          scheme3 ? 'scheme3-table-mobile-card' : 'rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900',
-          {
-            'cursor-pointer': clickableRows,
-            'scheme3-table-mobile-card-selected': scheme3 && selectable && isRowSelected(row, index),
-            'border-primary-300 bg-primary-50/40 dark:border-primary-700 dark:bg-primary-900/10': !scheme3 && selectable && isRowSelected(row, index)
-          }
-        ]"
+        class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900"
+        :class="{
+          'cursor-pointer': clickableRows,
+          'border-primary-300 bg-primary-50/40 dark:border-primary-700 dark:bg-primary-900/10': selectable && isRowSelected(row, index)
+        }"
         @click="clickableRows && emit('rowClick', row)"
       >
-        <div :class="scheme3 ? 'scheme3-table-mobile-stack' : 'space-y-3'">
+        <div class="space-y-3">
           <div v-if="selectable" class="flex justify-end">
             <input
               type="checkbox"
-              :class="scheme3 ? 'scheme3-table-checkbox' : 'h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800'"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
               :checked="isRowSelected(row, index)"
               :aria-label="getRowSelectionLabel(row, index)"
               data-test="select-row"
@@ -83,16 +73,16 @@
             :data-field="column.key"
             class="flex min-w-0 items-start justify-between gap-4"
           >
-            <span :class="scheme3 ? 'scheme3-table-mobile-label' : 'text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400'">
+            <span class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
               {{ column.label }}
             </span>
-            <div :class="scheme3 ? 'scheme3-table-mobile-value' : 'min-w-0 max-w-full text-right text-sm text-gray-900 dark:text-gray-100'">
+            <div class="min-w-0 max-w-full text-right text-sm text-gray-900 dark:text-gray-100">
               <slot :name="`cell-${column.key}`" :row="row" :value="row[column.key]" :expanded="actionsExpanded">
                 {{ column.formatter ? column.formatter(row[column.key], row) : row[column.key] }}
               </slot>
             </div>
           </div>
-          <div v-if="hasActionsColumn" :class="scheme3 ? 'scheme3-table-mobile-actions' : 'border-t border-gray-200 pt-3 dark:border-dark-700'">
+          <div v-if="hasActionsColumn" class="border-t border-gray-200 pt-3 dark:border-dark-700">
             <slot name="cell-actions" :row="row" :value="row['actions']" :expanded="actionsExpanded"></slot>
           </div>
         </div>
@@ -103,33 +93,26 @@
   <div
     v-else
     ref="tableWrapperRef"
-    :class="[
-      'table-wrapper',
-      scheme3 ? 'scheme3-table-wrapper' : '',
-      {
-        'actions-expanded': actionsExpanded,
-        'is-scrollable': isScrollable
-      }
-    ]"
+    class="table-wrapper"
+    :class="{
+      'actions-expanded': actionsExpanded,
+      'is-scrollable': isScrollable
+    }"
   >
     <table
-      :class="[
-        scheme3 ? 'scheme3-table' : 'min-w-max divide-y divide-gray-200 dark:divide-dark-700',
-        scheme3
-          ? (mobileHorizontalScroll ? 'usage-horizontal-table' : 'scheme3-table-fluid')
-          : (mobileHorizontalScroll ? 'usage-horizontal-table' : 'w-full')
-      ]"
+      class="min-w-max divide-y divide-gray-200 dark:divide-dark-700"
+      :class="mobileHorizontalScroll ? 'usage-horizontal-table' : 'w-full'"
     >
-      <thead :class="scheme3 ? 'table-header scheme3-table-header' : 'table-header bg-gray-50 dark:bg-dark-800'">
+      <thead class="table-header bg-gray-50 dark:bg-dark-800">
         <tr>
           <th
             v-if="selectable"
             scope="col"
-            :class="scheme3 ? 'sticky-header-cell scheme3-table-select-head' : 'sticky-header-cell w-11 min-w-11 px-3 py-3 text-center'"
+            class="sticky-header-cell w-11 min-w-11 px-3 py-3 text-center"
           >
             <input
               type="checkbox"
-              :class="scheme3 ? 'scheme3-table-checkbox' : 'h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800'"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
               :checked="allVisibleSelected"
               :indeterminate="someVisibleSelected"
               :aria-label="t('common.selectAll')"
@@ -143,17 +126,15 @@
             scope="col"
             :aria-sort="column.sortable ? getColumnAriaSort(column.key) : undefined"
             :class="[
-              scheme3
-                ? 'sticky-header-cell scheme3-table-head-cell'
-                : 'sticky-header-cell py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
+              'sticky-header-cell py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
               getAdaptivePaddingClass(),
-              column.sortable ? (scheme3 ? 'scheme3-table-sortable' : 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700') : '',
+              { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable },
               getStickyColumnClass(column, index),
               column.class
             ]"
             @click="column.sortable && handleSort(column.key)"
           >
-            <div :class="[scheme3 ? 'scheme3-table-head-content' : 'flex items-center space-x-1', getHeaderContentAlignmentClass(column)]">
+            <div :class="['flex items-center space-x-1', getHeaderContentAlignmentClass(column)]">
               <slot
                 :name="`header-${column.key}`"
                 :column="column"
@@ -164,24 +145,20 @@
               </slot>
               <span
                 v-if="column.sortable"
-                :class="scheme3 ? 'scheme3-table-sort-indicator' : 'inline-flex h-5 w-4 flex-col items-center justify-center'"
+                class="inline-flex h-5 w-4 flex-col items-center justify-center"
                 aria-hidden="true"
               >
                 <svg
-                  :class="[
-                    scheme3 ? 'scheme3-table-sort-arrow' : 'h-2.5 w-2.5',
-                    getSortIndicatorClass(column.key, 'asc')
-                  ]"
+                  class="h-2.5 w-2.5"
+                  :class="getSortIndicatorClass(column.key, 'asc')"
                   fill="currentColor"
                   viewBox="0 0 10 10"
                 >
                   <path d="M5 2L1.5 6.5h7L5 2z" />
                 </svg>
                 <svg
-                  :class="[
-                    scheme3 ? 'scheme3-table-sort-arrow scheme3-table-sort-arrow-desc' : '-mt-0.5 h-2.5 w-2.5',
-                    getSortIndicatorClass(column.key, 'desc')
-                  ]"
+                  class="-mt-0.5 h-2.5 w-2.5"
+                  :class="getSortIndicatorClass(column.key, 'desc')"
                   fill="currentColor"
                   viewBox="0 0 10 10"
                 >
@@ -192,15 +169,15 @@
           </th>
         </tr>
       </thead>
-      <tbody :class="scheme3 ? 'table-body scheme3-table-body' : 'table-body divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900'">
+      <tbody class="table-body divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
         <!-- Loading skeleton -->
         <tr v-if="loading" v-for="i in 5" :key="i">
-          <td v-if="selectable" :class="scheme3 ? 'scheme3-table-select-cell' : 'w-11 min-w-11 px-3 py-4'">
-            <div :class="scheme3 ? 'scheme3-table-skeleton scheme3-table-skeleton-checkbox' : 'mx-auto h-4 w-4 animate-pulse rounded bg-gray-200 dark:bg-dark-700'"></div>
+          <td v-if="selectable" class="w-11 min-w-11 px-3 py-4">
+            <div class="mx-auto h-4 w-4 animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
           </td>
-          <td v-for="column in columns" :key="column.key" :class="[scheme3 ? 'scheme3-table-cell scheme3-table-cell-loading' : 'whitespace-nowrap py-4', getAdaptivePaddingClass()]">
+          <td v-for="column in columns" :key="column.key" :class="['whitespace-nowrap py-4', getAdaptivePaddingClass()]">
             <div class="animate-pulse">
-              <div :class="scheme3 ? 'scheme3-table-skeleton scheme3-table-skeleton-value' : 'h-4 w-3/4 rounded bg-gray-200 dark:bg-dark-700'"></div>
+              <div class="h-4 w-3/4 rounded bg-gray-200 dark:bg-dark-700"></div>
             </div>
           </td>
         </tr>
@@ -209,16 +186,16 @@
         <tr v-else-if="!data || data.length === 0">
           <td
             :colspan="tableColumnCount"
-            :class="[scheme3 ? 'scheme3-table-empty-cell' : 'py-12 text-center text-gray-500 dark:text-dark-400', getAdaptivePaddingClass()]"
+            :class="['py-12 text-center text-gray-500 dark:text-dark-400', getAdaptivePaddingClass()]"
           >
             <slot name="empty">
-              <div :class="scheme3 ? 'scheme3-table-empty-content' : 'flex flex-col items-center'">
+              <div class="flex flex-col items-center">
                 <Icon
                   name="inbox"
                   size="xl"
-                  :class="scheme3 ? 'scheme3-table-empty-icon' : 'mb-4 h-12 w-12 text-gray-400 dark:text-dark-500'"
+                  class="mb-4 h-12 w-12 text-gray-400 dark:text-dark-500"
                 />
-                <p :class="scheme3 ? 'scheme3-table-empty-title' : 'text-lg font-medium text-gray-900 dark:text-gray-100'">
+                <p class="text-lg font-medium text-gray-900 dark:text-gray-100">
                   {{ t('empty.noData') }}
                 </p>
               </div>
@@ -239,20 +216,17 @@
             :data-row-id="resolveRowKey(item.row, item.index)"
             :data-index="item.index"
             :ref="item.measure ? measureElement : undefined"
-            :class="[
-              scheme3 ? 'scheme3-table-row' : 'hover:bg-gray-50 dark:hover:bg-dark-800',
-              {
-                'cursor-pointer': clickableRows,
-                'scheme3-table-row-selected': scheme3 && selectable && isRowSelected(item.row, item.index),
-                'bg-primary-50/40 dark:bg-primary-900/10': !scheme3 && selectable && isRowSelected(item.row, item.index)
-              }
-            ]"
+            class="hover:bg-gray-50 dark:hover:bg-dark-800"
+            :class="{
+              'cursor-pointer': clickableRows,
+              'bg-primary-50/40 dark:bg-primary-900/10': selectable && isRowSelected(item.row, item.index)
+            }"
             @click="clickableRows && emit('rowClick', item.row)"
           >
-            <td v-if="selectable" :class="scheme3 ? 'scheme3-table-select-cell' : 'w-11 min-w-11 px-3 py-4 text-center'">
+            <td v-if="selectable" class="w-11 min-w-11 px-3 py-4 text-center">
               <input
                 type="checkbox"
-                :class="scheme3 ? 'scheme3-table-checkbox' : 'h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800'"
+                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
                 :checked="isRowSelected(item.row, item.index)"
                 :aria-label="getRowSelectionLabel(item.row, item.index)"
                 data-test="select-row"
@@ -264,7 +238,7 @@
               v-for="(column, colIndex) in columns"
               :key="column.key"
               :class="[
-                scheme3 ? 'scheme3-table-cell' : 'whitespace-nowrap py-4 text-sm text-gray-900 dark:text-gray-100',
+                'whitespace-nowrap py-4 text-sm text-gray-900 dark:text-gray-100',
                 getAdaptivePaddingClass(),
                 getStickyColumnClass(column, colIndex),
                 column.class
@@ -502,8 +476,6 @@ interface Props {
   selectionLabel?: string | ((row: any) => string)
   /** Keep the table layout on narrow screens so callers can offer horizontal scrolling. */
   mobileHorizontalScroll?: boolean
-  /** Use the scheme3 semantic table surface instead of the legacy utility classes. */
-  scheme3?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -515,8 +487,7 @@ const props = withDefaults(defineProps<Props>(), {
   serverSideSort: false,
   selectable: false,
   selectedKeys: () => [],
-  mobileHorizontalScroll: false,
-  scheme3: false
+  mobileHorizontalScroll: false
 })
 
 const sortKey = ref<string>('')
@@ -591,11 +562,6 @@ const applySortState = (state: PersistedSortState | null) => {
 }
 
 const getSortIndicatorClass = (key: string, order: 'asc' | 'desc') => {
-  if (props.scheme3) {
-    return sortKey.value === key && sortOrder.value === order
-      ? 'scheme3-table-sort-active'
-      : 'scheme3-table-sort-inactive'
-  }
   return sortKey.value === key && sortOrder.value === order
     ? 'text-primary-600 dark:text-primary-400'
     : 'text-gray-300 transition-colors dark:text-dark-500'
@@ -903,21 +869,21 @@ const getStickyColumnClass = (column: Column, index: number) => {
     // 如果第一列是勾选列，固定前两列（勾选+名称）
     if (hasSelectColumn.value) {
       if (index === 0) {
-        classes.push(props.scheme3 ? 'sticky-col sticky-col-left-first scheme3-table-sticky-col' : 'sticky-col sticky-col-left-first')
+        classes.push('sticky-col sticky-col-left-first')
       } else if (index === 1) {
-        classes.push(props.scheme3 ? 'sticky-col sticky-col-left-second scheme3-table-sticky-col' : 'sticky-col sticky-col-left-second')
+        classes.push('sticky-col sticky-col-left-second')
       }
     } else {
       // 否则只固定第一列
       if (index === 0) {
-        classes.push(props.scheme3 ? 'sticky-col sticky-col-left scheme3-table-sticky-col' : 'sticky-col sticky-col-left')
+        classes.push('sticky-col sticky-col-left')
       }
     }
   }
 
   // 操作列固定（最后一列）
   if (props.stickyActionsColumn && column.key === 'actions') {
-    classes.push(props.scheme3 ? 'sticky-col sticky-col-right scheme3-table-sticky-col' : 'sticky-col sticky-col-right')
+    classes.push('sticky-col sticky-col-right')
   }
 
   return classes.join(' ')
@@ -926,13 +892,6 @@ const getStickyColumnClass = (column: Column, index: number) => {
 // 根据列数自适应调整内边距
 const getAdaptivePaddingClass = () => {
   const columnCount = props.columns.length
-
-  if (props.scheme3) {
-    if (columnCount >= 10) return 'scheme3-table-pad-compact'
-    if (columnCount >= 7) return 'scheme3-table-pad-tight'
-    if (columnCount >= 5) return 'scheme3-table-pad-standard'
-    return 'scheme3-table-pad-wide'
-  }
 
   // 列数越多，内边距越小
   if (columnCount >= 10) {
@@ -1155,305 +1114,6 @@ tbody tr:hover .sticky-col {
 .dark .is-scrollable .sticky-col-right::before {
   background: linear-gradient(to left, rgba(0, 0, 0, 0.2), transparent);
 }
-
-/* -------------------------------------------------------------------------
- * Scheme 3 semantic surface
- *
- * The legacy branch above remains intentionally untouched for every existing
- * caller.  Monitor pages opt into this branch through the `scheme3` prop so
- * their DOM does not carry the old gray/primary utility vocabulary.
- * ------------------------------------------------------------------------- */
-.scheme3-table-wrapper,
-.scheme3-table-mobile-list {
-  --scheme3-table-surface: var(--admin-surface, #fffefa);
-  --scheme3-table-subtle: var(--admin-subtle, #f1eee6);
-  --scheme3-table-ink: var(--admin-ink, #27251f);
-  --scheme3-table-muted: var(--admin-muted, #777266);
-  --scheme3-table-line: var(--admin-line, #d8d2c3);
-  --scheme3-table-accent: var(--admin-accent, #1e5c42);
-  --scheme3-table-hover: color-mix(in srgb, var(--scheme3-table-subtle) 88%, var(--scheme3-table-surface));
-  color: var(--scheme3-table-ink);
-}
-
-.scheme3-table-mobile-list {
-  display: grid;
-  gap: .75rem;
-}
-
-.scheme3-table-mobile-card,
-.scheme3-table-mobile-empty {
-  border: 1px solid var(--scheme3-table-line);
-  border-radius: 7px;
-  background: var(--scheme3-table-surface);
-  padding: 1rem;
-}
-
-.scheme3-table-mobile-card-loading {
-  min-height: 8rem;
-}
-
-.scheme3-table-mobile-empty {
-  padding: 3rem;
-  text-align: center;
-}
-
-.scheme3-table-mobile-stack {
-  display: grid;
-  gap: .75rem;
-}
-
-.scheme3-table-mobile-actions {
-  border-top: 1px solid var(--scheme3-table-line);
-  padding-top: .75rem;
-}
-
-.scheme3-table-mobile-label,
-.scheme3-table-select-label {
-  color: var(--scheme3-table-muted);
-  font-size: .68rem;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.scheme3-table-mobile-value {
-  min-width: 0;
-  max-width: 100%;
-  color: var(--scheme3-table-ink);
-  font-size: .8rem;
-  text-align: right;
-}
-
-.scheme3-table-select-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: .5rem;
-  padding: 0 .25rem .1rem;
-}
-
-.scheme3-table-select-label {
-  display: inline-flex;
-  align-items: center;
-  gap: .5rem;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.scheme3-table-checkbox {
-  width: 1rem;
-  height: 1rem;
-  margin: 0;
-  border: 1px solid var(--scheme3-table-line);
-  border-radius: 3px;
-  accent-color: var(--scheme3-table-accent);
-  background: var(--scheme3-table-surface);
-}
-
-.scheme3-table-checkbox:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--scheme3-table-accent) 35%, transparent);
-  outline-offset: 2px;
-}
-
-.scheme3-table-mobile-card-selected,
-.scheme3-table-row-selected {
-  border-color: color-mix(in srgb, var(--scheme3-table-accent) 52%, var(--scheme3-table-line));
-  background: color-mix(in srgb, var(--scheme3-table-accent) 8%, var(--scheme3-table-surface));
-}
-
-.scheme3-table-empty-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.scheme3-table-empty-icon {
-  width: 3rem;
-  height: 3rem;
-  margin-bottom: 1rem;
-  color: var(--scheme3-table-muted);
-}
-
-.scheme3-table-empty-title {
-  margin: 0;
-  color: var(--scheme3-table-ink);
-  font-size: 1rem;
-  font-weight: 650;
-}
-
-.scheme3-table-skeleton {
-  height: 1rem;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--scheme3-table-line) 72%, var(--scheme3-table-surface));
-  animation: scheme3-table-pulse 1.6s ease-in-out infinite;
-}
-
-.scheme3-table-skeleton-label { width: 5rem; }
-.scheme3-table-skeleton-value { width: 75%; }
-.scheme3-table-skeleton-actions { width: 100%; height: 2rem; }
-.scheme3-table-skeleton-checkbox { width: 1rem; margin: 0 auto; }
-
-@keyframes scheme3-table-pulse {
-  0%, 100% { opacity: .62; }
-  50% { opacity: 1; }
-}
-
-.scheme3-table {
-  min-width: max-content;
-  border-collapse: collapse;
-  color: var(--scheme3-table-ink);
-}
-
-.scheme3-table-fluid {
-  width: 100%;
-}
-
-.scheme3-table-wrapper .scheme3-table-header {
-  position: sticky;
-  top: 0;
-  z-index: 200;
-  border-color: var(--scheme3-table-line);
-  background: var(--scheme3-table-subtle);
-}
-
-.scheme3-table-wrapper .scheme3-table-select-head,
-.scheme3-table-wrapper .scheme3-table-head-cell {
-  position: sticky;
-  top: 0;
-  z-index: 210;
-  border-bottom: 1px solid var(--scheme3-table-line);
-  background: var(--scheme3-table-subtle);
-}
-
-.scheme3-table-wrapper .scheme3-table-select-head {
-  width: 2.75rem;
-  min-width: 2.75rem;
-  padding: .75rem;
-  text-align: center;
-}
-
-.scheme3-table-head-cell {
-  color: var(--scheme3-table-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: .61rem;
-  font-weight: 800;
-  letter-spacing: .06em;
-  text-align: left;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.scheme3-table-pad-compact { padding-inline: .5rem; }
-.scheme3-table-pad-tight { padding-inline: .75rem; }
-.scheme3-table-pad-standard { padding-inline: 1rem; }
-.scheme3-table-pad-wide { padding-inline: 1.5rem; }
-
-.scheme3-table-head-content {
-  display: flex;
-  align-items: center;
-  gap: .25rem;
-}
-
-.scheme3-table-sortable {
-  cursor: pointer;
-  transition: background-color 140ms ease, color 140ms ease;
-}
-
-.scheme3-table-sortable:hover {
-  background: var(--scheme3-table-hover);
-  color: var(--scheme3-table-ink);
-}
-
-.scheme3-table-sort-indicator {
-  display: inline-flex;
-  width: 1rem;
-  height: 1.25rem;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.scheme3-table-sort-arrow {
-  width: .625rem;
-  height: .625rem;
-  transition: color 140ms ease;
-}
-
-.scheme3-table-sort-arrow-desc {
-  margin-top: -.125rem;
-}
-
-.scheme3-table-sort-active { color: var(--scheme3-table-accent); }
-.scheme3-table-sort-inactive { color: color-mix(in srgb, var(--scheme3-table-muted) 45%, transparent); }
-
-.scheme3-table-wrapper .scheme3-table-body {
-  position: relative;
-  z-index: 0;
-  border-color: var(--scheme3-table-line);
-  background: var(--scheme3-table-surface);
-}
-
-.scheme3-table-row {
-  border-color: var(--scheme3-table-line);
-  background: var(--scheme3-table-surface);
-  transition: background-color 140ms ease;
-}
-
-.scheme3-table-row:hover,
-.scheme3-table-row:hover .scheme3-table-cell,
-.scheme3-table-row:hover .scheme3-table-sticky-col {
-  background: var(--scheme3-table-subtle);
-}
-
-.scheme3-table-wrapper .scheme3-table-cell {
-  border-bottom: 1px solid var(--scheme3-table-line);
-  background: var(--scheme3-table-surface);
-  color: var(--scheme3-table-ink);
-  font-size: .75rem;
-  white-space: nowrap;
-}
-
-.scheme3-table-wrapper .scheme3-table-select-cell {
-  width: 2.75rem;
-  min-width: 2.75rem;
-  padding: 1rem .75rem;
-  background: var(--scheme3-table-surface);
-  text-align: center;
-}
-
-.scheme3-table-wrapper tbody .scheme3-table-sticky-col {
-  background: var(--scheme3-table-surface);
-}
-
-.scheme3-table-wrapper .scheme3-table-row-selected,
-.scheme3-table-wrapper .scheme3-table-row-selected .scheme3-table-cell,
-.scheme3-table-wrapper .scheme3-table-row-selected .scheme3-table-sticky-col {
-  background: color-mix(in srgb, var(--scheme3-table-accent) 8%, var(--scheme3-table-surface));
-}
-
-.scheme3-table-wrapper .scheme3-table-empty-cell {
-  padding-block: 3rem;
-  color: var(--scheme3-table-muted);
-  text-align: center;
-}
-
-.scheme3-table-cell-loading {
-  padding-block: 1rem;
-}
-
-@media (max-width: 767px) {
-  .scheme3-table-mobile-value { overflow-wrap: anywhere; }
-}
-
-:global(html.dark) .scheme3-table-wrapper,
-:global(html.dark) .scheme3-table-mobile-list {
-  --scheme3-table-surface: var(--admin-surface, #24231f);
-  --scheme3-table-subtle: var(--admin-subtle, #2b2924);
-  --scheme3-table-ink: var(--admin-ink, #f4f2ec);
-  --scheme3-table-muted: var(--admin-muted, #aaa69a);
-  --scheme3-table-line: var(--admin-line, #47443a);
-  --scheme3-table-accent: var(--admin-accent, #8fc2a5);
-}
 </style>
 
 <style>
@@ -1503,26 +1163,6 @@ tbody tr:hover .sticky-col {
   background-color: rgba(209, 213, 219, 0.9) !important;
 }
 
-/* Scheme 3 keeps the scrollbar quiet and aligned with the console palette. */
-.scheme3-table-wrapper::-webkit-scrollbar-track {
-  background-color: color-mix(in srgb, var(--admin-line, #d8d2c3) 24%, transparent) !important;
-}
-.scheme3-table-wrapper::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--admin-muted, #777266) 72%, transparent) !important;
-}
-.scheme3-table-wrapper::-webkit-scrollbar-thumb:hover {
-  background-color: var(--admin-accent, #1e5c42) !important;
-}
-html.dark .scheme3-table-wrapper::-webkit-scrollbar-track {
-  background-color: color-mix(in srgb, var(--admin-line, #47443a) 36%, transparent) !important;
-}
-html.dark .scheme3-table-wrapper::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--admin-muted, #aaa69a) 72%, transparent) !important;
-}
-html.dark .scheme3-table-wrapper::-webkit-scrollbar-thumb:hover {
-  background-color: var(--admin-accent, #8fc2a5) !important;
-}
-
 /* 3. 仅给真正的 Firefox 留的后路 */
 @supports (-moz-appearance:none) {
   .table-wrapper {
@@ -1531,12 +1171,6 @@ html.dark .scheme3-table-wrapper::-webkit-scrollbar-thumb:hover {
   }
   .dark .table-wrapper {
     scrollbar-color: rgba(75, 85, 99, 0.5) rgba(255, 255, 255, 0.05) !important;
-  }
-  .scheme3-table-wrapper {
-    scrollbar-color: var(--admin-muted, #777266) color-mix(in srgb, var(--admin-line, #d8d2c3) 24%, transparent) !important;
-  }
-  html.dark .scheme3-table-wrapper {
-    scrollbar-color: var(--admin-muted, #aaa69a) color-mix(in srgb, var(--admin-line, #47443a) 36%, transparent) !important;
   }
 }
 </style>

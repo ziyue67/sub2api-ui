@@ -1,10 +1,10 @@
 <template>
   <AppLayout>
-    <div class="scheme3-standalone-payment-qr mx-auto flex max-w-md flex-col items-center space-y-6 py-8">
+    <div class="mx-auto flex max-w-md flex-col items-center space-y-6 py-8">
       <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
         {{ qrUrl ? scanTitle : t('payment.qr.payInNewWindow') }}
       </h2>
-      <div v-if="qrUrl" class="scheme3-standalone-payment-qr-surface p-6">
+      <div v-if="qrUrl" class="rounded-2xl bg-white p-6 shadow-lg dark:bg-dark-800">
         <canvas ref="qrCanvas" class="mx-auto"></canvas>
       </div>
       <!-- Scan prompt for QR code -->
@@ -212,13 +212,3 @@ onMounted(() => {
 
 onUnmounted(() => cleanup())
 </script>
-
-<style scoped>
-.scheme3-standalone-payment-qr { --scheme3-qr-card: #fffefa; --scheme3-qr-line: #d8d2c3; --scheme3-qr-ink: #27251f; --scheme3-qr-muted: #777266; }
-.scheme3-standalone-payment-qr-surface { border: 1px solid var(--scheme3-qr-line); border-radius: 8px; background: var(--scheme3-qr-card); box-shadow: 0 12px 26px rgba(54,48,34,.08); }
-.scheme3-standalone-payment-qr :deep(.btn-primary) { border-radius: 7px; background: #1e5c42; box-shadow: 0 8px 16px rgba(30,92,66,.15); }
-.scheme3-standalone-payment-qr :deep(.btn-secondary) { border-color: var(--scheme3-qr-line); border-radius: 7px; background: var(--scheme3-qr-card); color: var(--scheme3-qr-ink); }
-
-:global(.dark .scheme3-standalone-payment-qr) { --scheme3-qr-card: #24231f; --scheme3-qr-line: #47443a; --scheme3-qr-ink: #f4f2ec; --scheme3-qr-muted: #aaa69a; }
-:global(.dark .scheme3-standalone-payment-qr :deep(.btn-primary)) { background: #8fc2a5; color: #1b1b18; }
-</style>

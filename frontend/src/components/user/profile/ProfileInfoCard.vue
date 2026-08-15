@@ -1,13 +1,13 @@
 <template>
-  <div class="scheme3-profile-info space-y-6">
+  <div class="space-y-6">
     <section
       data-testid="profile-overview-hero"
-      class="scheme3-profile-hero card overflow-hidden"
+      class="card overflow-hidden border border-primary-100/80 bg-gradient-to-br from-primary-50 via-white to-amber-50/70 dark:border-primary-900/40 dark:from-primary-950/40 dark:via-dark-900 dark:to-dark-950"
     >
       <div class="px-6 py-6 md:px-8">
         <div class="flex flex-col gap-6 lg:flex-row lg:items-start">
           <div
-            class="scheme3-profile-avatar flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden text-2xl font-bold"
+            class="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[1.75rem] bg-gradient-to-br from-primary-500 to-primary-600 text-2xl font-bold text-white shadow-lg shadow-primary-500/20"
           >
             <img
               v-if="avatarUrl"
@@ -49,7 +49,7 @@
                   <span
                     v-for="hint in sourceHints"
                     :key="hint.key"
-                    class="scheme3-profile-source inline-flex items-center gap-1"
+                    class="inline-flex items-center gap-1 rounded-full bg-white/80 px-3 py-1 ring-1 ring-primary-100 dark:bg-dark-900/70 dark:ring-primary-900/40"
                   >
                     <Icon name="link" size="sm" />
                     {{ hint.text }}
@@ -61,7 +61,7 @@
             <div class="grid gap-3 sm:grid-cols-3">
               <div
                 data-testid="profile-overview-metric-balance"
-                class="scheme3-profile-metric"
+                class="rounded-2xl bg-white/85 px-4 py-3 shadow-sm ring-1 ring-white/70 dark:bg-dark-900/60 dark:ring-dark-700"
               >
                 <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                   {{ t('profile.accountBalance') }}
@@ -72,7 +72,7 @@
               </div>
               <div
                 data-testid="profile-overview-metric-concurrency"
-                class="scheme3-profile-metric"
+                class="rounded-2xl bg-white/85 px-4 py-3 shadow-sm ring-1 ring-white/70 dark:bg-dark-900/60 dark:ring-dark-700"
               >
                 <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                   {{ t('profile.concurrencyLimit') }}
@@ -83,7 +83,7 @@
               </div>
               <div
                 data-testid="profile-overview-metric-member-since"
-                class="scheme3-profile-metric"
+                class="rounded-2xl bg-white/85 px-4 py-3 shadow-sm ring-1 ring-white/70 dark:bg-dark-900/60 dark:ring-dark-700"
               >
                 <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                   {{ t('profile.memberSince') }}
@@ -102,7 +102,7 @@
       <div data-testid="profile-main-column" class="space-y-6">
         <section
           data-testid="profile-basics-panel"
-          class="scheme3-profile-panel card p-6"
+          class="card border border-gray-100 bg-white/90 p-6 dark:border-dark-700 dark:bg-dark-900/50"
         >
           <div class="mb-5 flex items-start justify-between gap-4">
             <div>
@@ -116,14 +116,14 @@
           </div>
 
           <div class="grid gap-6 sm:grid-cols-1 md:grid-cols-2">
-            <div class="scheme3-profile-surface">
+            <div class="rounded-3xl border border-gray-100 bg-gray-50/80 p-5 dark:border-dark-700 dark:bg-dark-900/30">
               <ProfileAvatarCard
                 :user="user"
                 embedded
               />
             </div>
 
-            <div class="scheme3-profile-surface">
+            <div class="rounded-3xl border border-gray-100 bg-gray-50/80 p-5 dark:border-dark-700 dark:bg-dark-900/30">
               <ProfileEditForm
                 :initial-username="user?.username || ''"
                 embedded
@@ -134,7 +134,7 @@
 
         <section
           data-testid="profile-auth-bindings-panel"
-          class="scheme3-profile-panel card p-6"
+          class="card border border-gray-100 bg-white/90 p-6 dark:border-dark-700 dark:bg-dark-900/50"
         >
           <ProfileIdentityBindingsSection
             :user="user"
@@ -154,7 +154,7 @@
       <div data-testid="profile-side-column" class="space-y-6">
         <section
           v-if="sourceHints.length"
-          class="scheme3-profile-panel card p-6"
+          class="card border border-gray-100 bg-white/90 p-6 dark:border-dark-700 dark:bg-dark-900/50"
         >
           <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
             {{ t('profile.linkedProfileSources') }}
@@ -167,7 +167,7 @@
             <div
               v-for="hint in sourceHints"
               :key="hint.key"
-              class="scheme3-profile-source-row flex items-start gap-3 px-4 py-3 text-sm"
+              class="flex items-start gap-3 rounded-2xl border border-gray-100 bg-gray-50/80 px-4 py-3 text-sm text-gray-600 dark:border-dark-700 dark:bg-dark-900/30 dark:text-gray-300"
             >
               <Icon name="link" size="sm" class="mt-0.5 text-gray-400 dark:text-gray-500" />
               <span>{{ hint.text }}</span>
@@ -379,53 +379,3 @@ const sourceHints = computed(() => {
   return hints
 })
 </script>
-
-<style scoped>
-.scheme3-profile-info { --profile-ink: var(--scheme3-ink,#16150f); --profile-muted: var(--scheme3-muted,#6b695f); --profile-line: var(--scheme3-line,#dad5c8); --profile-card: var(--scheme3-card,#fbfaf6); color: var(--profile-ink); }
-.scheme3-profile-hero { border-color: var(--profile-line); background: #f4f2ec; box-shadow: 0 9px 20px rgba(54,48,34,.05); }
-.scheme3-profile-avatar { border: 1px solid rgba(30,92,66,.35); border-radius: 8px; background: #1e5c42; color: #f4f2ec; box-shadow: 0 8px 18px rgba(30,92,66,.16); }
-.scheme3-profile-info :deep(.badge) { border-radius: 4px; padding: .18rem .38rem; font-size: .58rem; font-weight: 800; }.scheme3-profile-info :deep(.badge-primary) { background: rgba(30,92,66,.1); color: #1e5c42; }.scheme3-profile-info :deep(.badge-success) { background: rgba(30,92,66,.1); color: #1e5c42; }.scheme3-profile-info :deep(.badge-danger) { background: rgba(158,77,61,.1); color: #9e4d3d; }
-.scheme3-profile-source { gap: .3rem; border: 1px solid var(--profile-line); border-radius: 4px; padding: .2rem .38rem; background: var(--profile-card); color: var(--profile-muted); font-size: .58rem; }
-.scheme3-profile-metric { border: 1px solid var(--profile-line); border-radius: 6px; padding: .65rem .75rem; background: var(--profile-card); }.scheme3-profile-metric p:first-child { color: var(--profile-muted); }.scheme3-profile-metric p:last-child { color: var(--profile-ink); }
-.scheme3-profile-panel { border-color: var(--profile-line); background: var(--profile-card); box-shadow: 0 9px 20px rgba(54,48,34,.045); }.scheme3-profile-surface { border: 1px solid var(--profile-line); border-radius: 7px; padding: 1rem; background: #f4f2ec; }.scheme3-profile-source-row { border: 1px solid var(--profile-line); border-radius: 6px; background: #f4f2ec; color: var(--profile-muted); }
-.scheme3-profile-info :deep(.bg-gradient-to-br) { background-image: none; background: #1e5c42; }.scheme3-profile-info :deep(.text-primary-600) { color: #1e5c42; }.scheme3-profile-info :deep(.bg-primary-50),.scheme3-profile-info :deep(.bg-primary-100) { background: rgba(30,92,66,.08); }
-@media (max-width: 640px) { .scheme3-profile-hero > div { padding: 1rem; }.scheme3-profile-metric { padding: .55rem .65rem; } }
-</style>
-
-<style>
-html.dark .scheme3-profile-hero,
-html.dark .scheme3-profile-panel {
-  border-color: #47443a !important;
-  background: #1b1b18 !important;
-  color: #f4f2ec !important;
-}
-
-html.dark .scheme3-profile-surface {
-  border-color: #47443a !important;
-  background: #2b2924 !important;
-  color: #f4f2ec !important;
-}
-
-html.dark .scheme3-profile-info .bg-white\/90 {
-  background: #24231f !important;
-}
-
-html.dark .scheme3-profile-info .bg-gray-50\/80 {
-  background: #2b2924 !important;
-}
-
-html.dark .scheme3-profile-info .text-gray-900,
-html.dark .scheme3-profile-info .text-gray-800 {
-  color: #f4f2ec !important;
-}
-
-html.dark .scheme3-profile-info .text-gray-600,
-html.dark .scheme3-profile-info .text-gray-500 {
-  color: #aaa69a !important;
-}
-
-html.dark .scheme3-profile-source-row {
-  border-color: #47443a !important;
-  background: #2b2924 !important;
-}
-</style>

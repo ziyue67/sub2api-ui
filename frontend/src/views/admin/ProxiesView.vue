@@ -93,7 +93,6 @@
           :columns="columns"
           :data="proxies"
           :loading="loading"
-          scheme3
           :server-side-sort="true"
           default-sort-key="id"
           default-sort-order="desc"

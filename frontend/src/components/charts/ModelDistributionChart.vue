@@ -280,7 +280,6 @@ const props = withDefaults(defineProps<{
   startDate?: string
   endDate?: string
   filters?: Record<string, any>
-  palette?: string[]
 }>(), {
   upstreamModelStats: () => [],
   mappingModelStats: () => [],
@@ -354,9 +353,6 @@ const chartColors = [
   '#06b6d4',
   '#a855f7'
 ]
-const otherChartColor = '#94a3b8'
-
-const resolvedChartColors = computed(() => props.palette?.length ? props.palette : chartColors)
 
 const displayModelStats = computed(() => {
   const sourceStats = props.source === 'upstream'
@@ -378,7 +374,7 @@ const chartData = computed(() => {
     datasets: [
       {
         data: displayModelStats.value.map((m) => toFiniteNumber(props.metric === 'actual_cost' ? m.actual_cost : m.total_tokens)),
-        backgroundColor: resolvedChartColors.value.slice(0, displayModelStats.value.length),
+        backgroundColor: chartColors.slice(0, displayModelStats.value.length),
         borderWidth: 0
       }
     ]
@@ -390,12 +386,12 @@ const rankingChartData = computed(() => {
 
   const labels = props.rankingItems.map((item, index) => `#${index + 1} ${getRankingUserLabel(item)}`)
   const data = props.rankingItems.map((item) => toFiniteNumber(item.actual_cost))
-  const backgroundColor = resolvedChartColors.value.slice(0, props.rankingItems.length)
+  const backgroundColor = chartColors.slice(0, props.rankingItems.length)
 
   if (otherRankingItem.value) {
     labels.push(t('admin.dashboard.spendingRankingOther'))
     data.push(otherRankingItem.value.actual_cost)
-    backgroundColor.push(otherChartColor)
+    backgroundColor.push('#94a3b8')
   }
 
   return {

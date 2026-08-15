@@ -60,7 +60,6 @@
           :columns="columns"
           :data="codes"
           :loading="loading"
-          scheme3
           :server-side-sort="true"
           default-sort-key="id"
           default-sort-order="desc"
@@ -324,7 +323,6 @@
                   <template #selected="{ option }">
                     <GroupBadge
                       v-if="option"
-                      scheme3
                       :name="(option as unknown as GroupOption).label"
                       :platform="(option as unknown as GroupOption).platform"
                       :subscription-type="(option as unknown as GroupOption).subscriptionType"

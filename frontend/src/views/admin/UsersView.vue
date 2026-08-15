@@ -267,7 +267,6 @@
           :columns="columns"
           :data="sortedUsers"
           :loading="loading"
-          scheme3
           row-key="id"
           selectable
           :selected-keys="selectedIds"
@@ -404,7 +403,6 @@
             >
               <GroupBadge
                 v-for="sub in row.subscriptions"
-                scheme3
                 :key="sub.id"
                 :name="sub.group?.name || ''"
                 :platform="sub.group?.platform"

@@ -1,21 +1,8 @@
 <template>
   <AppLayout>
-    <section class="scheme3-keys">
-      <header class="scheme3-keys-header">
-        <div>
-          <p class="scheme3-keys-kicker">调用凭证 / 路由账本</p>
-          <h1>密钥中枢</h1>
-        </div>
-        <div class="scheme3-keys-ledger" aria-label="密钥概览">
-          <span><strong>{{ apiKeys.length }}</strong><small>当前密钥</small></span>
-          <span><strong>{{ activeKeyCount }}</strong><small>已启用</small></span>
-          <span><strong>{{ routedKeyCount }}</strong><small>多路由</small></span>
-        </div>
-      </header>
-
     <TablePageLayout>
       <template #filters>
-        <div class="scheme3-keys-filters flex flex-col gap-3">
+        <div class="flex flex-col gap-3">
           <div class="flex flex-wrap items-center gap-3">
             <SearchInput
               v-model="filterSearch"
@@ -45,7 +32,7 @@
       </template>
 
       <template #actions>
-        <div class="scheme3-keys-actions flex justify-end gap-3">
+        <div class="flex justify-end gap-3">
           <button
             @click="loadApiKeys"
             :disabled="loading"
@@ -90,7 +77,7 @@
             <Icon name="plus" size="md" class="mr-2" />
             {{ t('keys.createKey') }}
           </button>
-          <span class="scheme3-keys-routing-note hidden px-3 py-1 text-xs font-medium sm:inline">
+          <span class="hidden rounded-full bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 ring-1 ring-primary-200 sm:inline dark:bg-primary-900/20 dark:text-primary-300 dark:ring-primary-800">
             支持多分组路由
           </span>
         </div>
@@ -390,7 +377,7 @@
               <!-- Use Key Button -->
               <button
                 @click="openUseKeyModal(row)"
-                class="scheme3-keys-action scheme3-keys-action-use flex flex-col items-center gap-0.5 p-1.5 transition-colors"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400"
               >
                 <Icon name="terminal" size="sm" />
                 <span class="text-xs">{{ t('keys.useKey') }}</span>
@@ -399,7 +386,7 @@
               <button
                 v-if="!publicSettings?.hide_ccs_import_button"
                 @click="importToCcswitch(row)"
-                class="scheme3-keys-action scheme3-keys-action-import flex flex-col items-center gap-0.5 p-1.5 transition-colors"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
               >
                 <Icon name="upload" size="sm" />
                 <span class="text-xs">{{ t('keys.importToCcSwitch') }}</span>
@@ -408,7 +395,7 @@
               <button
                 @click="toggleKeyStatus(row)"
                 :class="[
-                  'scheme3-keys-action scheme3-keys-action-toggle flex flex-col items-center gap-0.5 p-1.5 transition-colors',
+                  'flex flex-col items-center gap-0.5 rounded-lg p-1.5 transition-colors',
                   row.status === 'active'
                     ? 'text-gray-500 hover:bg-yellow-50 hover:text-yellow-600 dark:hover:bg-yellow-900/20 dark:hover:text-yellow-400'
                     : 'text-gray-500 hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400'
@@ -421,7 +408,7 @@
               <!-- Edit Button -->
               <button
                 @click="editKey(row)"
-                class="scheme3-keys-action scheme3-keys-action-edit flex flex-col items-center gap-0.5 p-1.5 transition-colors"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
                 <Icon name="edit" size="sm" />
                 <span class="text-xs">{{ t('common.edit') }}</span>
@@ -429,7 +416,7 @@
               <!-- Delete Button -->
               <button
                 @click="confirmDelete(row)"
-                class="scheme3-keys-action scheme3-keys-action-delete flex flex-col items-center gap-0.5 p-1.5 transition-colors"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
                 <Icon name="trash" size="sm" />
                 <span class="text-xs">{{ t('common.delete') }}</span>
@@ -465,7 +452,6 @@
       :show="showCreateModal || showEditModal"
       :title="showEditModal ? t('keys.editKey') : t('keys.createKey')"
       width="normal"
-      content-class="scheme3-keys-dialog"
       @close="closeModals"
     >
       <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
@@ -1087,7 +1073,6 @@
       :show="showCcsClientSelect"
       :title="t('keys.ccsClientSelect.title')"
       width="narrow"
-      content-class="scheme3-keys-dialog"
       @close="closeCcsClientSelect"
     >
       <div class="space-y-4">
@@ -1135,7 +1120,7 @@
       <div
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
-        class="scheme3-keys-group-dropdown animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max max-w-[calc(100vw-16px)] overflow-hidden duration-200 sm:min-w-[380px]"
+        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 sm:min-w-[380px] dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important;"
         :style="{
           top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
@@ -1198,7 +1183,6 @@
         </div>
       </div>
     </Teleport>
-    </section>
   </AppLayout>
 </template>
 
@@ -1231,7 +1215,6 @@ import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
-import { resolveDisplaySiteName } from '@/utils/branding'
 import { syncPrimaryGroupRoute } from '@/utils/apiKeyGroupRoutes'
 import {
   buildCcSwitchImportDeeplink,
@@ -1365,10 +1348,6 @@ const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
 const userGroupRates = ref<Record<number, number>>({})
-const activeKeyCount = computed(() => apiKeys.value.filter((key) => key.status === 'active').length)
-const routedKeyCount = computed(() =>
-  apiKeys.value.filter((key) => (key.group_routes || []).filter((route) => route.enabled !== false).length > 1).length
-)
 
 const pagination = ref({
   page: 1,
@@ -2084,7 +2063,7 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
       };
     }
   })`
-  const providerName = resolveDisplaySiteName(publicSettings.value?.site_name)
+  const providerName = (publicSettings.value?.site_name || 'sub2api').trim() || 'sub2api'
   const deeplink = buildCcSwitchImportDeeplink({
     baseUrl,
     platform,
@@ -2149,111 +2128,3 @@ onUnmounted(() => {
   if (resetTimer) clearInterval(resetTimer)
 })
 </script>
-
-<style scoped>
-.scheme3-keys { --keys-paper: #f4f2ec; --keys-card: #fffefa; --keys-ink: #27251f; --keys-muted: #777266; --keys-line: #d8d2c3; color: var(--keys-ink); }
-.scheme3-keys-header { display: flex; align-items: end; justify-content: space-between; gap: 1.25rem; margin-bottom: 1.05rem; border-bottom: 1px solid var(--keys-line); padding: .1rem 0 1rem; }
-.scheme3-keys-kicker { margin: 0; color: var(--keys-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .61rem; font-weight: 800; letter-spacing: .1em; }
-.scheme3-keys h1 { margin: .34rem 0 0; color: var(--keys-ink); font-family: Georgia, 'Times New Roman', serif; font-size: clamp(1.55rem, 2.6vw, 2.1rem); font-weight: 500; letter-spacing: 0; }
-.scheme3-keys-ledger { display: flex; flex-wrap: wrap; justify-content: flex-end; border: 1px solid var(--keys-line); border-radius: 7px; background: var(--keys-card); }
-.scheme3-keys-ledger span { display: grid; min-width: 4.7rem; gap: .06rem; border-right: 1px solid var(--keys-line); padding: .48rem .7rem; text-align: right; }
-.scheme3-keys-ledger span:last-child { border-right: 0; }
-.scheme3-keys-ledger strong { color: #1e5c42; font-family: Georgia, 'Times New Roman', serif; font-size: 1.08rem; font-weight: 600; line-height: 1.1; }
-.scheme3-keys-ledger small { color: var(--keys-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .52rem; font-weight: 700; letter-spacing: .04em; }
-
-.scheme3-keys :deep(.table-page-layout) { height: calc(100vh - 12rem); min-height: 24rem; gap: .78rem; }
-.scheme3-keys-actions { align-items: center; }
-.scheme3-keys-actions :deep(.btn) { min-height: 2.35rem; border-radius: 7px; }
-.scheme3-keys-actions :deep(.btn-primary) { color: #fffefa; }
-.scheme3-keys-routing-note { border: 1px solid rgba(30,92,66,.22); border-radius: 999px; background: rgba(30,92,66,.07); color: #1e5c42; white-space: nowrap; }
-.scheme3-keys :deep(.table-scroll-container) { border: 1px solid var(--keys-line); border-radius: 8px; background: var(--keys-card); box-shadow: 0 11px 24px rgba(54,48,34,.06); }
-.scheme3-keys :deep(.table-scroll-container thead),.scheme3-keys :deep(.table-scroll-container .table-header) { background: #f1eee6; }
-.scheme3-keys :deep(.table-scroll-container .sticky-header-cell) { background: #f1eee6; }
-.scheme3-keys :deep(.table-scroll-container th) { padding-top: .7rem; padding-bottom: .7rem; color: var(--keys-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .59rem; font-weight: 800; letter-spacing: .055em; }
-.scheme3-keys :deep(.table-scroll-container td) { padding-top: .78rem; padding-bottom: .78rem; border-color: rgba(216,210,195,.78); }
-.scheme3-keys :deep(.table-scroll-container tbody tr) { transition: background-color 150ms ease; }
-.scheme3-keys :deep(.table-scroll-container tbody tr:hover) { background: rgba(30,92,66,.045) !important; }
-.scheme3-keys :deep(.table-scroll-container tbody .sticky-col) { background: #fffefa; }
-.scheme3-keys :deep(.table-scroll-container tbody tr:hover .sticky-col) { background: #f6f4ed; }
-.scheme3-keys :deep(.table-scroll-container .code) { border: 1px solid var(--keys-line); border-radius: 5px; background: #f8f6ef; color: #655f53; }
-.scheme3-keys :deep(.table-scroll-container .badge) { border: 1px solid currentColor; border-radius: 999px; background: transparent; font-size: .62rem; }
-.scheme3-keys :deep(.table-scroll-container .bg-emerald-50),.scheme3-keys :deep(.table-scroll-container .bg-green-50) { background: rgba(30,92,66,.1) !important; }
-.scheme3-keys :deep(.table-scroll-container .text-emerald-700),.scheme3-keys :deep(.table-scroll-container .text-green-600) { color: #1e5c42 !important; }
-.scheme3-keys :deep(.table-scroll-container .bg-yellow-50),.scheme3-keys :deep(.table-scroll-container .bg-yellow-500) { background-color: #b7791f !important; }
-.scheme3-keys :deep(.table-scroll-container .text-yellow-500),.scheme3-keys :deep(.table-scroll-container .text-yellow-600) { color: #a56613 !important; }
-.scheme3-keys :deep(.table-scroll-container .bg-primary-500),.scheme3-keys :deep(.table-scroll-container .bg-primary-600) { background: #1e5c42 !important; }
-.scheme3-keys :deep(.table-scroll-container .bg-gray-200) { background: #e7e2d7 !important; }
-.scheme3-keys :deep(.table-scroll-container .bg-gray-100) { background: #f1eee6 !important; }
-.scheme3-keys :deep(.table-scroll-container .rounded-lg) { border-radius: 7px; }
-.scheme3-keys-action { min-width: 2.5rem; border: 1px solid transparent; border-radius: 6px; color: var(--keys-muted); transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 150ms ease; }
-.scheme3-keys-action:hover { transform: translateY(-1px); }
-.scheme3-keys-action:active { transform: scale(.96); }
-.scheme3-keys-action-use:hover,.scheme3-keys-action-edit:hover { border-color: rgba(30,92,66,.2); background: rgba(30,92,66,.08); color: #1e5c42; }
-.scheme3-keys-action-import:hover { border-color: rgba(101,95,83,.2); background: #f1eee6; color: #655f53; }
-.scheme3-keys-action-toggle:hover { border-color: rgba(183,121,31,.24); background: rgba(183,121,31,.1); color: #a56613; }
-.scheme3-keys-action-delete:hover { border-color: rgba(158,77,61,.25); background: rgba(158,77,61,.09); color: #9e4d3d; }
-
-:global(.scheme3-keys-dialog) { border: 1px solid #d8d2c3 !important; border-radius: 8px !important; background: #fffefa !important; box-shadow: 0 20px 42px rgba(54,48,34,.16) !important; }
-:global(.scheme3-keys-dialog .modal-header),:global(.scheme3-keys-dialog .modal-footer) { border-color: #d8d2c3 !important; background: #f8f6ef !important; }
-:global(.scheme3-keys-dialog .modal-title) { color: #27251f !important; font-family: Georgia, 'Times New Roman', serif; font-weight: 500; }
-:global(.scheme3-keys-dialog .input),:global(.scheme3-keys-dialog textarea),:global(.scheme3-keys-dialog select) { border-color: #d8d2c3 !important; border-radius: 7px !important; background: #fffefa !important; color: #27251f !important; }
-:global(.scheme3-keys-dialog .input:focus),:global(.scheme3-keys-dialog textarea:focus),:global(.scheme3-keys-dialog select:focus) { border-color: #1e5c42 !important; box-shadow: 0 0 0 3px rgba(30,92,66,.12) !important; }
-:global(.scheme3-keys-dialog .input-label) { color: #27251f !important; font-size: .76rem; }
-:global(.scheme3-keys-dialog .input-hint) { color: #777266 !important; }
-:global(.scheme3-keys-dialog .btn-primary) { border-radius: 7px; background: #1e5c42; color: #fffefa; box-shadow: 0 8px 16px rgba(30,92,66,.14); }
-:global(.scheme3-keys-dialog .btn-secondary) { border-color: #d8d2c3; border-radius: 7px; background: #fffefa; color: #27251f; }
-:global(.scheme3-keys-dialog .bg-gray-100),:global(.scheme3-keys-dialog .bg-gray-50) { background: #f1eee6 !important; }
-:global(.scheme3-keys-dialog .border-gray-200),:global(.scheme3-keys-dialog .border-t) { border-color: #d8d2c3 !important; }
-
-:global(.scheme3-keys-group-dropdown) { border: 1px solid #d8d2c3; border-radius: 8px; background: #fffefa; box-shadow: 0 18px 36px rgba(54,48,34,.16); }
-:global(.scheme3-keys-group-dropdown input) { border-color: #d8d2c3 !important; border-radius: 6px !important; background: #f8f6ef !important; color: #27251f !important; }
-:global(.scheme3-keys-group-dropdown input:focus) { border-color: #1e5c42 !important; box-shadow: 0 0 0 3px rgba(30,92,66,.11) !important; }
-:global(.scheme3-keys-group-dropdown .bg-primary-50) { background: rgba(30,92,66,.08) !important; }
-:global(.scheme3-keys-group-dropdown .hover\\:bg-gray-100:hover) { background: #f1eee6 !important; }
-
-:global(.dark .scheme3-keys) { --keys-paper: #1b1b18; --keys-card: #24231f; --keys-ink: #f4f2ec; --keys-muted: #aaa69a; --keys-line: #47443a; }
-:global(.dark .scheme3-keys-ledger strong) { color: #8fc2a5; }
-:global(.dark .scheme3-keys-routing-note) { border-color: rgba(143,194,165,.28); background: rgba(143,194,165,.1); color: #8fc2a5; }
-:global(.dark .scheme3-keys .table-scroll-container),:global(.dark .scheme3-keys .table-scroll-container .table-wrapper),:global(.dark .scheme3-keys .table-scroll-container tbody) { background: #24231f !important; }
-:global(.dark .scheme3-keys .table-scroll-container thead),:global(.dark .scheme3-keys .table-scroll-container .table-header) { background: #2b2924; }
-:global(.dark .scheme3-keys .table-scroll-container .sticky-header-cell) { background: #2b2924 !important; }
-:global(.dark .scheme3-keys .table-scroll-container td) { border-color: rgba(71,68,58,.86); }
-:global(.dark .scheme3-keys .table-scroll-container tbody tr:hover) { background: rgba(143,194,165,.07) !important; }
-:global(.dark .scheme3-keys .table-scroll-container tbody .sticky-col) { background: #24231f !important; }
-:global(.dark .scheme3-keys .table-scroll-container tbody tr:hover .sticky-col) { background: #2b2924 !important; }
-:global(.dark .scheme3-keys .table-scroll-container .code) { border-color: #47443a; background: #2b2924; color: #c4c0b6; }
-:global(.dark .scheme3-keys .table-scroll-container .bg-gray-200) { background: #3b3932 !important; }
-:global(.dark .scheme3-keys .table-scroll-container .bg-gray-100) { background: #2b2924 !important; }
-:global(.dark .scheme3-keys .table-scroll-container .text-emerald-700),:global(.dark .scheme3-keys .table-scroll-container .text-green-600) { color: #8fc2a5 !important; }
-:global(.dark .scheme3-keys .table-scroll-container .text-yellow-500),:global(.dark .scheme3-keys .table-scroll-container .text-yellow-600) { color: #d6a65d !important; }
-:global(.dark .scheme3-keys-action-use:hover),:global(.dark .scheme3-keys-action-edit:hover) { border-color: rgba(143,194,165,.25); background: rgba(143,194,165,.1); color: #8fc2a5; }
-:global(.dark .scheme3-keys-action-import:hover) { border-color: #47443a; background: #2b2924; color: #d4d0c6; }
-:global(.dark .scheme3-keys-action-toggle:hover) { border-color: rgba(214,166,93,.28); background: rgba(214,166,93,.11); color: #d6a65d; }
-:global(.dark .scheme3-keys-action-delete:hover) { border-color: rgba(211,139,121,.3); background: rgba(211,139,121,.11); color: #d38b79; }
-:global(.dark .scheme3-keys-dialog) { border-color: #47443a !important; background: #24231f !important; box-shadow: 0 20px 42px rgba(0,0,0,.3) !important; }
-:global(.dark .scheme3-keys-dialog .modal-header),:global(.dark .scheme3-keys-dialog .modal-footer) { border-color: #47443a !important; background: #1b1b18 !important; }
-:global(.dark .scheme3-keys-dialog .modal-title),:global(.dark .scheme3-keys-dialog .input-label) { color: #f4f2ec !important; }
-:global(.dark .scheme3-keys-dialog .input),:global(.dark .scheme3-keys-dialog textarea),:global(.dark .scheme3-keys-dialog select) { border-color: #47443a !important; background: #24231f !important; color: #f4f2ec !important; }
-:global(.dark .scheme3-keys-dialog .input-hint) { color: #aaa69a !important; }
-:global(.dark .scheme3-keys-dialog .btn-primary) { background: #8fc2a5; color: #1b1b18; }
-:global(.dark .scheme3-keys-dialog .btn-secondary) { border-color: #47443a; background: #24231f; color: #f4f2ec; }
-:global(.dark .scheme3-keys-dialog .bg-gray-100),:global(.dark .scheme3-keys-dialog .bg-gray-50) { background: #2b2924 !important; }
-:global(.dark .scheme3-keys-dialog .border-gray-200),:global(.dark .scheme3-keys-dialog .border-t) { border-color: #47443a !important; }
-:global(.dark .scheme3-keys-group-dropdown) { border-color: #47443a; background: #24231f; box-shadow: 0 18px 36px rgba(0,0,0,.3); }
-:global(.dark .scheme3-keys-group-dropdown input) { border-color: #47443a !important; background: #2b2924 !important; color: #f4f2ec !important; }
-:global(.dark .scheme3-keys-group-dropdown .bg-primary-50) { background: rgba(143,194,165,.1) !important; }
-:global(.dark .scheme3-keys-group-dropdown .hover\\:bg-gray-100:hover) { background: #2b2924 !important; }
-
-@media (max-width: 767px) {
-  .scheme3-keys-header { align-items: stretch; flex-direction: column; gap: .8rem; margin-bottom: .85rem; }
-  .scheme3-keys-ledger { width: 100%; justify-content: stretch; }
-  .scheme3-keys-ledger span { flex: 1 1 0; min-width: 0; padding: .48rem .42rem; }
-  .scheme3-keys-actions { justify-content: stretch; flex-wrap: wrap; gap: .5rem; }
-  .scheme3-keys-actions :deep(.btn) { flex: 1 1 auto; }
-  .scheme3-keys :deep(.table-page-layout) { height: auto; min-height: 0; gap: .7rem; }
-  .scheme3-keys :deep(.table-scroll-container) { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-  .scheme3-keys :deep(.table-scroll-container > .space-y-3 > div) { border-color: var(--keys-line); border-radius: 8px; background: var(--keys-card); box-shadow: 0 8px 18px rgba(54,48,34,.05); }
-  .scheme3-keys :deep(.table-scroll-container [data-field]) { border-bottom: 1px solid rgba(216,210,195,.7); padding-bottom: .55rem; }
-  .scheme3-keys :deep(.table-scroll-container [data-field]:last-of-type) { border-bottom: 0; padding-bottom: 0; }
-}
-</style>

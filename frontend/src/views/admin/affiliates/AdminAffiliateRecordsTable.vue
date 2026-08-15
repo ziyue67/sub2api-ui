@@ -20,7 +20,6 @@
           :columns="columns"
           :data="records"
           :loading="loading"
-          scheme3
           :server-side-sort="true"
           default-sort-key="created_at"
           default-sort-order="desc"

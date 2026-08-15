@@ -28,7 +28,6 @@
               >
                 <GroupBadge
                   v-if="key.group_id && key.group"
-                  scheme3
                   :name="key.group.name"
                   :platform="key.group.platform"
                   :subscription-type="key.group.subscription_type"

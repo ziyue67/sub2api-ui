@@ -1,6 +1,6 @@
 <template>
   <AuthLayout>
-    <div class="auth-default-panel space-y-6">
+    <div class="space-y-6">
       <div class="text-center">
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ t('auth.oidc.callbackTitle', { providerName }) }}

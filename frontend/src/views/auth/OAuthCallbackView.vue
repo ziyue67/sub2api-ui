@@ -1,7 +1,7 @@
 <template>
-  <AuthLayout>
-    <div class="scheme3-oauth-callback">
-      <div v-if="isProcessing" class="scheme3-oauth-callback-state text-center">
+  <div class="min-h-screen bg-gray-50 px-4 py-10 dark:bg-dark-900">
+    <div class="mx-auto max-w-2xl">
+      <div v-if="isProcessing" class="card p-6 text-center">
         <div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
         <h1 class="mt-4 text-lg font-semibold text-gray-900 dark:text-white">
           {{ t('auth.oauth.callbackTitle') }}
@@ -11,7 +11,7 @@
         </p>
       </div>
 
-      <div v-else-if="needsRegistrationCompletion" class="scheme3-oauth-callback-state">
+      <div v-else-if="needsRegistrationCompletion" class="card p-6">
         <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
           {{ t('auth.oidc.callbackTitle', { providerName }) }}
         </h1>
@@ -79,7 +79,7 @@
         </div>
       </div>
 
-      <div v-else-if="invalidCallback" class="scheme3-oauth-callback-state text-center">
+      <div v-else-if="invalidCallback" class="card p-6 text-center">
         <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
           {{ t('auth.oauth.invalidCallbackTitle') }}
         </h1>
@@ -91,7 +91,7 @@
         </button>
       </div>
 
-      <div v-else class="scheme3-oauth-callback-state">
+      <div v-else class="card p-6">
         <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
           {{ t('auth.oauth.callbackTitle') }}
         </h1>
@@ -142,7 +142,7 @@
         </div>
       </div>
     </div>
-  </AuthLayout>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -150,7 +150,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useClipboard } from '@/composables/useClipboard'
-import { AuthLayout } from '@/components/layout'
 import { useAppStore, useAuthStore } from '@/stores'
 import { apiClient } from '@/api/client'
 import { buildApiUrl } from '@/api/url'
@@ -412,36 +411,3 @@ const copy = (value: string) => {
   copyToClipboard(value)
 }
 </script>
-
-<style scoped>
-.scheme3-oauth-callback {
-  --oauth-ink: #24231f;
-  --oauth-muted: #777266;
-  --oauth-line: #d8d2c3;
-  --oauth-paper: #fffefa;
-  --oauth-green: #1e5c42;
-}
-
-.scheme3-oauth-callback-state { min-width: 0; }
-.scheme3-oauth-callback :deep(.text-gray-900),
-.scheme3-oauth-callback :deep(.text-gray-800),
-.scheme3-oauth-callback :deep(.text-gray-700) { color: var(--oauth-ink) !important; }
-.scheme3-oauth-callback :deep(.text-gray-600),
-.scheme3-oauth-callback :deep(.text-gray-500),
-.scheme3-oauth-callback :deep(.text-gray-400) { color: var(--oauth-muted) !important; }
-.scheme3-oauth-callback :deep(.input-label) { color: var(--oauth-ink); }
-.scheme3-oauth-callback :deep(.input) { border-color: var(--oauth-line); background: var(--oauth-paper); color: var(--oauth-ink); box-shadow: none; }
-.scheme3-oauth-callback :deep(.input:focus) { border-color: var(--oauth-green); box-shadow: 0 0 0 3px rgba(30, 92, 66, .12); }
-.scheme3-oauth-callback :deep(.btn) { min-height: 2.45rem; border-radius: 6px; font-size: .82rem; font-weight: 700; }
-.scheme3-oauth-callback :deep(.btn-primary) { border-color: var(--oauth-green); background: var(--oauth-green); color: #fffefa; }
-.scheme3-oauth-callback :deep(.btn-primary:hover) { background: #287052; }
-.scheme3-oauth-callback :deep(.btn-secondary) { border-color: var(--oauth-line); background: transparent; color: var(--oauth-ink); }
-.scheme3-oauth-callback :deep(.btn-secondary:hover) { border-color: rgba(30, 92, 66, .45); background: #f1eee6; }
-.scheme3-oauth-callback :deep(.border-primary-500) { border-color: var(--oauth-green) !important; }
-
-:global(html.dark .scheme3-oauth-callback) { --oauth-ink: #f4f2ec; --oauth-muted: #aaa69a; --oauth-line: #47443a; --oauth-paper: #24231f; --oauth-green: #8fc2a5; }
-:global(html.dark .scheme3-oauth-callback .input) { background: #2b2924; }
-:global(html.dark .scheme3-oauth-callback .btn-primary) { border-color: var(--oauth-green); background: var(--oauth-green); color: #1b1b18; }
-:global(html.dark .scheme3-oauth-callback .btn-primary:hover) { background: #a7d2b7; }
-:global(html.dark .scheme3-oauth-callback .btn-secondary:hover) { border-color: rgba(143, 194, 165, .45); background: #2b2924; }
-</style>
