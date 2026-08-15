@@ -15,6 +15,12 @@
 
 </div>
 
+## 界面预览
+
+<p align="center">
+  <img src="assets/ui1-home.png" alt="Sub2API UI1 Scheme 3 首页预览" width="100%" />
+</p>
+
 ## 项目定位
 
 本仓库用于维护 Sub2API 的 UI1 v1 界面。它基于上游 Sub2API `0.1.176`，重点是前端视觉、布局、交互和路由兼容性，不是一个独立的后端分支。
