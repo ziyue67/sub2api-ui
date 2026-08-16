@@ -1779,11 +1779,14 @@ onBeforeUnmount(() => {
   .scheme3-console-overlay { position: fixed; z-index: 40; inset: 0; display: block; background: rgba(9,18,32,.38); backdrop-filter: blur(2px); }
   .scheme3-console-menu-button { display: inline-flex; }
   .scheme3-console-topbar { padding-right: 1rem; padding-left: 1rem; }
+  .scheme3-console-status { display: none; }
+  .scheme3-console-topbar-right .scheme3-console-locale-tool { flex-shrink: 0; }
+  .scheme3-console-version-control :deep(.scheme3-version-dropdown) { left: 0; right: auto; width: min(16rem, calc(100vw - 1.3rem)); max-width: calc(100vw - 1.3rem); }
+}
+@media (max-width: 767px) {
   .scheme3-console-doc-link,
   .scheme3-console-topbar-right .scheme3-console-subscription,
-  .scheme3-console-status,
   .scheme3-console-balance { display: none; }
-  .scheme3-console-version-control :deep(.scheme3-version-dropdown) { left: 0; right: auto; width: min(16rem, calc(100vw - 1.3rem)); max-width: calc(100vw - 1.3rem); }
 }
 @media (max-width: 640px) {
   .scheme3-console-content { padding: .7rem .65rem 1rem; }
