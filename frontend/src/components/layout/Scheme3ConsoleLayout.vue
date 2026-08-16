@@ -138,15 +138,18 @@
           </router-link>
           <LocaleSwitcher class="scheme3-console-tool scheme3-console-locale-tool" />
           <SubscriptionProgressMini v-if="authStore.user" class="scheme3-console-subscription" />
-          <span class="scheme3-console-balance"><Icon name="dollar" size="xs" />{{ adminMode ? '管理员余额' : '可用余额' }} {{ formatMoney(Number(user?.balance || 0)) }}</span>
-          <span class="scheme3-console-status"><i></i>会话在线</span>
+          <span class="scheme3-console-balance"><Icon name="dollar" size="xs" />{{ t('common.availableBalance') }} {{ formatMoney(Number(user?.balance || 0)) }}</span>
+          <span class="scheme3-console-status"><i></i>{{ t('common.online') }}</span>
           <div ref="accountMenuRef" class="scheme3-console-account-menu">
             <button
+              :id="accountMenuButtonId"
+              ref="accountMenuButtonRef"
               type="button"
               class="scheme3-console-user"
               aria-haspopup="menu"
+              :aria-controls="accountMenuId"
               :aria-expanded="accountMenuOpen"
-              aria-label="打开账户菜单"
+              :aria-label="t('common.userMenu')"
               :title="userEmail"
               @click.stop="toggleAccountMenu"
             >
@@ -157,24 +160,32 @@
               <span class="scheme3-console-user-copy"><strong>{{ userLabel }}</strong><small>{{ accountRoleLabel }}</small></span>
               <Icon name="chevronDown" size="xs" class="scheme3-console-user-chevron" :class="{ 'is-open': accountMenuOpen }" />
             </button>
-            <div v-if="accountMenuOpen" class="scheme3-console-account-popover" role="menu">
-              <div class="scheme3-console-account-summary">
+            <div
+              v-if="accountMenuOpen"
+              :id="accountMenuId"
+              class="scheme3-console-account-popover"
+              role="menu"
+              tabindex="-1"
+              @keydown="handleAccountMenuKeydown"
+            >
+              <div class="scheme3-console-account-summary" role="presentation">
                 <strong>{{ userLabel }}</strong>
                 <span>{{ userEmail }}</span>
                 <small>{{ accountRoleLabel }}</small>
               </div>
-              <div class="scheme3-console-account-balance">
-                <div><span>可用余额</span><strong>{{ formatMoney(availableBalance) }}</strong></div>
-                <div v-if="frozenBalance > 0"><span>冻结金额</span><strong>{{ formatMoney(frozenBalance) }}</strong></div>
-                <div class="scheme3-console-account-total"><span>总余额</span><strong>{{ formatMoney(totalBalance) }}</strong></div>
+              <div class="scheme3-console-account-balance" role="presentation">
+                <div><span>{{ t('common.availableBalance') }}</span><strong>{{ formatMoney(availableBalance) }}</strong></div>
+                <div v-if="frozenBalance > 0"><span>{{ t('common.frozenBalance') }}</span><strong>{{ formatMoney(frozenBalance) }}</strong></div>
+                <div class="scheme3-console-account-total"><span>{{ t('common.totalBalance') }}</span><strong>{{ formatMoney(totalBalance) }}</strong></div>
               </div>
-              <div class="scheme3-console-account-links">
+              <div class="scheme3-console-account-links" role="presentation">
                 <router-link to="/profile" role="menuitem" @click="closeAccountMenu"><Icon name="user" size="sm" />{{ t('nav.profile') }}</router-link>
                 <router-link to="/keys" role="menuitem" @click="closeAccountMenu"><Icon name="key" size="sm" />{{ t('nav.apiKeys') }}</router-link>
+                <a v-if="authStore.isAdmin" href="https://github.com/ShourGG/sub2api" target="_blank" rel="noopener noreferrer" role="menuitem" @click="closeAccountMenu()"><Icon name="externalLink" size="sm" />{{ t('nav.github') }}</a>
                 <button v-if="showOnboardingButton" type="button" role="menuitem" @click="handleReplayGuide"><Icon name="questionCircle" size="sm" />{{ t('onboarding.restartTour') }}</button>
               </div>
-              <div v-if="contactInfo" class="scheme3-console-account-contact"><Icon name="chatBubble" size="sm" /><span>客服：{{ contactInfo }}</span></div>
-              <button type="button" class="scheme3-console-account-logout" role="menuitem" @click="logout"><Icon name="login" size="sm" />退出登录</button>
+              <div v-if="contactInfo" class="scheme3-console-account-contact" role="presentation"><Icon name="chatBubble" size="sm" /><span>{{ t('common.contactSupport') }}: {{ contactInfo }}</span></div>
+              <button type="button" class="scheme3-console-account-logout" role="menuitem" @click="logout"><Icon name="login" size="sm" />{{ t('nav.logout') }}</button>
             </div>
           </div>
         </div>
@@ -261,13 +272,16 @@ const isDarkMode = ref(document.documentElement.classList.contains('dark'))
 const expandedNavGroups = ref<Set<string>>(new Set())
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const accountMenuRef = ref<HTMLElement | null>(null)
+const accountMenuButtonRef = ref<HTMLButtonElement | null>(null)
 const accountMenuOpen = ref(false)
+const accountMenuId = 'scheme3-account-menu'
+const accountMenuButtonId = 'scheme3-account-menu-button'
 
 const user = computed(() => authStore.user)
 const homePath = computed(() => (adminMode.value ? '/admin/dashboard' : '/dashboard'))
-const userLabel = computed(() => user.value?.username || user.value?.email?.split('@')[0] || '当前账号')
+const userLabel = computed(() => user.value?.username || user.value?.email?.split('@')[0] || t('profile.user'))
 const userEmail = computed(() => user.value?.email || '')
-const accountRoleLabel = computed(() => (authStore.isAdmin ? '管理员身份' : '用户身份'))
+const accountRoleLabel = computed(() => t(authStore.isAdmin ? 'common.administratorIdentity' : 'common.userIdentity'))
 const userInitials = computed(() => userLabel.value.trim().slice(0, 2).toUpperCase() || 'ST')
 const showOnboardingButton = computed(() => adminMode.value && !authStore.isSimpleMode && authStore.isAdmin)
 const siteName = computed(() => resolveDisplaySiteName(appStore.siteName))
@@ -486,6 +500,7 @@ function handleNavItemClick(itemPath: string) {
 }
 
 function handleReplayGuide() {
+  closeAccountMenu()
   onboardingStore.replay()
 }
 
@@ -514,13 +529,53 @@ function toggleNavGroup(item: ConsoleNavItem) {
 
 function openMobileNav() { mobileNavOpen.value = true }
 function closeMobileNav() { mobileNavOpen.value = false }
-function toggleAccountMenu() { accountMenuOpen.value = !accountMenuOpen.value }
-function closeAccountMenu() { accountMenuOpen.value = false }
+function accountMenuItems(): HTMLElement[] {
+  return Array.from(accountMenuRef.value?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
+}
+function focusAccountMenuItem(index: number) {
+  const items = accountMenuItems()
+  if (!items.length) return
+  items[Math.max(0, Math.min(index, items.length - 1))]?.focus()
+}
+function toggleAccountMenu() {
+  accountMenuOpen.value = !accountMenuOpen.value
+  if (accountMenuOpen.value) void nextTick(() => focusAccountMenuItem(0))
+}
+function closeAccountMenu(options: { restoreFocus?: boolean } = {}) {
+  accountMenuOpen.value = false
+  if (options.restoreFocus) void nextTick(() => accountMenuButtonRef.value?.focus())
+}
 function handleAccountMenuOutside(event: MouseEvent) {
   if (accountMenuRef.value && !accountMenuRef.value.contains(event.target as Node)) closeAccountMenu()
 }
 function handleAccountMenuEscape(event: KeyboardEvent) {
-  if (event.key === 'Escape') closeAccountMenu()
+  if (event.key === 'Escape' && accountMenuOpen.value) {
+    event.preventDefault()
+    closeAccountMenu({ restoreFocus: true })
+  }
+}
+function handleAccountMenuKeydown(event: KeyboardEvent) {
+  if (!accountMenuOpen.value) return
+  const items = accountMenuItems()
+  if (!items.length) return
+  const currentIndex = Math.max(0, items.indexOf(document.activeElement as HTMLElement))
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    focusAccountMenuItem((currentIndex + 1) % items.length)
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    focusAccountMenuItem((currentIndex - 1 + items.length) % items.length)
+  } else if (event.key === 'Home') {
+    event.preventDefault()
+    focusAccountMenuItem(0)
+  } else if (event.key === 'End') {
+    event.preventDefault()
+    focusAccountMenuItem(items.length - 1)
+  } else if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    closeAccountMenu({ restoreFocus: true })
+  }
 }
 function toggleNavCollapse() {
   navCollapsed.value = !navCollapsed.value
@@ -532,6 +587,7 @@ function toggleTheme() {
   localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
 }
 function formatMoney(value: number) {
+  if (!Number.isFinite(value)) return '$0.00'
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value)
 }
 async function logout() {
@@ -607,9 +663,9 @@ onBeforeUnmount(() => {
 .scheme3-console-brand-copy strong { display: block; overflow: hidden; color: var(--scheme3-ink); font-size: .76rem; font-weight: 800; letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
 .scheme3-console-brand-copy span { display: block; margin-top: .18rem; color: var(--scheme3-muted); font-size: .62rem; }
 .scheme3-console-version-control { min-width: 0; flex-shrink: 0; }
-.scheme3-console-version-control > span { color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; font-weight: 800; }
-.scheme3-console-version-control > button { display: inline-flex; min-height: 1.55rem; align-items: center; gap: .3rem; border: 1px solid var(--scheme3-line); border-radius: 5px; padding: .22rem .38rem; background: transparent; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; font-weight: 800; }
-.scheme3-console-version-control > button:hover { border-color: #1e5c42; background: rgba(30,92,66,.08); color: #1e5c42; }
+.scheme3-console-version-control :deep(.scheme3-version-static) { color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; font-weight: 800; }
+.scheme3-console-version-control :deep(.scheme3-version-trigger) { display: inline-flex; min-height: 1.55rem; align-items: center; gap: .3rem; border: 1px solid var(--scheme3-line); border-radius: 5px; padding: .22rem .38rem; background: transparent; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; font-weight: 800; }
+.scheme3-console-version-control :deep(.scheme3-version-trigger:hover) { border-color: #1e5c42; background: rgba(30,92,66,.08); color: #1e5c42; }
 .scheme3-console-version-control :deep(.scheme3-version-dropdown) { top: calc(100% + .5rem); left: auto; right: 0; z-index: 90; border: 1px solid var(--scheme3-line); border-radius: 7px; background: var(--scheme3-card); box-shadow: 0 1rem 2.5rem rgba(54,48,34,.16); }
 .scheme3-console-version-control :deep(.scheme3-version-dropdown button) { border-radius: 5px; }
 .scheme3-console-close { display: none; margin-left: auto; border: 0; background: transparent; color: var(--scheme3-muted); }
@@ -665,7 +721,7 @@ onBeforeUnmount(() => {
 .scheme3-console-user-copy small { color: var(--scheme3-muted); font-size: .52rem; font-weight: 700; }
 .scheme3-console-user-chevron { flex-shrink: 0; color: var(--scheme3-muted); transition: transform 160ms ease; }
 .scheme3-console-user-chevron.is-open { transform: rotate(180deg); }
-.scheme3-console-account-popover { position: absolute; top: calc(100% + .55rem); right: 0; z-index: 80; width: min(17rem, calc(100vw - 1.3rem)); overflow: hidden; border: 1px solid var(--scheme3-line); background: var(--scheme3-card); box-shadow: 0 1rem 2.5rem rgba(54,48,34,.16); }
+.scheme3-console-account-popover { position: absolute; top: calc(100% + .55rem); right: 0; z-index: 80; width: min(17rem, calc(100vw - 1.3rem)); max-height: min(32rem, calc(100vh - 4.5rem)); max-height: min(32rem, calc(100dvh - 4.5rem)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--scheme3-line); background: var(--scheme3-card); box-shadow: 0 1rem 2.5rem rgba(54,48,34,.16); scrollbar-width: thin; }
 .scheme3-console-account-summary { display: grid; gap: .18rem; border-bottom: 1px solid var(--scheme3-line); padding: .85rem 1rem .75rem; }
 .scheme3-console-account-summary strong { overflow: hidden; color: var(--scheme3-ink); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
 .scheme3-console-account-summary span,.scheme3-console-account-summary small { overflow: hidden; color: var(--scheme3-muted); font-size: .6rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -759,8 +815,9 @@ onBeforeUnmount(() => {
 :global(.dark .scheme3-console-link:hover),:global(.dark .scheme3-console-action:hover) { background: rgba(143,194,165,.08); }
 :global(.dark .scheme3-console-brand-mark) { border-color: rgba(143,194,165,.38); background: #8fc2a5; color: #1b1b18; }
 :global(.dark .scheme3-console-avatar) { background: #f4f2ec; color: #1b1b18; }
-:global(.dark .scheme3-console-version-control > button) { border-color: #47443a; background: transparent; color: #aaa69a; }
-:global(.dark .scheme3-console-version-control > button:hover) { border-color: #8fc2a5; background: rgba(143,194,165,.1); color: #8fc2a5; }
+:global(.dark .scheme3-console-version-control .scheme3-version-trigger) { border-color: #47443a; background: transparent; color: #aaa69a; }
+:global(.dark .scheme3-console-version-control .scheme3-version-trigger:hover) { border-color: #8fc2a5; background: rgba(143,194,165,.1); color: #8fc2a5; }
+:global(.dark .scheme3-console-version-control .scheme3-version-static) { color: #aaa69a; }
 :global(.dark .scheme3-console-version-control .scheme3-version-dropdown) { border-color: #47443a; background: #24231f; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.34); }
 :global(.dark .scheme3-console-user:hover),:global(.dark .scheme3-console-user[aria-expanded="true"]) { border-color: #47443a; background: rgba(143,194,165,.08); }
 :global(.dark .scheme3-console-account-popover) { background: #24231f; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.34); }
@@ -1722,6 +1779,11 @@ onBeforeUnmount(() => {
   .scheme3-console-overlay { position: fixed; z-index: 40; inset: 0; display: block; background: rgba(9,18,32,.38); backdrop-filter: blur(2px); }
   .scheme3-console-menu-button { display: inline-flex; }
   .scheme3-console-topbar { padding-right: 1rem; padding-left: 1rem; }
+  .scheme3-console-doc-link,
+  .scheme3-console-topbar-right .scheme3-console-subscription,
+  .scheme3-console-status,
+  .scheme3-console-balance { display: none; }
+  .scheme3-console-version-control :deep(.scheme3-version-dropdown) { left: 0; right: auto; width: min(16rem, calc(100vw - 1.3rem)); max-width: calc(100vw - 1.3rem); }
 }
 @media (max-width: 640px) {
   .scheme3-console-content { padding: .7rem .65rem 1rem; }
@@ -1730,11 +1792,7 @@ onBeforeUnmount(() => {
   .scheme3-console-topbar-left strong { font-size: 1rem; }
   .scheme3-console-topbar-left small { display: none; }
   .scheme3-console-topbar-right { gap: .45rem; }
-  .scheme3-console-doc-link,
-  .scheme3-console-topbar-right .scheme3-console-subscription,
-  .scheme3-console-status,
   .scheme3-console-topbar-right .scheme3-console-locale-tool { display: none; }
-  .scheme3-console-balance { display: none; }
   .scheme3-console-user-copy { display: none; }
   .scheme3-console-account-popover { right: -.2rem; }
   :global(body.scheme3-user-context .scheme3-toast) { min-width: 0 !important; width: calc(100vw - 2rem); }

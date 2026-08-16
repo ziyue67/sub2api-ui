@@ -154,6 +154,7 @@ async function mountLayout(options: {
   const wrapper = mount(Scheme3ConsoleLayout, {
     props: { adminMode: options.admin ?? false },
     slots: { default: '<div data-test="page-content" />' },
+    attachTo: document.body,
     global: {
       plugins: [router],
       stubs: {
@@ -429,6 +430,26 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
     const { wrapper } = await mountLayout({ route: '/scheme3-dashboard' })
 
     expect(wrapper.find('a.scheme3-console-link[href="/dashboard"]').classes()).toContain('scheme3-console-link-active')
+    wrapper.unmount()
+  })
+
+  it('keeps the admin account menu complete and restores focus on Escape', async () => {
+    const { wrapper } = await mountLayout({ admin: true })
+    const trigger = wrapper.find('.scheme3-console-user')
+
+    expect(trigger.attributes('aria-controls')).toBe('scheme3-account-menu')
+    await trigger.trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('#scheme3-account-menu[role="menu"]').exists()).toBe(true)
+    expect(wrapper.find('.scheme3-console-account-links a[href="https://github.com/ShourGG/sub2api"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('common.availableBalance')
+    expect(wrapper.text()).toContain('common.totalBalance')
+
+    await wrapper.find('#scheme3-account-menu').trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.find('#scheme3-account-menu').exists()).toBe(false)
+    expect(document.activeElement).toBe(trigger.element)
     wrapper.unmount()
   })
 })
