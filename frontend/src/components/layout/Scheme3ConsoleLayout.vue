@@ -14,8 +14,9 @@
         </router-link>
         <div class="scheme3-console-brand-copy">
           <strong>{{ siteName }}</strong>
-          <span>{{ adminMode ? '运维控制空间' : '个人工作空间' }}<template v-if="appStore.siteVersion"> · {{ appStore.siteVersion }}</template></span>
+          <span>{{ adminMode ? '运维控制空间' : '个人工作空间' }}</span>
         </div>
+        <VersionBadge :version="appStore.siteVersion" class="scheme3-console-version-control" />
         <button type="button" class="scheme3-console-close" aria-label="关闭导航" @click="closeMobileNav">
           <Icon name="x" size="sm" />
         </button>
@@ -78,7 +79,10 @@
 
       <div class="scheme3-console-foot">
         <router-link to="/profile" class="scheme3-console-account" aria-label="打开个人资料" :title="userEmail">
-          <span class="scheme3-console-avatar">{{ userInitials }}</span>
+          <span class="scheme3-console-avatar">
+            <img v-if="avatarUrl" :src="avatarUrl" :alt="userLabel" />
+            <span v-else>{{ userInitials }}</span>
+          </span>
           <div class="scheme3-console-account-copy">
             <strong>{{ userLabel }}</strong>
             <span>{{ accountRoleLabel }}<template v-if="userEmail"> · {{ userEmail }}</template></span>
@@ -119,6 +123,7 @@
           <div>
             <span class="scheme3-console-topbar-kicker">{{ adminMode ? 'SHOUR OR TOKEN / 运维空间' : 'SHOUR OR TOKEN / 运营空间' }}</span>
             <strong>{{ pageTitle }}</strong>
+            <small v-if="pageDescription">{{ pageDescription }}</small>
           </div>
         </div>
         <div class="scheme3-console-topbar-right">
@@ -135,10 +140,43 @@
           <SubscriptionProgressMini v-if="authStore.user" class="scheme3-console-subscription" />
           <span class="scheme3-console-balance"><Icon name="dollar" size="xs" />{{ adminMode ? '管理员余额' : '可用余额' }} {{ formatMoney(Number(user?.balance || 0)) }}</span>
           <span class="scheme3-console-status"><i></i>会话在线</span>
-          <router-link to="/profile" class="scheme3-console-user" aria-label="打开个人资料" :title="userEmail">
-            <span class="scheme3-console-avatar">{{ userInitials }}</span>
-            <span class="scheme3-console-user-copy"><strong>{{ userLabel }}</strong><small>{{ accountRoleLabel }}</small></span>
-          </router-link>
+          <div ref="accountMenuRef" class="scheme3-console-account-menu">
+            <button
+              type="button"
+              class="scheme3-console-user"
+              aria-haspopup="menu"
+              :aria-expanded="accountMenuOpen"
+              aria-label="打开账户菜单"
+              :title="userEmail"
+              @click.stop="toggleAccountMenu"
+            >
+              <span class="scheme3-console-avatar">
+                <img v-if="avatarUrl" :src="avatarUrl" :alt="userLabel" />
+                <span v-else>{{ userInitials }}</span>
+              </span>
+              <span class="scheme3-console-user-copy"><strong>{{ userLabel }}</strong><small>{{ accountRoleLabel }}</small></span>
+              <Icon name="chevronDown" size="xs" class="scheme3-console-user-chevron" :class="{ 'is-open': accountMenuOpen }" />
+            </button>
+            <div v-if="accountMenuOpen" class="scheme3-console-account-popover" role="menu">
+              <div class="scheme3-console-account-summary">
+                <strong>{{ userLabel }}</strong>
+                <span>{{ userEmail }}</span>
+                <small>{{ accountRoleLabel }}</small>
+              </div>
+              <div class="scheme3-console-account-balance">
+                <div><span>可用余额</span><strong>{{ formatMoney(availableBalance) }}</strong></div>
+                <div v-if="frozenBalance > 0"><span>冻结金额</span><strong>{{ formatMoney(frozenBalance) }}</strong></div>
+                <div class="scheme3-console-account-total"><span>总余额</span><strong>{{ formatMoney(totalBalance) }}</strong></div>
+              </div>
+              <div class="scheme3-console-account-links">
+                <router-link to="/profile" role="menuitem" @click="closeAccountMenu"><Icon name="user" size="sm" />{{ t('nav.profile') }}</router-link>
+                <router-link to="/keys" role="menuitem" @click="closeAccountMenu"><Icon name="key" size="sm" />{{ t('nav.apiKeys') }}</router-link>
+                <button v-if="showOnboardingButton" type="button" role="menuitem" @click="handleReplayGuide"><Icon name="questionCircle" size="sm" />{{ t('onboarding.restartTour') }}</button>
+              </div>
+              <div v-if="contactInfo" class="scheme3-console-account-contact"><Icon name="chatBubble" size="sm" /><span>客服：{{ contactInfo }}</span></div>
+              <button type="button" class="scheme3-console-account-logout" role="menuitem" @click="logout"><Icon name="login" size="sm" />退出登录</button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -158,6 +196,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
+import VersionBadge from '@/components/common/VersionBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
@@ -221,6 +260,8 @@ const navCollapsed = ref(localStorage.getItem('scheme3-nav-collapsed') === '1')
 const isDarkMode = ref(document.documentElement.classList.contains('dark'))
 const expandedNavGroups = ref<Set<string>>(new Set())
 const sidebarNavRef = ref<HTMLElement | null>(null)
+const accountMenuRef = ref<HTMLElement | null>(null)
+const accountMenuOpen = ref(false)
 
 const user = computed(() => authStore.user)
 const homePath = computed(() => (adminMode.value ? '/admin/dashboard' : '/dashboard'))
@@ -232,6 +273,11 @@ const showOnboardingButton = computed(() => adminMode.value && !authStore.isSimp
 const siteName = computed(() => resolveDisplaySiteName(appStore.siteName))
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const docUrl = computed(() => sanitizeUrl(appStore.docUrl || ''))
+const avatarUrl = computed(() => sanitizeUrl(user.value?.avatar_url?.trim() || '', { allowRelative: true, allowDataUrl: true }))
+const contactInfo = computed(() => appStore.contactInfo || '')
+const availableBalance = computed(() => Number(user.value?.balance || 0))
+const frozenBalance = computed(() => Number(user.value?.frozen_balance || 0))
+const totalBalance = computed(() => availableBalance.value + frozenBalance.value)
 
 const pageTitle = computed(() => {
   if (route.name === 'CustomPage' || route.path.startsWith('/custom/')) {
@@ -246,6 +292,12 @@ const pageTitle = computed(() => {
   const titleKey = route.meta.titleKey as string | undefined
   if (titleKey) return t(titleKey)
   return (route.meta.title as string | undefined) || '控制台'
+})
+
+const pageDescription = computed(() => {
+  const descriptionKey = route.meta.descriptionKey as string | undefined
+  if (descriptionKey) return t(descriptionKey)
+  return (route.meta.description as string | undefined) || ''
 })
 
 const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
@@ -462,6 +514,14 @@ function toggleNavGroup(item: ConsoleNavItem) {
 
 function openMobileNav() { mobileNavOpen.value = true }
 function closeMobileNav() { mobileNavOpen.value = false }
+function toggleAccountMenu() { accountMenuOpen.value = !accountMenuOpen.value }
+function closeAccountMenu() { accountMenuOpen.value = false }
+function handleAccountMenuOutside(event: MouseEvent) {
+  if (accountMenuRef.value && !accountMenuRef.value.contains(event.target as Node)) closeAccountMenu()
+}
+function handleAccountMenuEscape(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeAccountMenu()
+}
 function toggleNavCollapse() {
   navCollapsed.value = !navCollapsed.value
   localStorage.setItem('scheme3-nav-collapsed', navCollapsed.value ? '1' : '0')
@@ -475,11 +535,15 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value)
 }
 async function logout() {
+  closeAccountMenu()
   await authStore.logout().catch(() => undefined)
   await router.push('/login')
 }
 
-watch(() => route.fullPath, closeMobileNav)
+watch(() => route.fullPath, () => {
+  closeMobileNav()
+  closeAccountMenu()
+})
 watch(
   adminMode,
   (enabled) => {
@@ -498,9 +562,13 @@ onMounted(() => {
       if (sidebarNavRef.value) sidebarNavRef.value.scrollTop = appStore.sidebarScrollTop
     })
   }
+  document.addEventListener('click', handleAccountMenuOutside)
+  document.addEventListener('keydown', handleAccountMenuEscape)
 })
 onBeforeUnmount(() => {
   if (sidebarNavRef.value) appStore.sidebarScrollTop = sidebarNavRef.value.scrollTop
+  document.removeEventListener('click', handleAccountMenuOutside)
+  document.removeEventListener('keydown', handleAccountMenuEscape)
   document.body.classList.remove(adminMode.value ? 'scheme3-admin-context' : 'scheme3-user-context')
 })
 </script>
@@ -538,6 +606,12 @@ onBeforeUnmount(() => {
 .scheme3-console-brand-copy { min-width: 0; }
 .scheme3-console-brand-copy strong { display: block; overflow: hidden; color: var(--scheme3-ink); font-size: .76rem; font-weight: 800; letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
 .scheme3-console-brand-copy span { display: block; margin-top: .18rem; color: var(--scheme3-muted); font-size: .62rem; }
+.scheme3-console-version-control { min-width: 0; flex-shrink: 0; }
+.scheme3-console-version-control > span { color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; font-weight: 800; }
+.scheme3-console-version-control > button { display: inline-flex; min-height: 1.55rem; align-items: center; gap: .3rem; border: 1px solid var(--scheme3-line); border-radius: 5px; padding: .22rem .38rem; background: transparent; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; font-weight: 800; }
+.scheme3-console-version-control > button:hover { border-color: #1e5c42; background: rgba(30,92,66,.08); color: #1e5c42; }
+.scheme3-console-version-control :deep(.scheme3-version-dropdown) { top: calc(100% + .5rem); left: auto; right: 0; z-index: 90; border: 1px solid var(--scheme3-line); border-radius: 7px; background: var(--scheme3-card); box-shadow: 0 1rem 2.5rem rgba(54,48,34,.16); }
+.scheme3-console-version-control :deep(.scheme3-version-dropdown button) { border-radius: 5px; }
 .scheme3-console-close { display: none; margin-left: auto; border: 0; background: transparent; color: var(--scheme3-muted); }
 .scheme3-console-caption { padding: 1.2rem 1rem .5rem; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .58rem; font-weight: 700; letter-spacing: .16em; }
 .scheme3-console-links { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: .8rem; overflow-y: auto; padding: 0 .65rem .9rem; }
@@ -563,7 +637,8 @@ onBeforeUnmount(() => {
 .scheme3-console-foot { margin-top: auto; border-top: 1px solid var(--scheme3-line); padding: .8rem .65rem; }
 .scheme3-console-account { display: flex; min-width: 0; align-items: center; gap: .55rem; border-radius: 7px; padding: .45rem; color: inherit; text-decoration: none; }
 .scheme3-console-account:hover { background: rgba(255,255,255,.72); }
-.scheme3-console-avatar { display: inline-flex; width: 1.85rem; height: 1.85rem; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 7px; background: #16150f; color: #f4f2ec; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .6rem; font-weight: 800; }
+.scheme3-console-avatar { display: inline-flex; width: 1.85rem; height: 1.85rem; flex-shrink: 0; align-items: center; justify-content: center; overflow: hidden; border-radius: 7px; background: #16150f; color: #f4f2ec; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .6rem; font-weight: 800; }
+.scheme3-console-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .scheme3-console-account-copy { min-width: 0; }
 .scheme3-console-account-copy strong { display: block; overflow: hidden; color: var(--scheme3-ink); font-size: .67rem; text-overflow: ellipsis; white-space: nowrap; }
 .scheme3-console-account-copy span { display: block; overflow: hidden; margin-top: .12rem; color: var(--scheme3-muted); font-size: .56rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -581,10 +656,31 @@ onBeforeUnmount(() => {
 .scheme3-console-balance,.scheme3-console-status { display: inline-flex; align-items: center; gap: .28rem; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .61rem; white-space: nowrap; }
 .scheme3-console-balance { color: #b7791f; }
 .scheme3-console-status i { width: .36rem; height: .36rem; border-radius: 999px; background: #1e5c42; box-shadow: 0 0 0 .2rem rgba(30,92,66,.13); }
-.scheme3-console-user { display: inline-flex; min-width: 0; align-items: center; gap: .45rem; color: var(--scheme3-ink); font-size: .67rem; font-weight: 700; text-decoration: none; }
+.scheme3-console-topbar-left small { display: block; margin-top: .18rem; max-width: 34rem; overflow: hidden; color: var(--scheme3-muted); font-size: .58rem; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-console-account-menu { position: relative; min-width: 0; }
+.scheme3-console-user { display: inline-flex; min-width: 0; align-items: center; gap: .45rem; border: 1px solid transparent; border-radius: 7px; padding: .18rem .3rem; background: transparent; color: var(--scheme3-ink); font-size: .67rem; font-weight: 700; text-decoration: none; cursor: pointer; }
+.scheme3-console-user:hover,.scheme3-console-user[aria-expanded="true"] { border-color: var(--scheme3-line); background: rgba(255,255,255,.72); }
 .scheme3-console-user-copy { display: grid; min-width: 0; gap: .08rem; }
 .scheme3-console-user-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scheme3-console-user-copy small { color: var(--scheme3-muted); font-size: .52rem; font-weight: 700; }
+.scheme3-console-user-chevron { flex-shrink: 0; color: var(--scheme3-muted); transition: transform 160ms ease; }
+.scheme3-console-user-chevron.is-open { transform: rotate(180deg); }
+.scheme3-console-account-popover { position: absolute; top: calc(100% + .55rem); right: 0; z-index: 80; width: min(17rem, calc(100vw - 1.3rem)); overflow: hidden; border: 1px solid var(--scheme3-line); background: var(--scheme3-card); box-shadow: 0 1rem 2.5rem rgba(54,48,34,.16); }
+.scheme3-console-account-summary { display: grid; gap: .18rem; border-bottom: 1px solid var(--scheme3-line); padding: .85rem 1rem .75rem; }
+.scheme3-console-account-summary strong { overflow: hidden; color: var(--scheme3-ink); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-console-account-summary span,.scheme3-console-account-summary small { overflow: hidden; color: var(--scheme3-muted); font-size: .6rem; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-console-account-summary small { color: #1e5c42; font-weight: 800; }
+.scheme3-console-account-balance { display: grid; gap: .38rem; border-bottom: 1px solid var(--scheme3-line); padding: .7rem 1rem; color: var(--scheme3-muted); font-size: .61rem; }
+.scheme3-console-account-balance div { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+.scheme3-console-account-balance strong { color: var(--scheme3-ink); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .65rem; }
+.scheme3-console-account-total { border-top: 1px solid var(--scheme3-line); padding-top: .4rem; }
+.scheme3-console-account-links { display: grid; gap: .16rem; padding: .55rem; }
+.scheme3-console-account-links a,.scheme3-console-account-links button,.scheme3-console-account-logout { display: flex; width: 100%; min-height: 2.15rem; align-items: center; gap: .5rem; border: 0; padding: .42rem .5rem; background: transparent; color: var(--scheme3-muted); font-size: .66rem; font-weight: 700; text-align: left; text-decoration: none; cursor: pointer; }
+.scheme3-console-account-links a:hover,.scheme3-console-account-links button:hover { background: rgba(30,92,66,.08); color: var(--scheme3-ink); }
+.scheme3-console-account-contact { display: flex; align-items: center; gap: .45rem; border-top: 1px solid var(--scheme3-line); padding: .65rem 1rem; color: var(--scheme3-muted); font-size: .59rem; }
+.scheme3-console-account-contact span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheme3-console-account-logout { border-top: 1px solid var(--scheme3-line); padding: .65rem 1rem; color: #9e4d3d; }
+.scheme3-console-account-logout:hover { background: rgba(158,77,61,.08); color: #7d372d; }
 .scheme3-console-menu-button { display: none; align-items: center; justify-content: center; border: 1px solid var(--scheme3-line); border-radius: 7px; padding: .45rem; background: var(--scheme3-card); color: var(--scheme3-ink); }
 .scheme3-console-overlay { display: none; }
 .scheme3-console-content { min-width: 0; padding: 1.15rem 1.35rem 1.6rem; }
@@ -663,6 +759,14 @@ onBeforeUnmount(() => {
 :global(.dark .scheme3-console-link:hover),:global(.dark .scheme3-console-action:hover) { background: rgba(143,194,165,.08); }
 :global(.dark .scheme3-console-brand-mark) { border-color: rgba(143,194,165,.38); background: #8fc2a5; color: #1b1b18; }
 :global(.dark .scheme3-console-avatar) { background: #f4f2ec; color: #1b1b18; }
+:global(.dark .scheme3-console-version-control > button) { border-color: #47443a; background: transparent; color: #aaa69a; }
+:global(.dark .scheme3-console-version-control > button:hover) { border-color: #8fc2a5; background: rgba(143,194,165,.1); color: #8fc2a5; }
+:global(.dark .scheme3-console-version-control .scheme3-version-dropdown) { border-color: #47443a; background: #24231f; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.34); }
+:global(.dark .scheme3-console-user:hover),:global(.dark .scheme3-console-user[aria-expanded="true"]) { border-color: #47443a; background: rgba(143,194,165,.08); }
+:global(.dark .scheme3-console-account-popover) { background: #24231f; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.34); }
+:global(.dark .scheme3-console-account-summary small) { color: #8fc2a5; }
+:global(.dark .scheme3-console-account-links a:hover),:global(.dark .scheme3-console-account-links button:hover) { background: rgba(143,194,165,.1); color: #f4f2ec; }
+:global(.dark .scheme3-console-account-logout:hover) { background: rgba(238,149,129,.1); color: #ee9581; }
 :global(.dark .scheme3-console-link-active) { border-color: rgba(143,194,165,.3); background: rgba(143,194,165,.1); color: #8fc2a5; box-shadow: inset 3px 0 0 #8fc2a5; }
 :global(.dark .scheme3-console-current) { background: rgba(143,194,165,.12); color: #8fc2a5; }
 :global(.dark .scheme3-console-page-frame :deep(.card)),:global(.dark .scheme3-console-page-frame :deep(.bg-white)) { background-color: var(--scheme3-card); }
@@ -1606,7 +1710,7 @@ onBeforeUnmount(() => {
   color: #f4f2ec !important;
 }
 
-.scheme3-console-layout-collapsed .scheme3-console-brand-copy,.scheme3-console-layout-collapsed .scheme3-console-caption,.scheme3-console-layout-collapsed .scheme3-console-section-label,.scheme3-console-layout-collapsed .scheme3-console-link-text,.scheme3-console-layout-collapsed .scheme3-console-current,.scheme3-console-layout-collapsed .scheme3-console-account-copy,.scheme3-console-layout-collapsed .scheme3-console-action span { display: none; }
+.scheme3-console-layout-collapsed .scheme3-console-brand-copy,.scheme3-console-layout-collapsed .scheme3-console-version-control,.scheme3-console-layout-collapsed .scheme3-console-caption,.scheme3-console-layout-collapsed .scheme3-console-section-label,.scheme3-console-layout-collapsed .scheme3-console-link-text,.scheme3-console-layout-collapsed .scheme3-console-current,.scheme3-console-layout-collapsed .scheme3-console-account-copy,.scheme3-console-layout-collapsed .scheme3-console-action span { display: none; }
 .scheme3-console-layout-collapsed .scheme3-console-brand,.scheme3-console-layout-collapsed .scheme3-console-account { justify-content: center; }
 .scheme3-console-layout-collapsed .scheme3-console-link,.scheme3-console-layout-collapsed .scheme3-console-action { justify-content: center; padding-right: .4rem; padding-left: .4rem; }
 
@@ -1624,6 +1728,7 @@ onBeforeUnmount(() => {
   .scheme3-console-topbar { min-height: 3.85rem; padding: .65rem; }
   .scheme3-console-topbar-kicker { font-size: .49rem; }
   .scheme3-console-topbar-left strong { font-size: 1rem; }
+  .scheme3-console-topbar-left small { display: none; }
   .scheme3-console-topbar-right { gap: .45rem; }
   .scheme3-console-doc-link,
   .scheme3-console-topbar-right .scheme3-console-subscription,
@@ -1631,6 +1736,7 @@ onBeforeUnmount(() => {
   .scheme3-console-topbar-right .scheme3-console-locale-tool { display: none; }
   .scheme3-console-balance { display: none; }
   .scheme3-console-user-copy { display: none; }
+  .scheme3-console-account-popover { right: -.2rem; }
   :global(body.scheme3-user-context .scheme3-toast) { min-width: 0 !important; width: calc(100vw - 2rem); }
 }
 </style>

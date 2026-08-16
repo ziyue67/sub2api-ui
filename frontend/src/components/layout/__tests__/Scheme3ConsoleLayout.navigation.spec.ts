@@ -160,6 +160,7 @@ async function mountLayout(options: {
         AnnouncementBell: true,
         LocaleSwitcher: true,
         SubscriptionProgressMini: true,
+        VersionBadge: true,
         Icon: { template: '<i />' },
       },
     },
