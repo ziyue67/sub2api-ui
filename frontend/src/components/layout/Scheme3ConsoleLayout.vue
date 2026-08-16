@@ -2,7 +2,7 @@
   <div
     class="scheme3-console-layout"
     :class="{
-      'scheme3-console-layout-collapsed': navCollapsed,
+      'scheme3-console-layout-collapsed': sidebarCollapsed,
       'scheme3-console-layout-admin': adminMode,
     }"
   >
@@ -33,17 +33,17 @@
               class="scheme3-console-link scheme3-console-group"
               :class="{
                 'scheme3-console-link-active': isGroupActive(item) && !isGroupExpanded(item),
-                'scheme3-console-link-collapsed': navCollapsed,
+                'scheme3-console-link-collapsed': sidebarCollapsed,
               }"
-              :title="navCollapsed ? item.label : undefined"
+              :title="sidebarCollapsed ? item.label : undefined"
               @click="toggleNavGroup(item)"
             >
               <span v-if="item.iconSvg" class="scheme3-console-link-icon scheme3-console-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
               <span v-else class="scheme3-console-link-icon"><Icon :name="item.icon" size="sm" /></span>
-              <span class="scheme3-console-link-text" :aria-hidden="navCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-              <Icon v-if="!navCollapsed" name="chevronDown" size="xs" class="scheme3-console-group-chevron" :class="{ 'is-expanded': isGroupExpanded(item) }" />
+              <span class="scheme3-console-link-text" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              <Icon v-if="!sidebarCollapsed" name="chevronDown" size="xs" class="scheme3-console-group-chevron" :class="{ 'is-expanded': isGroupExpanded(item) }" />
             </button>
-            <div v-if="item.children?.length && !navCollapsed && isGroupExpanded(item)" class="scheme3-console-subnav">
+            <div v-if="item.children?.length && !sidebarCollapsed && isGroupExpanded(item)" class="scheme3-console-subnav">
               <router-link
                 v-for="child in item.children"
                 :key="child.path"
@@ -62,15 +62,15 @@
               v-else-if="!item.children?.length"
               :to="{ path: item.path, query: item.query }"
               class="scheme3-console-link"
-              :class="{ 'scheme3-console-link-active': isNavActive(item.path), 'scheme3-console-link-collapsed': navCollapsed }"
-              :title="navCollapsed ? item.label : undefined"
+              :class="{ 'scheme3-console-link-active': isNavActive(item.path), 'scheme3-console-link-collapsed': sidebarCollapsed }"
+              :title="sidebarCollapsed ? item.label : undefined"
               :id="navTourId(item.path)"
               :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
               @click="handleNavItemClick(item.path)"
             >
               <span v-if="item.iconSvg" class="scheme3-console-link-icon scheme3-console-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
               <span v-else class="scheme3-console-link-icon"><Icon :name="item.icon" size="sm" /></span>
-              <span class="scheme3-console-link-text" :aria-hidden="navCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              <span class="scheme3-console-link-text" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
               <span v-if="isNavActive(item.path)" class="scheme3-console-current">当前</span>
             </router-link>
           </template>
@@ -92,9 +92,9 @@
           <Icon :name="isDarkMode ? 'sun' : 'moon'" size="sm" />
           <span>{{ isDarkMode ? '切换浅色' : '切换深色' }}</span>
         </button>
-        <button type="button" class="scheme3-console-action" @click="toggleNavCollapse">
-          <Icon :name="navCollapsed ? 'chevronRight' : 'chevronLeft'" size="sm" />
-          <span>{{ navCollapsed ? '展开导航' : '收起导航' }}</span>
+        <button v-if="isDesktopNavigation" type="button" class="scheme3-console-action" @click="toggleNavCollapse">
+          <Icon :name="sidebarCollapsed ? 'chevronRight' : 'chevronLeft'" size="sm" />
+          <span>{{ sidebarCollapsed ? '展开导航' : '收起导航' }}</span>
         </button>
         <button
           v-if="showOnboardingButton"
@@ -202,6 +202,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
@@ -268,6 +269,8 @@ const onboardingStore = useOnboardingStore()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const mobileNavOpen = ref(false)
 const navCollapsed = ref(localStorage.getItem('scheme3-nav-collapsed') === '1')
+const isDesktopNavigation = useMediaQuery('(min-width: 1024px)')
+const sidebarCollapsed = computed(() => navCollapsed.value && isDesktopNavigation.value)
 const isDarkMode = ref(document.documentElement.classList.contains('dark'))
 const expandedNavGroups = ref<Set<string>>(new Set())
 const sidebarNavRef = ref<HTMLElement | null>(null)
@@ -513,7 +516,7 @@ function isGroupExpanded(item: ConsoleNavItem): boolean {
 }
 
 function toggleNavGroup(item: ConsoleNavItem) {
-  if (navCollapsed.value) return
+  if (sidebarCollapsed.value) return
   if (!item.expandOnly) {
     if (route.path !== item.path) void router.push({ path: item.path, query: item.query })
     const next = new Set(expandedNavGroups.value)

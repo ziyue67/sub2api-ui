@@ -109,7 +109,7 @@
           </span>
         </div>
 
-        <div class="lb-table-wrap">
+        <div class="lb-table-wrap" tabindex="0">
           <table class="lb-table">
             <thead>
               <tr>
@@ -732,11 +732,17 @@ onBeforeUnmount(() => {
 }
 
 .lb-table-wrap {
-  overflow-x: auto;
+  max-height: min(70dvh, 44rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(100, 116, 139, 0.8) rgba(148, 163, 184, 0.2);
 }
 
 .lb-table {
   width: 100%;
+  min-width: 68rem;
   border-collapse: collapse;
   font-size: 0.88rem;
 }
@@ -750,6 +756,10 @@ onBeforeUnmount(() => {
 }
 
 .lb-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--lb-bg);
   color: var(--lb-muted);
   font-weight: 600;
   font-size: 0.78rem;
@@ -813,12 +823,26 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-@media (max-width: 640px) {
-  .lb-hide-sm {
-    display: none;
-  }
+.lb-table-wrap::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
 
-  .lb-header {
+.lb-table-wrap::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+}
+
+.lb-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.82);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+@media (max-width: 640px) {
+  .lb-header,
+  .lb-toolbar {
     flex-direction: column;
     align-items: stretch;
   }
@@ -831,5 +855,19 @@ onBeforeUnmount(() => {
   .lb-header-controls { align-items: stretch; }
   .lb-header-controls > .lb-toolbar-group { flex: 1 1 100%; }
   .lb-title { font-size: 1.5rem; }
+
+  .lb-card {
+    padding: 0.875rem;
+  }
+
+  .lb-board-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .lb-table-wrap {
+    max-height: calc(100dvh - 18rem);
+  }
 }
 </style>

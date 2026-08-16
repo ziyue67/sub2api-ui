@@ -407,6 +407,34 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
     wrapper.unmount()
   })
 
+  it('ignores the persisted desktop collapse preference in the mobile navigation drawer', async () => {
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+    localStorage.setItem('scheme3-nav-collapsed', '1')
+    const { wrapper } = await mountLayout({ admin: true })
+
+    expect(wrapper.classes()).not.toContain('scheme3-console-layout-collapsed')
+    expect(wrapper.find('.scheme3-console-link-text').attributes('aria-hidden')).toBe('false')
+    expect(wrapper.findAll('.scheme3-console-action').some((button) => button.text().includes('导航'))).toBe(false)
+
+    const firstGroup = wrapper.find('.scheme3-console-group')
+    await firstGroup.trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.scheme3-console-subnav').exists()).toBe(true)
+    expect(localStorage.getItem('scheme3-nav-collapsed')).toBe('1')
+    wrapper.unmount()
+    matchMedia.mockRestore()
+  })
+
   it('marks only the exact order child active while keeping its parent expanded', async () => {
     const { wrapper } = await mountLayout({ admin: true, route: '/admin/orders/plans' })
 

@@ -44,83 +44,96 @@
         <span>没有可展示的模型</span>
       </div>
 
-      <div v-else class="scheme3-model-square-grid">
-        <article v-for="model in filteredModels" :key="model.key" class="scheme3-model-square-card">
-          <header class="scheme3-model-square-card-header">
-            <div>
-              <h2>{{ model.name }}</h2>
-              <span>{{ model.platform }}</span>
-            </div>
-            <div class="scheme3-model-square-card-count">
-              {{ channelCount(model) }} {{ t('modelPlaza.detail.channelCount', channelCount(model)) }}
-            </div>
-          </header>
-
-          <div class="scheme3-model-square-card-body">
-            <section v-for="channel in model.channels" :key="channel.key" class="scheme3-model-square-channel">
-              <div class="scheme3-model-square-channel-meta">
-                <span>渠道</span>
-                <strong>{{ channel.name }}</strong>
-                <span>分组</span>
-                <div class="scheme3-model-square-groups">
-                  <GroupBadge
-                    v-for="entry in channel.entries"
-                    :key="entryKey(entry)"
-                    :name="entry.group.name"
-                    :platform="entry.group.platform as GroupPlatform"
-                    :subscription-type="entry.group.subscription_type as SubscriptionType"
-                    :rate-multiplier="entry.group.rate_multiplier"
-                    :user-rate-multiplier="userGroupRates[entry.group.id] ?? null"
-                    :peak-rate-enabled="entry.group.peak_rate_enabled"
-                    :peak-start="entry.group.peak_start"
-                    :peak-end="entry.group.peak_end"
-                    :peak-rate-multiplier="entry.group.peak_rate_multiplier"
-                    always-show-rate
-                    class="model-square-group-badge"
-                  />
-                </div>
+      <div v-else class="scheme3-model-square-scroll-region" tabindex="0">
+        <div class="scheme3-model-square-grid scheme3-model-square-scroll-content">
+          <article v-for="model in filteredModels" :key="model.key" class="scheme3-model-square-card">
+            <header class="scheme3-model-square-card-header">
+              <div>
+                <h2>{{ model.name }}</h2>
+                <span>{{ model.platform }}</span>
               </div>
+              <div class="scheme3-model-square-card-count">
+                {{ channelCount(model) }} {{ t('modelPlaza.detail.channelCount', channelCount(model)) }}
+              </div>
+            </header>
 
-              <div class="scheme3-model-square-pricing">
-                <div class="scheme3-model-square-pricing-header">
-                   <h3>渠道基础定价</h3>
-                   <span>
-                     {{ billingModeLabel(channel.pricing) }}
-                   </span>
+            <div class="scheme3-model-square-card-body">
+              <section v-for="channel in model.channels" :key="channel.key" class="scheme3-model-square-channel">
+                <div class="scheme3-model-square-channel-meta">
+                  <span>渠道</span>
+                  <strong>{{ channel.name }}</strong>
+                  <span>分组</span>
+                  <div class="scheme3-model-square-groups">
+                    <GroupBadge
+                      v-for="entry in channel.entries"
+                      :key="entryKey(entry)"
+                      :name="entry.group.name"
+                      :platform="entry.group.platform as GroupPlatform"
+                      :subscription-type="entry.group.subscription_type as SubscriptionType"
+                      :rate-multiplier="entry.group.rate_multiplier"
+                      :user-rate-multiplier="userGroupRates[entry.group.id] ?? null"
+                      :peak-rate-enabled="entry.group.peak_rate_enabled"
+                      :peak-start="entry.group.peak_start"
+                      :peak-end="entry.group.peak_end"
+                      :peak-rate-multiplier="entry.group.peak_rate_multiplier"
+                      always-show-rate
+                      class="model-square-group-badge"
+                    />
+                  </div>
                 </div>
 
-                <div class="scheme3-model-square-pricing-grid">
-                   <div v-for="item in fullPriceItems(channel.pricing)" :key="item.label">
+                <div class="scheme3-model-square-pricing">
+                  <div class="scheme3-model-square-pricing-header">
+                    <h3>渠道基础定价</h3>
+                    <span>
+                      {{ billingModeLabel(channel.pricing) }}
+                    </span>
+                  </div>
+
+                  <div class="scheme3-model-square-pricing-grid">
+                    <div v-for="item in fullPriceItems(channel.pricing)" :key="item.label">
                       <p>{{ item.label }}</p>
                       <strong>
                         {{ formatTokenPrice(item.value) }}
                       </strong>
-                   </div>
-                </div>
+                    </div>
+                  </div>
 
-                <div v-if="isRequestBilling(channel.pricing) || (channel.pricing?.intervals?.length)" class="scheme3-model-square-pricing-extra">
-                   <div v-if="isRequestBilling(channel.pricing)">
+                  <div v-if="isRequestBilling(channel.pricing) || (channel.pricing?.intervals?.length)" class="scheme3-model-square-pricing-extra">
+                    <div v-if="isRequestBilling(channel.pricing)">
                       <p>{{ channel.pricing?.billing_mode === 'image' ? '每张价格' : '每次价格' }}</p>
                       <strong>
                         {{ formatRequestPrice(channel.pricing?.per_request_price, channel.pricing?.billing_mode) }}
                       </strong>
-                   </div>
-                   <div v-if="channel.pricing?.intervals?.length" class="scheme3-model-square-tier-note">
+                    </div>
+                    <div v-if="channel.pricing?.intervals?.length" class="scheme3-model-square-tier-note">
                       <Icon name="shield" size="xs" />
                       <span>已配置 {{ channel.pricing.intervals.length }} 档阶梯价格</span>
-                   </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </section>
-          </div>
-        </article>
+              </section>
+            </div>
+          </article>
+        </div>
       </div>
+
+      <button
+        v-show="showBackToTop"
+        type="button"
+        class="scheme3-model-square-back-to-top"
+        aria-label="返回顶部"
+        title="返回顶部"
+        @click="scrollToTop"
+      >
+        <Icon name="arrowUp" size="sm" />
+      </button>
     </section>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
@@ -154,6 +167,7 @@ const search = ref('')
 const platform = ref('all')
 const models = ref<ModelSquareEntry[]>([])
 const userGroupRates = ref<Record<number, number>>({})
+const showBackToTop = ref(false)
 
 const platforms = computed(() => ['all', ...Array.from(new Set(models.value.map((item) => item.platform))).sort()])
 const modelGroups = computed<ModelSquareModel[]>(() => {
@@ -252,7 +266,23 @@ async function loadModels() {
   }
 }
 
-onMounted(loadModels)
+function onScroll() {
+  showBackToTop.value = (window.scrollY || document.documentElement.scrollTop) > 300
+}
+
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+onMounted(() => {
+  void loadModels()
+  onScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onScroll)
+})
 </script>
 
 <style scoped>
@@ -274,12 +304,15 @@ onMounted(loadModels)
 .scheme3-model-square-note { display: flex; align-items: flex-start; gap: .45rem; margin-bottom: 1.15rem; border-left: 3px solid #b7791f; padding: .52rem .7rem; background: rgba(183,121,31,.08); color: #765213; font-size: .7rem; line-height: 1.55; }
 .scheme3-model-square-note svg { flex: 0 0 auto; margin-top: .15rem; }
 .scheme3-model-square-state { display: flex; min-height: 19rem; align-items: center; justify-content: center; }.scheme3-model-square-spinner { width: 1.85rem; height: 1.85rem; border: 2px solid rgba(30,92,66,.18); border-top-color: #1e5c42; border-radius: 50%; animation: square-spin .7s linear infinite; }.scheme3-model-square-empty { flex-direction: column; gap: .6rem; border: 1px dashed var(--square-line); color: var(--square-muted); font-size: .75rem; }.scheme3-model-square-empty svg { color: #b7791f; }
+.scheme3-model-square-scroll-region { min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; }
+.scheme3-model-square-scroll-content { min-width: 75rem; padding: .125rem .25rem 1rem; }
 .scheme3-model-square-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
 .scheme3-model-square-card { overflow: hidden; border: 1px solid var(--square-line); border-radius: 8px; background: var(--square-card); box-shadow: 0 9px 20px rgba(54,48,34,.05); }
 .scheme3-model-square-card-header { display: flex; align-items: start; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--square-line); padding: 1rem 1.05rem .85rem; background: #f8f6ef; }.scheme3-model-square-card-header h2 { overflow: hidden; margin: 0; color: var(--square-ink); font-family: Georgia,'Times New Roman',serif; font-size: 1.04rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }.scheme3-model-square-card-header span,.scheme3-model-square-card-count { display: block; margin-top: .35rem; color: var(--square-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .56rem; font-weight: 700; letter-spacing: .05em; }.scheme3-model-square-card-count { flex: 0 0 auto; text-align: right; }
 .scheme3-model-square-channel { padding: 1rem 1.05rem; border-bottom: 1px solid var(--square-line); }.scheme3-model-square-channel:last-child { border-bottom: 0; }.scheme3-model-square-channel-meta { display: grid; grid-template-columns: 2.65rem minmax(0,1fr); gap: .46rem .68rem; align-items: start; }.scheme3-model-square-channel-meta > span { padding-top: .13rem; color: var(--square-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .56rem; font-weight: 800; letter-spacing: .05em; }.scheme3-model-square-channel-meta > strong { overflow-wrap: anywhere; font-size: .74rem; }
 .scheme3-model-square-groups { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 0; }.model-square-group-badge { max-width: 100%; transition: transform 150ms ease; }.model-square-group-badge:hover { transform: translateY(-1px); }
 .scheme3-model-square-pricing { margin-top: .85rem; border: 1px solid var(--square-line); border-radius: 6px; padding: .75rem; background: rgba(244,242,236,.62); }.scheme3-model-square-pricing-header { display: flex; justify-content: space-between; gap: .8rem; margin-bottom: .7rem; }.scheme3-model-square-pricing h3 { margin: 0; font-size: .64rem; font-weight: 800; }.scheme3-model-square-pricing-header span { color: var(--square-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; }.scheme3-model-square-pricing-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .7rem .5rem; }.scheme3-model-square-pricing-grid p,.scheme3-model-square-pricing-extra p { margin: 0 0 .18rem; color: var(--square-muted); font-size: .55rem; }.scheme3-model-square-pricing-grid strong,.scheme3-model-square-pricing-extra strong { overflow-wrap: anywhere; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .65rem; }.scheme3-model-square-pricing-extra { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; margin-top: .8rem; border-top: 1px solid var(--square-line); padding-top: .7rem; }.scheme3-model-square-pricing-extra > div:first-child strong { color: #1e5c42; }.scheme3-model-square-tier-note { display: inline-flex; align-items: center; gap: .28rem; border: 1px solid rgba(183,121,31,.28); border-radius: 4px; padding: .25rem .4rem; background: rgba(183,121,31,.08); color: #765213; font-size: .56rem; font-weight: 800; }
+.scheme3-model-square-back-to-top { position: fixed; right: 1.25rem; bottom: calc(1.25rem + env(safe-area-inset-bottom)); z-index: 40; display: inline-flex; width: 2.6rem; height: 2.6rem; align-items: center; justify-content: center; border: 1px solid rgba(30,92,66,.45); border-radius: 6px; background: #1e5c42; color: #f4f2ec; box-shadow: 0 8px 18px rgba(22,21,15,.16); transition: background-color 150ms ease,transform 150ms ease,opacity 150ms ease; }.scheme3-model-square-back-to-top:hover { background: #174a35; }.scheme3-model-square-back-to-top:active { transform: scale(.96); }.scheme3-model-square-back-to-top:focus-visible { outline: 3px solid rgba(30,92,66,.22); outline-offset: 2px; }
 @keyframes square-spin { to { transform: rotate(360deg); } }
 :global(html.dark) .scheme3-model-square-card,
 :global(html.dark) .scheme3-model-square-search,
@@ -316,6 +349,8 @@ onMounted(loadModels)
   color: #e8c878;
 }
 :global(html.dark .scheme3-model-square-note) { color: #e8c878; background: rgba(183,121,31,.11); }
+:global(html.dark .scheme3-model-square-back-to-top) { border-color: #8fc2a5; background: #8fc2a5; color: #16150f; }
+:global(html.dark .scheme3-model-square-back-to-top:hover) { background: #a7d0b8; }
 @media (max-width: 900px) { .scheme3-model-square-grid { grid-template-columns: 1fr; } }
-@media (max-width: 640px) { .scheme3-model-square-header { align-items: stretch; flex-direction: column; }.scheme3-model-square-tools,.scheme3-model-square-search { width: 100%; }.scheme3-model-square-refresh { flex: 0 0 auto; }.scheme3-model-square-pricing-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.scheme3-model-square-card-header,.scheme3-model-square-channel { padding-right: .8rem; padding-left: .8rem; }.scheme3-model-square-card-count { max-width: 5.5rem; }.scheme3-model-square-note { font-size: .65rem; } }
+@media (max-width: 640px) { .scheme3-model-square-header { align-items: stretch; flex-direction: column; }.scheme3-model-square-tools,.scheme3-model-square-search { width: 100%; }.scheme3-model-square-refresh { flex: 0 0 auto; }.scheme3-model-square-scroll-content { min-width: 37.5rem; }.scheme3-model-square-pricing-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.scheme3-model-square-card-header,.scheme3-model-square-channel { padding-right: .8rem; padding-left: .8rem; }.scheme3-model-square-card-count { max-width: 5.5rem; }.scheme3-model-square-note { font-size: .65rem; }.scheme3-model-square-back-to-top { right: .8rem; bottom: calc(.8rem + env(safe-area-inset-bottom)); } }
 </style>

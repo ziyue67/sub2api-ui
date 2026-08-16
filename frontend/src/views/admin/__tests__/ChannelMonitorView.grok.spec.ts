@@ -101,7 +101,9 @@ describe('channel monitor Grok provider', () => {
     expect(grokButton.find('svg').exists()).toBe(true)
     expect(grokButton.text()).toContain('monitorCommon.providers.grok')
     await grokButton.trigger('click')
-    expect(grokButton.classes().join(' ')).toContain('zinc')
+    expect(grokButton.classes()).toContain('scheme3-monitor-choice')
+    expect(grokButton.classes()).toContain('is-active')
+    expect(grokButton.attributes('aria-pressed')).toBe('true')
 
     const endpoint = wrapper.get('[data-testid="monitor-endpoint"]')
     const model = wrapper.get('[data-testid="monitor-primary-model"]')

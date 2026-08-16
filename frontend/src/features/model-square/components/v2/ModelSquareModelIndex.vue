@@ -2,14 +2,14 @@
   <aside
     ref='indexRef'
     tabindex='0'
-    class='hidden lg:flex sticky top-8 h-fit max-h-[calc(100vh-4rem)] w-full flex-col overflow-hidden rounded-3xl border border-gray-200 dark:border-dark-700/60 bg-white/80 dark:bg-dark-900/60 backdrop-blur-xl shadow-2xl shadow-black/10 dark:shadow-black/20 focus:outline-none focus:ring-2 focus:ring-indigo-500/30'
+    class='hidden lg:flex h-fit w-full flex-col rounded-3xl border border-gray-200 dark:border-dark-700/60 bg-white/80 dark:bg-dark-900/60 backdrop-blur-xl shadow-2xl shadow-black/10 dark:shadow-black/20 focus:outline-none focus:ring-2 focus:ring-indigo-500/30'
     @keydown='onKeydown'
   >
     <div class='px-5 py-4 border-b border-white/10 dark:border-dark-700/60'>
       <h2 class='text-sm font-black uppercase tracking-[0.25em] text-gray-500 dark:text-dark-400'>模型索引</h2>
       <p class='mt-1 text-sm text-gray-600 dark:text-dark-400'>↑↓ 选择 · Enter 跳转 · 共 {{ models.length }} 个</p>
     </div>
-    <div class='overflow-y-auto p-3 space-y-1 no-scrollbar'>
+    <div class='p-3 space-y-1'>
       <template v-for='group in groupedModels' :key='group.platform'>
         <div class='px-3 pt-4 pb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-gray-500 dark:text-dark-500'>
           <PlatformIcon :platform='group.platform' size='sm' />
