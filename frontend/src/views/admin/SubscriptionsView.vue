@@ -173,6 +173,7 @@
           :columns="columns"
           :data="subscriptions"
           :loading="loading"
+          scheme3
           :server-side-sort="true"
           default-sort-key="created_at"
           default-sort-order="desc"
@@ -202,6 +203,7 @@
           <template #cell-group="{ row }">
             <GroupBadge
               v-if="row.group"
+              scheme3
               :name="row.group.name"
               :platform="row.group.platform"
               :subscription-type="row.group.subscription_type"
@@ -515,6 +517,7 @@
             <template #selected="{ option }">
               <GroupBadge
                 v-if="option"
+                scheme3
                 :name="(option as unknown as GroupOption).label"
                 :platform="(option as unknown as GroupOption).platform"
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
@@ -788,6 +791,7 @@ import {
   isOneTimeDailyQuota,
   type RemainingDurationParts
 } from '@/utils/subscriptionQuota'
+import { GROUP_PLATFORM_OPTIONS } from '@/constants/platforms'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -996,10 +1000,7 @@ const groupOptions = computed(() => [
 
 const platformFilterOptions = computed(() => [
   { value: '', label: t('admin.subscriptions.allPlatforms') },
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'gemini', label: 'Gemini' },
-  { value: 'antigravity', label: 'Antigravity' }
+  ...GROUP_PLATFORM_OPTIONS
 ])
 
 // Group options for assign (only subscription type groups)

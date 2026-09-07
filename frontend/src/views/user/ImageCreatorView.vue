@@ -1,18 +1,33 @@
 <template>
   <AppLayout>
-    <div class="grid min-h-[calc(100vh-7rem)] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
-      <section class="card flex min-h-0 flex-col overflow-hidden">
-        <div class="border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+    <section class="scheme3-image-creator">
+      <header class="scheme3-image-creator-header">
+        <div>
+          <p class="scheme3-image-creator-kicker">绘图工作站 / 创作画布</p>
+          <h1>{{ t('imageCreator.title') }}</h1>
+          <p class="scheme3-image-creator-subtitle">{{ t('imageCreator.subtitle') }}</p>
+        </div>
+        <div class="scheme3-image-creator-ledger" aria-label="本次创作设置">
+          <span><strong>{{ model }}</strong><small>当前模型</small></span>
+          <span><strong>{{ size === 'auto' ? '自动' : size }}</strong><small>画面规格</small></span>
+          <span><strong>{{ count }}</strong><small>生成数量</small></span>
+          <span><strong>{{ results.length }}</strong><small>本地结果</small></span>
+        </div>
+      </header>
+
+      <div class="scheme3-image-creator-workspace grid min-h-[calc(100vh-12rem)] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <section class="scheme3-image-creator-panel scheme3-image-creator-form-panel flex min-h-0 flex-col overflow-hidden">
+        <div class="scheme3-image-creator-panel-header border-b border-gray-100 px-5 py-4 dark:border-dark-700">
           <div class="flex items-center gap-2">
-            <h1 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('imageCreator.title') }}</h1>
-            <span class="rounded bg-primary-100 px-1.5 py-0.5 text-[11px] font-semibold text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">
-              Beta
+            <h2 class="scheme3-image-creator-panel-title text-lg font-semibold text-gray-900 dark:text-white">创作参数</h2>
+            <span class="scheme3-image-creator-beta rounded bg-primary-100 px-1.5 py-0.5 text-[11px] font-semibold text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">
+              测试版
             </span>
           </div>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-300">{{ t('imageCreator.subtitle') }}</p>
+          <p class="scheme3-image-creator-panel-copy mt-1 text-sm text-gray-500 dark:text-dark-300">调整模型、提示词与输出规格。</p>
         </div>
 
-        <div class="custom-scrollbar flex-1 space-y-4 overflow-y-auto p-5">
+        <div class="scheme3-image-creator-form-scroll custom-scrollbar flex-1 space-y-4 overflow-y-auto p-5">
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
             <div>
               <div class="mb-1.5 flex items-center justify-between gap-2">
@@ -109,7 +124,7 @@
               </button>
             </div>
             <label
-              class="flex min-h-[96px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-4 text-center transition-colors hover:border-primary-400 hover:bg-primary-50/40 dark:border-dark-600 dark:bg-dark-900/60 dark:hover:border-primary-500 dark:hover:bg-primary-900/10"
+              class="scheme3-image-creator-reference-dropzone flex min-h-[96px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-4 text-center transition-colors hover:border-primary-400 hover:bg-primary-50/40 dark:border-dark-600 dark:bg-dark-900/60 dark:hover:border-primary-500 dark:hover:bg-primary-900/10"
             >
               <input type="file" class="hidden" accept="image/png,image/jpeg,image/webp" @change="onReferenceImageChange" />
               <img
@@ -127,10 +142,10 @@
           </div>
         </div>
 
-        <div class="border-t border-gray-100 p-4 dark:border-dark-700">
+        <div class="scheme3-image-creator-action-bar border-t border-gray-100 p-4 dark:border-dark-700">
           <button
             type="button"
-            class="btn btn-primary w-full justify-center"
+            class="scheme3-image-creator-generate btn btn-primary w-full justify-center"
             :disabled="!canGenerate"
             @click="handleGenerate"
           >
@@ -140,17 +155,17 @@
         </div>
       </section>
 
-      <section class="card flex min-h-0 flex-col overflow-hidden">
-        <div class="border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+      <section class="scheme3-image-creator-panel scheme3-image-creator-results-panel flex min-h-0 flex-col overflow-hidden">
+        <div class="scheme3-image-creator-panel-header border-b border-gray-100 px-5 py-4 dark:border-dark-700">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('imageCreator.results') }}</h2>
-              <p class="mt-1 text-sm text-gray-500 dark:text-dark-300">{{ t('imageCreator.resultsHint') }}</p>
+              <h2 class="scheme3-image-creator-panel-title text-lg font-semibold text-gray-900 dark:text-white">{{ t('imageCreator.results') }}</h2>
+              <p class="scheme3-image-creator-panel-copy mt-1 text-sm text-gray-500 dark:text-dark-300">{{ t('imageCreator.resultsHint') }}</p>
             </div>
             <button
               v-if="results.length > 0"
               type="button"
-              class="btn btn-secondary btn-sm"
+              class="scheme3-image-creator-clear btn btn-secondary btn-sm"
               @click="clearResults"
             >
               {{ t('common.clear') }}
@@ -158,15 +173,15 @@
           </div>
         </div>
 
-        <div class="border-b border-amber-100 bg-amber-50 px-5 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+        <div class="scheme3-image-creator-safety border-b border-amber-100 bg-amber-50 px-5 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
           <div class="flex gap-2">
             <Icon name="exclamationTriangle" size="sm" class="mt-0.5 flex-shrink-0" />
             <span>{{ t('imageCreator.safetyNotice') }}</span>
           </div>
         </div>
 
-        <div class="custom-scrollbar flex-1 overflow-y-auto p-5">
-          <div v-if="generating" class="flex min-h-[420px] flex-col items-center justify-center text-center">
+        <div class="scheme3-image-creator-results-scroll custom-scrollbar flex-1 overflow-y-auto p-5">
+          <div v-if="generating" class="scheme3-image-creator-wait flex min-h-[420px] flex-col items-center justify-center text-center">
             <div class="relative mb-5 flex h-24 w-24 items-center justify-center">
               <div class="image-wait-ring"></div>
               <div class="image-wait-ring image-wait-ring-delay"></div>
@@ -193,7 +208,7 @@
             </div>
           </div>
 
-          <div v-else-if="results.length === 0" class="flex min-h-[420px] items-center justify-center">
+          <div v-else-if="results.length === 0" class="scheme3-image-creator-empty flex min-h-[420px] items-center justify-center">
             <EmptyState :title="t('imageCreator.emptyTitle')" :description="t('imageCreator.emptyDescription')">
               <template #icon>
                 <Icon name="sparkles" size="xl" class="text-primary-500" />
@@ -205,19 +220,22 @@
             <article
               v-for="(item, index) in results"
               :key="item.id"
-              class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800"
+              class="scheme3-image-result-card overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800"
             >
               <div class="flex aspect-square items-center justify-center bg-gray-100 dark:bg-dark-900">
                 <button
                   type="button"
-                  class="group relative flex h-full w-full cursor-zoom-in items-center justify-center overflow-hidden"
+                  class="group relative flex h-full w-full items-center justify-center overflow-hidden"
+                  :class="item.url ? 'cursor-zoom-in' : 'cursor-wait'"
+                  :disabled="!item.url"
                   :aria-label="t('imageCreator.previewImage')"
                   :title="t('imageCreator.previewImage')"
                   data-testid="image-result-preview"
                   @click="openPreview(item)"
                   @dblclick="openPreview(item)"
                 >
-                  <img :src="item.url" alt="" class="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02] group-focus-visible:scale-[1.02]" />
+                  <img v-if="item.url" :src="item.url" alt="" class="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02] group-focus-visible:scale-[1.02]" />
+                  <span v-else class="scheme3-image-result-loading" aria-hidden="true"></span>
                   <span class="pointer-events-none absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white opacity-0 shadow-lg backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                     <Icon name="search" size="sm" />
                   </span>
@@ -231,7 +249,7 @@
                   <span class="text-xs text-gray-400 dark:text-dark-400">
                     {{ item.outputFormat.toUpperCase() }}
                   </span>
-                  <button type="button" class="btn btn-secondary btn-sm" @click="downloadImage(item, index)">
+                  <button type="button" class="btn btn-secondary btn-sm" :disabled="!item.url" @click="downloadImage(item, index)">
                     <Icon name="download" size="sm" class="mr-1.5" />
                     {{ t('imageCreator.download') }}
                   </button>
@@ -245,7 +263,7 @@
 
     <div
       v-if="previewImage"
-      class="fixed inset-0 z-[70] flex flex-col bg-black/85 p-4 backdrop-blur-sm sm:p-6"
+      class="scheme3-image-preview-overlay fixed inset-0 z-[70] flex flex-col bg-black/85 p-4 backdrop-blur-sm sm:p-6"
       data-testid="image-preview-overlay"
       @click.self="closePreview"
     >
@@ -272,7 +290,8 @@
       <p v-if="previewImage.revisedPrompt" class="mx-auto mt-3 max-w-4xl text-center text-xs leading-5 text-white/75 sm:text-sm">
         {{ previewImage.revisedPrompt }}
       </p>
-    </div>
+      </div>
+    </section>
   </AppLayout>
 </template>
 
@@ -331,6 +350,7 @@ const activeTaskId = ref<number | null>(null)
 let generationTimerId: ReturnType<typeof setInterval> | null = null
 let taskPollTimerId: ReturnType<typeof setInterval> | null = null
 let imagePreviewLoadToken = 0
+let componentMounted = false
 const generatedImageObjectUrls = new Set<string>()
 
 const modelOptions = [
@@ -340,7 +360,7 @@ const modelOptions = [
 ]
 
 const sizeOptions = [
-  { value: 'auto', label: 'Auto' },
+  { value: 'auto', label: '自动' },
   { value: '1024x1024', label: '1:1 1024x1024' },
   { value: '1536x1024', label: '3:2 1536x1024' },
   { value: '1024x1536', label: '2:3 1024x1536' },
@@ -350,10 +370,10 @@ const sizeOptions = [
 ]
 
 const qualityOptions = [
-  { value: 'auto', label: 'auto' },
-  { value: 'low', label: 'low' },
-  { value: 'medium', label: 'medium' },
-  { value: 'high', label: 'high' },
+  { value: 'auto', label: '自动' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
 ]
 
 const outputFormatOptions = [
@@ -364,9 +384,9 @@ const outputFormatOptions = [
 const transparentUnsupportedImageModels = new Set(['gpt-image-1.5'])
 
 const allBackgroundOptions = [
-  { value: 'auto', label: 'auto' },
-  { value: 'transparent', label: 'transparent' },
-  { value: 'opaque', label: 'opaque' },
+  { value: 'auto', label: '自动' },
+  { value: 'transparent', label: '透明' },
+  { value: 'opaque', label: '不透明' },
 ]
 
 const backgroundOptions = computed(() => {
@@ -488,10 +508,12 @@ function taskIsActive(task: ImageCreatorTask | null | undefined): boolean {
 }
 
 function storedImageToResult(image: ImageCreatorStoredImage, index: number): GeneratedImage {
+  const sourceUrl = image.url
   return {
     id: String(image.id || `${Date.now()}-${index}`),
-    url: image.url,
-    sourceUrl: image.url,
+    // Protected files must be fetched with Authorization before they reach <img>.
+    url: shouldFetchImageUrl(sourceUrl) ? '' : sourceUrl,
+    sourceUrl,
     revisedPrompt: image.revised_prompt || '',
     outputFormat: image.output_format || outputFormat.value,
     mimeType: image.mime_type || '',
@@ -541,11 +563,20 @@ async function createObjectUrlForImage(item: GeneratedImage): Promise<string> {
 }
 
 async function ensureImageDisplayUrl(item: GeneratedImage): Promise<string> {
-  if (!shouldFetchImageUrl(item.url)) {
+  if (item.url && !shouldFetchImageUrl(item.url)) {
     return item.url
   }
+  const sourceUrl = item.sourceUrl || item.url
+  if (!shouldFetchImageUrl(sourceUrl)) {
+    return sourceUrl
+  }
+  const token = imagePreviewLoadToken
   const objectUrl = await createObjectUrlForImage(item)
   const current = results.value.find((result) => result.id === item.id)
+  if (!componentMounted || token !== imagePreviewLoadToken || current !== item) {
+    revokeGeneratedImageObjectUrl(objectUrl)
+    throw new Error('Image preview expired')
+  }
   if (current) {
     revokeGeneratedImageObjectUrl(current.url)
     current.url = objectUrl
@@ -559,15 +590,16 @@ async function ensureImageDisplayUrl(item: GeneratedImage): Promise<string> {
 async function hydrateGeneratedImagePreviews(token: number): Promise<void> {
   const items = results.value.slice()
   await Promise.all(items.map(async (item) => {
-    if (!shouldFetchImageUrl(item.url)) return
+    const sourceUrl = item.sourceUrl || item.url
+    if (!shouldFetchImageUrl(sourceUrl)) return
     try {
       const objectUrl = await createObjectUrlForImage(item)
-      if (token !== imagePreviewLoadToken) {
+      if (!componentMounted || token !== imagePreviewLoadToken) {
         revokeGeneratedImageObjectUrl(objectUrl)
         return
       }
       const current = results.value.find((result) => result.id === item.id)
-      if (!current) {
+      if (!current || current !== item) {
         revokeGeneratedImageObjectUrl(objectUrl)
         return
       }
@@ -577,7 +609,11 @@ async function hydrateGeneratedImagePreviews(token: number): Promise<void> {
         previewImage.value.url = objectUrl
       }
     } catch {
-      // Keep the original URL as a fallback for cookie-based sessions.
+      const current = results.value.find((result) => result.id === item.id)
+      if (current && token === imagePreviewLoadToken) {
+        // Cookie-authenticated deployments can still use the original URL as a fallback.
+        current.url = current.sourceUrl
+      }
     }
   }))
 }
@@ -717,17 +753,21 @@ function clearResults(): void {
 }
 
 async function downloadImage(item: GeneratedImage, index: number): Promise<void> {
-  const href = await ensureImageDisplayUrl(item)
-  const link = document.createElement('a')
-  link.href = href
-  link.download = `image-${Date.now()}-${index + 1}.${String(item.outputFormat || outputFormat.value).toLowerCase()}`
-  if (!href.startsWith('data:') && !href.startsWith('blob:')) {
-    link.target = '_blank'
-    link.rel = 'noopener'
+  try {
+    const href = await ensureImageDisplayUrl(item)
+    const link = document.createElement('a')
+    link.href = href
+    link.download = `image-${Date.now()}-${index + 1}.${String(item.outputFormat || outputFormat.value).toLowerCase()}`
+    if (!href.startsWith('data:') && !href.startsWith('blob:')) {
+      link.target = '_blank'
+      link.rel = 'noopener'
+    }
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  } catch {
+    appStore.showError(t('imageCreator.downloadFailed'))
   }
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
 }
 
 function openPreview(item: GeneratedImage): void {
@@ -751,12 +791,14 @@ function onPreviewKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
+  componentMounted = true
   window.addEventListener('keydown', onPreviewKeydown)
   loadApiKeys()
   loadImageCreatorTasks()
 })
 
 onUnmounted(() => {
+  componentMounted = false
   window.removeEventListener('keydown', onPreviewKeydown)
   stopTaskPolling()
   stopGenerationTimer()
@@ -835,5 +877,197 @@ onUnmounted(() => {
     transform: translateY(-0.35rem);
     opacity: 1;
   }
+}
+
+.scheme3-image-creator {
+  --image-card: #fffefa;
+  --image-field: #fffefa;
+  --image-subtle: #f8f6ef;
+  --image-field-disabled: #e6e1d5;
+  --image-primary-fg: #fffefa;
+  --image-ink: #27251f;
+  --image-muted: #777266;
+  --image-soft: #a49e90;
+  --image-line: #d8d2c3;
+  --image-accent: #1e5c42;
+  --image-amber: #b7791f;
+  --image-danger: #9e4d3d;
+  color: var(--image-ink);
+}
+
+.scheme3-image-creator-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1.25rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--image-line);
+  padding: .1rem 0 1rem;
+}
+
+.scheme3-image-creator-kicker {
+  margin: 0;
+  color: var(--image-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .61rem;
+  font-weight: 800;
+  letter-spacing: .1em;
+}
+
+.scheme3-image-creator h1 {
+  margin: .34rem 0 0;
+  color: var(--image-ink);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 2rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.scheme3-image-creator-subtitle {
+  max-width: 31rem;
+  margin: .42rem 0 0;
+  color: var(--image-muted);
+  font-size: .74rem;
+  line-height: 1.55;
+}
+
+.scheme3-image-creator-ledger {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  border: 1px solid var(--image-line);
+  border-radius: 7px;
+  background: var(--image-card);
+}
+
+.scheme3-image-creator-ledger span {
+  display: grid;
+  min-width: 5rem;
+  max-width: 8.5rem;
+  gap: .08rem;
+  border-right: 1px solid var(--image-line);
+  padding: .48rem .68rem;
+  text-align: right;
+}
+
+.scheme3-image-creator-ledger span:last-child { border-right: 0; }
+
+.scheme3-image-creator-ledger strong {
+  overflow: hidden;
+  color: var(--image-accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: .88rem;
+  font-weight: 600;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheme3-image-creator-ledger small {
+  overflow: hidden;
+  color: var(--image-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .52rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheme3-image-creator-workspace { min-height: calc(100vh - 12rem); min-height: calc(100dvh - 12rem); }
+.scheme3-image-creator-panel { border: 1px solid var(--image-line); border-radius: 8px; background: var(--image-card); box-shadow: 0 10px 24px rgba(54,48,34,.06); }
+.scheme3-image-creator-panel-header { border-color: var(--image-line) !important; background: var(--image-subtle); }
+.scheme3-image-creator-panel-title { color: var(--image-ink) !important; font-family: Georgia, 'Times New Roman', serif; font-size: 1.08rem !important; font-weight: 500 !important; }
+.scheme3-image-creator-panel-copy { color: var(--image-muted) !important; font-size: .69rem !important; }
+.scheme3-image-creator-beta { border: 1px solid rgba(183,121,31,.28); border-radius: 999px !important; background: rgba(183,121,31,.09) !important; color: #855712 !important; }
+.scheme3-image-creator-form-scroll,.scheme3-image-creator-results-scroll { background: var(--image-card); }
+
+.scheme3-image-creator :deep(.input-label) { color: var(--image-ink); font-size: .69rem; font-weight: 800; }
+.scheme3-image-creator :deep(.input),.scheme3-image-creator :deep(.select-trigger) { min-height: 2.45rem; border-color: var(--image-line); border-radius: 7px; background: var(--image-field); color: var(--image-ink); box-shadow: none; }
+.scheme3-image-creator :deep(.input:focus),.scheme3-image-creator :deep(.select-trigger:focus),.scheme3-image-creator :deep(.select-trigger-open) { border-color: var(--image-accent); box-shadow: 0 0 0 3px rgba(30,92,66,.12); }
+.scheme3-image-creator :deep(.select-icon) { color: var(--image-soft); }
+.scheme3-image-creator :deep(.text-primary-600),.scheme3-image-creator :deep(.text-primary-500) { color: var(--image-accent) !important; }
+.scheme3-image-creator :deep(.text-gray-500),.scheme3-image-creator :deep(.text-gray-600) { color: var(--image-muted) !important; }
+.scheme3-image-creator :deep(.text-gray-400) { color: var(--image-soft) !important; }
+.scheme3-image-creator :deep(.text-gray-900) { color: var(--image-ink) !important; }
+.scheme3-image-creator :deep(.bg-primary-50),.scheme3-image-creator :deep(.bg-primary-100) { background: rgba(30,92,66,.07) !important; }
+
+.scheme3-image-creator-reference-dropzone { border-color: var(--image-line) !important; border-radius: 7px !important; background: var(--image-subtle) !important; color: var(--image-muted); }
+.scheme3-image-creator-reference-dropzone:hover { border-color: rgba(30,92,66,.38) !important; background: rgba(30,92,66,.055) !important; }
+.scheme3-image-result-loading { width: 1.65rem; height: 1.65rem; border: 2px solid var(--image-line); border-top-color: var(--image-accent); border-radius: 999px; animation: image-wait-spin 1s linear infinite; }
+.scheme3-image-creator-action-bar { border-color: var(--image-line) !important; background: var(--image-subtle); }
+.scheme3-image-creator-generate { min-height: 2.55rem; border-radius: 7px; background: var(--image-accent) !important; color: var(--image-primary-fg); box-shadow: 0 9px 17px rgba(30,92,66,.14); }
+.scheme3-image-creator-generate:hover:not(:disabled) { background: #174a35 !important; }
+.scheme3-image-creator-generate:disabled { border-color: var(--image-line); background: var(--image-field-disabled) !important; color: var(--image-soft); box-shadow: none; }
+.scheme3-image-creator-clear { border-color: var(--image-line); border-radius: 6px; background: var(--image-field); color: var(--image-ink); }
+.scheme3-image-creator-clear:hover { border-color: rgba(30,92,66,.25); background: var(--image-subtle); color: var(--image-accent); }
+
+.scheme3-image-creator-safety { border-color: rgba(183,121,31,.28) !important; background: rgba(183,121,31,.075) !important; color: #855712 !important; font-size: .7rem !important; line-height: 1.5; }
+.scheme3-image-creator-empty :deep(.empty-state) { border: 1px dashed var(--image-line); border-radius: 8px; background: var(--image-subtle); }
+.scheme3-image-creator-empty :deep(.empty-state h3) { color: var(--image-ink); font-family: Georgia, 'Times New Roman', serif; font-weight: 500; }
+.scheme3-image-creator-empty :deep(.empty-state p) { color: var(--image-muted); }
+
+.scheme3-image-creator-wait { color: var(--image-ink); }
+.scheme3-image-creator-wait :deep(.bg-primary-50) { border: 1px solid rgba(30,92,66,.2); background: rgba(30,92,66,.07) !important; }
+.scheme3-image-creator-wait :deep(.bg-gray-100) { background: var(--image-subtle) !important; }
+.scheme3-image-creator-wait :deep(.bg-primary-500) { background: var(--image-accent) !important; }
+.scheme3-image-creator-wait :deep(.text-primary-600) { color: var(--image-accent) !important; }
+.scheme3-image-creator-wait :deep(.text-gray-900) { color: var(--image-ink) !important; }
+
+.image-wait-ring { border-color: rgba(30,92,66,.28); background: transparent; }
+.image-wait-dot { background: var(--image-accent); }
+.scheme3-image-result-card { border-color: var(--image-line) !important; border-radius: 8px !important; background: var(--image-field) !important; box-shadow: 0 8px 18px rgba(54,48,34,.07); transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease; }
+.scheme3-image-result-card:hover { border-color: rgba(30,92,66,.32) !important; box-shadow: 0 14px 25px rgba(54,48,34,.11); transform: translateY(-2px); }
+.scheme3-image-result-card :deep(.bg-gray-100) { background: var(--image-subtle) !important; }
+.scheme3-image-result-card :deep(.btn-secondary) { border-color: var(--image-line); border-radius: 6px; background: var(--image-field); color: var(--image-ink); }
+.scheme3-image-result-card :deep(.btn-secondary:hover) { background: var(--image-subtle); color: var(--image-accent); }
+
+.scheme3-image-preview-overlay { background: rgba(22,21,15,.87) !important; backdrop-filter: blur(7px); }
+.scheme3-image-preview-overlay :deep(.btn-secondary),.scheme3-image-preview-overlay :deep(button) { border-color: rgba(255,254,250,.3); border-radius: 7px; background: #fffefa !important; color: #27251f !important; }
+.scheme3-image-preview-overlay :deep(img) { border: 1px solid rgba(255,254,250,.2); border-radius: 8px !important; }
+
+:global(.dark .scheme3-image-creator) { --image-card: #24231f; --image-field: #24231f; --image-subtle: #2b2924; --image-field-disabled: #35332d; --image-primary-fg: #1b1b18; --image-ink: #f4f2ec; --image-muted: #aaa69a; --image-soft: #827e72; --image-line: #47443a; --image-accent: #8fc2a5; --image-amber: #d3a55a; --image-danger: #d38b79; }
+:global(.dark .scheme3-image-creator-panel-header),:global(.dark .scheme3-image-creator-action-bar) { background: #1b1b18; }
+:global(.dark .scheme3-image-creator .text-primary-600),:global(.dark .scheme3-image-creator .text-primary-500) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-image-creator .text-gray-500),:global(.dark .scheme3-image-creator .text-gray-600) { color: #aaa69a !important; }
+:global(.dark .scheme3-image-creator .text-gray-400) { color: #827e72 !important; }
+:global(.dark .scheme3-image-creator .text-gray-900) { color: #f4f2ec !important; }
+:global(.dark .scheme3-image-creator-reference-dropzone) { border-color: #47443a !important; background: var(--image-subtle) !important; }
+:global(.dark .scheme3-image-creator-reference-dropzone:hover) { border-color: rgba(143,194,165,.34) !important; background: rgba(143,194,165,.08) !important; }
+:global(.dark .scheme3-image-creator-generate) { border-color: #8fc2a5; background: #8fc2a5 !important; color: var(--image-primary-fg); }
+:global(.dark .scheme3-image-creator-generate:hover:not(:disabled)) { background: #a7cfb3 !important; }
+:global(.dark .scheme3-image-creator-generate:disabled) { border-color: #47443a; background: var(--image-field-disabled) !important; color: var(--image-soft); }
+:global(.dark .scheme3-image-creator-clear) { border-color: #47443a; background: var(--image-field); color: var(--image-ink); }
+:global(.dark .scheme3-image-creator-clear:hover) { background: var(--image-subtle); color: #8fc2a5; }
+:global(.dark .scheme3-image-creator-safety) { border-color: rgba(211,165,90,.3) !important; background: rgba(211,165,90,.1) !important; color: #d3a55a !important; }
+:global(.dark .scheme3-image-creator-empty .empty-state) { background: var(--image-subtle); }
+:global(.dark .scheme3-image-creator-wait .bg-gray-100) { background: var(--image-subtle) !important; }
+:global(.dark .scheme3-image-creator-wait .bg-primary-500) { background: #8fc2a5 !important; }
+:global(.dark .scheme3-image-result-card) { border-color: #47443a !important; background: var(--image-field) !important; box-shadow: 0 12px 25px rgba(0,0,0,.22); }
+:global(.dark .scheme3-image-result-card:hover) { border-color: rgba(143,194,165,.35) !important; box-shadow: 0 17px 31px rgba(0,0,0,.3); }
+:global(.dark .scheme3-image-result-card .bg-gray-100) { background: var(--image-subtle) !important; }
+:global(.dark .scheme3-image-result-card .btn-secondary) { border-color: #47443a; background: var(--image-field); color: var(--image-ink); }
+:global(.dark .scheme3-image-result-card .btn-secondary:hover) { background: var(--image-subtle); color: #8fc2a5; }
+
+@media (max-width: 1023px) {
+  .scheme3-image-creator-workspace { min-height: 0; }
+  .scheme3-image-creator-form-panel { min-height: 42rem; }
+  .scheme3-image-creator-results-panel { min-height: 35rem; }
+}
+
+@media (max-width: 767px) {
+  .scheme3-image-creator-header { align-items: stretch; flex-direction: column; gap: .8rem; margin-bottom: .8rem; }
+  .scheme3-image-creator h1 { font-size: 1.62rem; }
+  .scheme3-image-creator-ledger { width: 100%; justify-content: stretch; }
+  .scheme3-image-creator-ledger span { flex: 1 1 45%; min-width: 0; max-width: none; padding: .48rem .42rem; }
+  .scheme3-image-creator-workspace { gap: .7rem; }
+  .scheme3-image-creator-form-panel { min-height: 0; }
+  .scheme3-image-creator-results-panel { min-height: 30rem; }
+  .scheme3-image-creator-form-scroll,.scheme3-image-creator-results-scroll { overflow: visible; }
+  .scheme3-image-creator-empty { min-height: 22rem !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scheme3-image-creator *, .scheme3-image-creator *::before, .scheme3-image-creator *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
 </style>

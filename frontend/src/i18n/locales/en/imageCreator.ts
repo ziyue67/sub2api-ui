@@ -43,5 +43,6 @@ export default {
     loadKeysFailed: 'Failed to load API keys',
     loadTasksFailed: 'Failed to load image tasks',
     generateFailed: 'Image generation failed',
+    downloadFailed: 'Image download failed',
     generateSuccess: 'Generated {count} image(s)'
   }

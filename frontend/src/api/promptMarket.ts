@@ -58,8 +58,8 @@ export const AWESOME_GPT_IMAGE_2_PROMPTS_EN_README_URL = 'https://raw.githubuser
 const AWESOME_GPT_IMAGE_2_PROMPTS_RAW_BASE_URL = 'https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-prompts/main/'
 
 export const PROMPT_MARKET_SOURCE_OPTIONS: Array<{ value: PromptMarketSourceId | 'all' | 'favorites'; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'favorites', label: 'Favorites' },
+  { value: 'all', label: '全部' },
+  { value: 'favorites', label: '收藏' },
   { value: 'banana-prompt-quicker', label: 'banana-prompt-quicker' },
   { value: 'awesome-gpt-image-2-prompts', label: 'awesome-gpt-image-2-prompts' },
 ]

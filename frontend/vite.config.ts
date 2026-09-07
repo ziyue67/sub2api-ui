@@ -144,6 +144,12 @@ export default defineConfig(({ mode }) => {
               return 'vendor-stripe'
             }
 
+            // Airwallex SDK loads remote checkout scripts as soon as its module executes.
+            // Keep it out of the preloaded shared vendor chunk so only its payment route pays that cost.
+            if (id.includes('/@airwallex/components-sdk/') || id.includes('/@airwallex/airtracker/')) {
+              return 'vendor-airwallex'
+            }
+
             // 其他小型第三方库合并
             return 'vendor-misc'
           }

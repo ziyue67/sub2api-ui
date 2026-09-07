@@ -1,5 +1,5 @@
 <template>
-  <div class='p-6'>
+  <div class='scheme3-model-square-channel-panel p-6'>
     <div class='flex flex-col xl:flex-row xl:items-start gap-6'>
       <div class='min-w-0 flex-1'>
         <div class='flex items-center gap-2.5'>
@@ -59,7 +59,7 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import type { GroupPlatform, SubscriptionType } from '@/types'
 import type { ModelSquareChannel } from '../../types'
 import { entryKey } from '../../utils/key'
-import { formatTokenPrice, formatRequestPrice, billingModeLabel, isRequestBilling, fullPriceItems } from '../../utils/pricing'
+import { formatTokenPrice, formatRequestPrice, billingModeLabel, isRequestBilling, fullPriceItems, requestPriceLabel as resolveRequestPriceLabel } from '../../utils/pricing'
 
 interface Props {
   channel: ModelSquareChannel
@@ -71,5 +71,14 @@ const props = defineProps<Props>()
 
 const priceItems = computed(() => fullPriceItems(props.channel.pricing))
 const extraVisible = computed(() => isRequestBilling(props.channel.pricing) || (props.channel.pricing?.intervals?.length ?? 0) > 0)
-const requestPriceLabel = computed(() => (props.channel.pricing?.billing_mode === 'image' ? '每张价格' : '每次价格'))
+const requestPriceLabel = computed(() => resolveRequestPriceLabel(props.channel.pricing?.billing_mode))
 </script>
+
+<style scoped>
+.scheme3-model-square-channel-panel { color: var(--scheme3-ink, #16150f); }
+.scheme3-model-square-channel-panel :deep([class*='rounded-xl']), .scheme3-model-square-channel-panel :deep([class*='rounded-2xl']) { border-radius: 6px !important; }
+.scheme3-model-square-channel-panel :deep([class*='text-indigo-']) { color: #1e5c42 !important; }
+.scheme3-model-square-channel-panel :deep([class*='bg-indigo-']) { background-color: rgba(30,92,66,.08) !important; }
+:global(html.dark .scheme3-model-square-channel-panel [class*='text-indigo-']) { color: #a7d0b8 !important; }
+:global(html.dark .scheme3-model-square-channel-panel [class*='bg-indigo-']) { background-color: rgba(143,194,165,.12) !important; }
+</style>

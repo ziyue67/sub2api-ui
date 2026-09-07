@@ -1,8 +1,10 @@
 <template>
   <span
     :class="[
-      'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
-      badgeClass
+      props.scheme3
+        ? 'scheme3-monitor-group-badge'
+        : 'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
+      badgeClass,
     ]"
   >
     <!-- Platform logo -->
@@ -10,7 +12,7 @@
     <!-- Group name -->
     <span class="truncate">{{ name }}</span>
     <!-- Right side label -->
-    <span v-if="showLabel" :class="labelClass">
+    <span v-if="showLabel" :class="props.scheme3 ? 'scheme3-monitor-group-label' : labelClass">
       <template v-if="hasCustomRate">
         <!-- 原倍率删除线 + 专属倍率高亮 -->
         <span class="line-through opacity-50 mr-0.5">{{ rateMultiplier }}x</span>
@@ -20,7 +22,7 @@
         {{ labelText }}
       </template>
     </span>
-    <span v-if="hasPeakRate" :class="peakRateClass" :title="peakRateTitle">
+    <span v-if="hasPeakRate" :class="props.scheme3 ? 'scheme3-monitor-group-peak' : peakRateClass" :title="peakRateTitle">
       {{ peakRateText }}
     </span>
   </span>
@@ -52,6 +54,7 @@ interface Props {
    * 只关心费率、不关心有效期的场景）。
    */
   alwaysShowRate?: boolean
+  scheme3?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -60,7 +63,8 @@ const props = withDefaults(defineProps<Props>(), {
   daysRemaining: null,
   userRateMultiplier: null,
   peakRateEnabled: false,
-  alwaysShowRate: false
+  alwaysShowRate: false,
+  scheme3: false,
 })
 
 const { t } = useI18n()
@@ -127,6 +131,7 @@ const labelText = computed(() => {
 
 // Label style based on type and days remaining
 const labelClass = computed(() => {
+  if (props.scheme3) return ''
   const base = 'px-1.5 py-0.5 rounded text-[10px] font-semibold'
 
   if (!isSubscription.value) {
@@ -162,6 +167,15 @@ const labelClass = computed(() => {
   if (props.platform === 'grok') {
     return `${base} bg-zinc-300/70 text-zinc-800 dark:bg-zinc-700/60 dark:text-zinc-200`
   }
+  if (props.platform === 'kimi') {
+    return `${base} bg-pink-200/60 text-pink-800 dark:bg-pink-800/40 dark:text-pink-300`
+  }
+  if (props.platform === 'zhipu') {
+    return `${base} bg-indigo-200/60 text-indigo-800 dark:bg-indigo-800/40 dark:text-indigo-300`
+  }
+  if (props.platform === 'deepseek') {
+    return `${base} bg-teal-200/60 text-teal-800 dark:bg-teal-800/40 dark:text-teal-300`
+  }
   if (props.platform === 'composite') {
     return `${base} bg-cyan-200/70 text-cyan-900 dark:bg-cyan-900/50 dark:text-cyan-300`
   }
@@ -169,11 +183,13 @@ const labelClass = computed(() => {
 })
 
 const peakRateClass = computed(() => {
+  if (props.scheme3) return ''
   return 'px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
 })
 
 // Badge color based on platform and subscription type
 const badgeClass = computed(() => {
+  if (props.scheme3) return ''
   if (props.platform === 'anthropic') {
     // Claude: orange theme
     return isSubscription.value
@@ -200,6 +216,21 @@ const badgeClass = computed(() => {
       ? 'bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100'
       : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200'
   }
+  if (props.platform === 'kimi') {
+    return isSubscription.value
+      ? 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400'
+      : 'bg-pink-50 text-pink-700 dark:bg-pink-900/20 dark:text-pink-400'
+  }
+  if (props.platform === 'zhipu') {
+    return isSubscription.value
+      ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
+      : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-400'
+  }
+  if (props.platform === 'deepseek') {
+    return isSubscription.value
+      ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
+      : 'bg-teal-50 text-teal-700 dark:bg-teal-900/20 dark:text-teal-400'
+  }
   if (props.platform === 'composite') {
     return isSubscription.value
       ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300'
@@ -211,3 +242,30 @@ const badgeClass = computed(() => {
     : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
 })
 </script>
+
+<style scoped>
+.scheme3-monitor-group-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  border: 1px solid #dad5c8;
+  border-radius: 5px;
+  background: #f1eee6;
+  color: #27251f;
+  padding: .2rem .48rem;
+  font-size: .68rem;
+  font-weight: 700;
+}
+.scheme3-monitor-group-label,
+.scheme3-monitor-group-peak {
+  border: 1px solid rgba(30,92,66,.25);
+  border-radius: 4px;
+  background: rgba(30,92,66,.08);
+  color: #1e5c42;
+  padding: .12rem .3rem;
+  font-size: .58rem;
+  font-weight: 800;
+}
+:global(.dark .scheme3-monitor-group-badge) { border-color: #47443a; background: #2b2924; color: #f4f2ec; }
+:global(.dark .scheme3-monitor-group-label),:global(.dark .scheme3-monitor-group-peak) { border-color: rgba(143,194,165,.28); background: rgba(143,194,165,.1); color: #8fc2a5; }
+</style>

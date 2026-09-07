@@ -177,7 +177,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { passkeyAPI, type PasskeyCredentialSummary } from '@/api'
 import { Icon } from '@/components/icons'
@@ -272,6 +272,12 @@ function closeDeleteDialog(): void {
   deletePassword.value = ''
 }
 
+function handleEscape(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && deleteTarget.value) {
+    closeDeleteDialog()
+  }
+}
+
 async function confirmDelete(): Promise<void> {
   const credential = deleteTarget.value
   if (!credential || deletePassword.value.length === 0) return
@@ -304,4 +310,11 @@ watch(
   },
   { immediate: true }
 )
+
+onMounted(() => {
+  document.addEventListener('keydown', handleEscape)
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleEscape)
+})
 </script>

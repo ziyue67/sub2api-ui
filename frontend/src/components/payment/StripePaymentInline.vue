@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-4">
+  <div class="scheme3-stripe-inline space-y-4">
     <div v-if="loading" class="flex items-center justify-center py-12">
       <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
     </div>
@@ -9,13 +9,13 @@
     </div>
     <!-- Success -->
     <template v-else-if="success">
-      <div class="card p-6">
+      <div class="card scheme3-stripe-inline-card p-6">
         <div class="flex flex-col items-center space-y-4 py-4">
           <div class="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
             <Icon name="check" size="lg" class="text-green-500" />
           </div>
           <p class="text-lg font-bold text-gray-900 dark:text-white">{{ t('payment.result.success') }}</p>
-          <div class="w-full rounded-xl bg-gray-50 p-4 dark:bg-dark-800">
+          <div class="scheme3-stripe-inline-summary w-full p-4">
             <div class="space-y-2 text-sm">
               <div class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
@@ -37,17 +37,17 @@
     </template>
     <template v-else>
       <!-- Amount -->
-      <div class="card overflow-hidden">
-        <div class="bg-gradient-to-br from-[#635bff] to-[#4f46e5] px-6 py-5 text-center">
-          <p class="text-sm font-medium text-indigo-200">{{ t('payment.actualPay') }}</p>
-          <p class="mt-1 text-3xl font-bold text-white">{{ paymentAmountSymbol }}{{ payAmount.toFixed(2) }}</p>
+      <div class="card scheme3-stripe-inline-card overflow-hidden">
+        <div class="scheme3-stripe-inline-amount px-6 py-5 text-center">
+          <p class="text-sm font-medium">{{ t('payment.actualPay') }}</p>
+          <p class="mt-1 text-3xl font-bold">{{ paymentAmountSymbol }}{{ payAmount.toFixed(2) }}</p>
         </div>
       </div>
       <!-- Stripe Payment Element -->
-      <div class="card p-6">
+      <div class="card scheme3-stripe-inline-card p-6">
         <div ref="stripeMount" class="min-h-[200px]"></div>
         <p v-if="error" class="mt-4 text-sm text-red-600 dark:text-red-400">{{ error }}</p>
-        <button class="btn btn-stripe mt-6 w-full py-3 text-base" :disabled="submitting || !ready" @click="handlePay">
+        <button class="btn scheme3-stripe-inline-pay mt-6 w-full py-3 text-base" :disabled="submitting || !ready" @click="handlePay">
           <span v-if="submitting" class="flex items-center justify-center gap-2">
             <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
             {{ t('common.processing') }}
@@ -209,3 +209,25 @@ async function handleCancel() {
   }
 }
 </script>
+
+<style scoped>
+.scheme3-stripe-inline { --scheme3-stripe-inline-card: #fffefa; --scheme3-stripe-inline-line: #d8d2c3; --scheme3-stripe-inline-ink: #27251f; }
+.scheme3-stripe-inline :deep(.card),.scheme3-stripe-inline-card { border: 1px solid var(--scheme3-stripe-inline-line); border-radius: 8px; background: var(--scheme3-stripe-inline-card); box-shadow: 0 10px 24px rgba(54,48,34,.06); }
+.scheme3-stripe-inline-amount { border-left: 3px solid #b7791f; background: #f1eee6; color: var(--scheme3-stripe-inline-ink); }
+.scheme3-stripe-inline-amount p:first-child { color: #777266; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .66rem; letter-spacing: .06em; }
+.scheme3-stripe-inline-amount p:last-child { color: #1e5c42; font-family: Georgia, 'Times New Roman', serif; }
+.scheme3-stripe-inline-summary { border: 1px solid var(--scheme3-stripe-inline-line); border-radius: 7px; background: #f8f6ef; }
+.scheme3-stripe-inline :deep(.btn-secondary) { border-color: var(--scheme3-stripe-inline-line); border-radius: 7px; background: var(--scheme3-stripe-inline-card); color: var(--scheme3-stripe-inline-ink); }
+.scheme3-stripe-inline-pay { border-radius: 7px; background: #1e5c42; color: #fffefa; box-shadow: 0 8px 16px rgba(30,92,66,.15); }
+.scheme3-stripe-inline-pay:hover { background: #174a35; }
+.scheme3-stripe-inline-pay:disabled { background: #8e887b; box-shadow: none; }
+
+:global(.dark .scheme3-stripe-inline) { --scheme3-stripe-inline-card: #24231f; --scheme3-stripe-inline-line: #47443a; --scheme3-stripe-inline-ink: #f4f2ec; }
+:global(.dark .scheme3-stripe-inline-amount) { border-color: #d6a65d; background: #2b2924; }
+:global(.dark .scheme3-stripe-inline-amount p:first-child) { color: #aaa69a; }
+:global(.dark .scheme3-stripe-inline-amount p:last-child) { color: #8fc2a5; }
+:global(.dark .scheme3-stripe-inline-summary) { border-color: #47443a; background: #2b2924; }
+:global(.dark .scheme3-stripe-inline-pay) { background: #8fc2a5; color: #1b1b18; }
+:global(.dark .scheme3-stripe-inline-pay:hover) { background: #a7d2b7; }
+:global(.dark .scheme3-stripe-inline-pay:disabled) { background: #5b625a; color: #d4d0c6; }
+</style>

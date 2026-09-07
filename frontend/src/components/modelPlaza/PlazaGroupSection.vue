@@ -1,6 +1,6 @@
 <template>
   <section
-    class="overflow-hidden rounded-2xl border bg-white shadow-card dark:bg-dark-800/50"
+    class="scheme3-model-plaza-group overflow-hidden"
     :class="[platformBorderStrongClass(group.platform)]"
   >
     <!-- 分组头部:名称/平台/倍率徽章/专属/订阅徽章 + 描述 -->
@@ -17,17 +17,18 @@
           :peak-end="group.peak_end"
           :peak-rate-multiplier="group.peak_rate_multiplier"
           always-show-rate
+          scheme3
         />
         <span
           v-if="group.is_exclusive"
-          class="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
+          class="scheme3-model-plaza-exclusive-badge inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium"
         >
           <Icon name="shield" size="xs" class="h-3 w-3" />
           {{ t('modelPlaza.badges.exclusive') }}
         </span>
         <span
           v-if="group.subscription_type === 'subscription'"
-          class="inline-flex items-center rounded-md bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-600 dark:bg-violet-900/20 dark:text-violet-400"
+          class="scheme3-model-plaza-subscription-badge inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
         >
           {{ t('modelPlaza.badges.subscription') }}
         </span>
@@ -42,6 +43,13 @@
         <Icon name="clock" size="xs" class="h-3 w-3" />
         {{ peakNote }}
       </p>
+      <p
+        v-if="longContextNote"
+        class="mt-1.5 flex items-center gap-1 text-xs text-gray-500 dark:text-dark-400"
+      >
+        <Icon name="infoCircle" size="xs" class="h-3 w-3" />
+        {{ longContextNote }}
+      </p>
     </header>
 
     <!-- 模型价格表:整行(含 hover 底色/分区底色)顶到卡片边缘,左右留白由表格首列/末列的 padding 提供 -->
@@ -54,6 +62,8 @@
         :user-rate-multiplier="group.user_rate_multiplier ?? null"
         :image-rate-independent="group.image_rate_independent"
         :image-rate-multiplier="group.image_rate_multiplier"
+        :peak-window="peakWindow"
+        :peak-rate-multiplier="group.peak_rate_multiplier"
       />
       <p v-else class="px-5 py-4 text-center text-sm text-gray-400 dark:text-dark-500">
         {{ t('modelPlaza.detail.noModels') }}
@@ -81,15 +91,58 @@ const props = defineProps<{
 const { t } = useI18n()
 const appStore = useAppStore()
 
-const peakNote = computed(() => {
+/** 高峰窗口描述(含倍率与服务器时区标注);分组未启用高峰为空串。 */
+const peakWindow = computed(() => {
   if (!hasPeakRate(props.group)) return ''
-  const window = formatPeakRateWindow(
+  return formatPeakRateWindow(
     props.group,
     serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
   )
+})
+
+const peakNote = computed(() => {
+  if (!peakWindow.value) return ''
   return t('modelPlaza.detail.peakNote', {
-    window,
+    window: peakWindow.value,
     multiplier: props.group.peak_rate_multiplier
   })
 })
+
+/**
+ * 分组关闭了长上下文阶梯、但组内有模型官方带阶梯时提示:实付列只展示基础档,
+ * 官方阶梯仅供参考。字段缺失(旧后端)不提示。
+ */
+const longContextNote = computed(() => {
+  if (props.group.long_context_pricing_enabled !== false) return ''
+  const hasOfficialLadder = props.group.models.some(
+    (m) => (m.official_pricing?.intervals?.length ?? 0) > 1
+  )
+  return hasOfficialLadder ? t('modelPlaza.detail.longContextDisabledNote') : ''
+})
 </script>
+
+<style scoped>
+.scheme3-model-plaza-exclusive-badge {
+  border: 1px solid rgba(183, 121, 31, .24);
+  background: rgba(183, 121, 31, .09);
+  color: #765213;
+}
+
+.scheme3-model-plaza-subscription-badge {
+  border: 1px solid rgba(30, 92, 66, .22);
+  background: rgba(30, 92, 66, .09);
+  color: #1e5c42;
+}
+
+:global(html.dark .scheme3-model-plaza-exclusive-badge) {
+  border-color: rgba(211, 164, 92, .3);
+  background: rgba(211, 164, 92, .12);
+  color: #d3a45c;
+}
+
+:global(html.dark .scheme3-model-plaza-subscription-badge) {
+  border-color: rgba(143, 194, 165, .3);
+  background: rgba(143, 194, 165, .12);
+  color: #8fc2a5;
+}
+</style>

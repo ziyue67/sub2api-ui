@@ -1,8 +1,22 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <div class="scheme3-batch-image" data-testid="scheme3-batch-image-view">
+      <header class="scheme3-batch-image-header">
+        <div class="scheme3-batch-image-title">
+          <p>批量工坊 / 任务队列</p>
+          <h1>批量生图</h1>
+          <span>集中提交、追踪和归档多条图像创作任务。</span>
+        </div>
+        <div class="scheme3-batch-image-ledger" aria-label="批量任务摘要">
+          <span><strong>{{ batchJobs.length }}</strong><small>本页任务</small></span>
+          <span><strong>{{ selectedJobIds.size }}</strong><small>当前选中</small></span>
+          <span><strong>{{ loadingJobs ? '同步中' : '就绪' }}</strong><small>队列状态</small></span>
+        </div>
+      </header>
+
+    <TablePageLayout class="scheme3-batch-table-layout">
       <template #filters>
-        <div class="flex flex-col gap-3">
+        <div class="scheme3-batch-filter-shell flex flex-col gap-3">
           <div class="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
             <div class="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[260px_160px_144px_152px] 2xl:w-auto">
               <div class="min-w-0">
@@ -37,7 +51,7 @@
 
           <div
             v-if="selectedJobIds.size"
-            class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm dark:border-dark-700 dark:bg-dark-800"
+            class="scheme3-batch-selection flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm dark:border-dark-700 dark:bg-dark-800"
           >
             <i18n-t
               keypath="batchImage.list.selectedJobs"
@@ -76,6 +90,7 @@
 
       <template #table>
         <DataTable
+          class="scheme3-batch-data-table"
           :columns="columns"
           :data="visibleBatchJobs"
           :loading="loadingKeys || loadingJobs"
@@ -231,7 +246,7 @@
       <template #pagination>
         <div
           v-if="visibleBatchJobs.length > 0 || pagination.page > 1"
-          class="flex flex-col gap-3 border-t border-gray-200 bg-white px-4 py-3 dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-center sm:justify-between sm:px-6"
+          class="scheme3-batch-pagination flex flex-col gap-3 border-t border-gray-200 bg-white px-4 py-3 dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-center sm:justify-between sm:px-6"
         >
           <div class="flex flex-wrap items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
             <i18n-t keypath="batchImage.pagination.pageNumber" tag="span" scope="global">
@@ -281,7 +296,7 @@
     <Teleport to="body">
       <div
         v-if="openMoreJobId"
-        class="fixed z-[9999] w-44 overflow-hidden rounded-xl bg-white py-1 text-sm shadow-lg ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
+        class="scheme3-batch-more-menu fixed z-[9999] w-44 overflow-hidden rounded-xl bg-white py-1 text-sm shadow-lg ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
         :style="moreMenuStyle"
         @click.stop
       >
@@ -315,7 +330,7 @@
     <Teleport to="body">
       <div
         v-if="promptPopover.visible"
-        class="batch-prompt-popover fixed z-[9999] rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-800 shadow-xl ring-1 ring-black/5 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-100 dark:ring-white/10"
+        class="scheme3-batch-prompt-popover batch-prompt-popover fixed z-[9999] rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-800 shadow-xl ring-1 ring-black/5 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-100 dark:ring-white/10"
         :style="promptPopover.style"
         @mouseenter="cancelPromptPopoverClose"
         @mouseleave="schedulePromptPopoverClose"
@@ -336,7 +351,7 @@
       </div>
     </Teleport>
 
-    <BaseDialog :show="!!currentJob" :title="t('batchImage.detail.title')" width="extra-wide" @close="closeDetail">
+    <BaseDialog :show="!!currentJob" :title="t('batchImage.detail.title')" width="extra-wide" content-class="scheme3-batch-dialog" @close="closeDetail">
       <div v-if="currentJob" class="space-y-4">
         <div class="rounded-lg border border-gray-200 bg-gray-50/70 px-4 py-3 dark:border-dark-700 dark:bg-dark-900/40">
           <div class="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -388,8 +403,8 @@
             </colgroup>
             <thead class="bg-gray-50 dark:bg-dark-800/80">
               <tr>
-                <th class="px-3 py-3 text-center text-sm font-medium text-gray-500 dark:text-gray-400">Custom ID</th>
-                <th class="px-3 py-3 text-left text-sm font-medium text-gray-500 dark:text-gray-400">Prompt</th>
+                <th class="px-3 py-3 text-center text-sm font-medium text-gray-500 dark:text-gray-400">自定义 ID</th>
+                <th class="px-3 py-3 text-left text-sm font-medium text-gray-500 dark:text-gray-400">提示词</th>
                 <th class="px-3 py-3 text-center text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('common.status') }}</th>
                 <th class="px-3 py-3 text-center text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('batchImage.detail.preview') }}</th>
                 <th class="px-3 py-3 text-center text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('batchImage.detail.result') }}</th>
@@ -521,7 +536,7 @@
       </template>
     </BaseDialog>
 
-    <BaseDialog :show="!!previewImageItem" :title="previewImageItem?.custom_id || t('batchImage.imagePreview.title')" width="extra-wide" :z-index="60" @close="closeImagePreview">
+    <BaseDialog :show="!!previewImageItem" :title="previewImageItem?.custom_id || t('batchImage.imagePreview.title')" width="extra-wide" :z-index="60" content-class="scheme3-batch-dialog" @close="closeImagePreview">
       <div class="space-y-3">
         <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
           {{ t('batchImage.imagePreview.notice') }}
@@ -537,7 +552,7 @@
       </div>
     </BaseDialog>
 
-    <BaseDialog :show="showCreateModal" :title="t('batchImage.create.title')" width="wide" @close="closeCreateModal">
+    <BaseDialog :show="showCreateModal" :title="t('batchImage.create.title')" width="wide" content-class="scheme3-batch-dialog" @close="closeCreateModal">
       <form class="space-y-5" @submit.prevent="submitJob">
         <div class="grid gap-4 md:grid-cols-2">
           <div class="md:col-span-2">
@@ -552,7 +567,7 @@
           </div>
 
           <div class="md:col-span-2">
-            <label class="input-label">API Key</label>
+            <label class="input-label">API 密钥</label>
             <select v-model.number="form.apiKeyId" class="input" :disabled="loadingKeys">
               <option :value="0">{{ loadingKeys ? t('batchImage.create.loadingKeys') : t('batchImage.create.selectKeyPlaceholder') }}</option>
               <option v-for="key in geminiApiKeys" :key="key.id" :value="key.id">
@@ -608,7 +623,7 @@
 
         <div class="space-y-3">
           <div class="flex items-center justify-between gap-3">
-            <label class="input-label mb-0">Prompt</label>
+              <label class="input-label mb-0">提示词</label>
             <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('batchImage.create.promptAdded', { count: promptRows.length }) }}</span>
           </div>
           <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
@@ -715,7 +730,7 @@
       </template>
     </BaseDialog>
 
-    <BaseDialog :show="showGuideModal" :title="t('batchImage.guide.title')" width="wide" @close="showGuideModal = false">
+    <BaseDialog :show="showGuideModal" :title="t('batchImage.guide.title')" width="wide" content-class="scheme3-batch-dialog" @close="showGuideModal = false">
 	      <div class="space-y-5">
 	        <section class="space-y-3">
 	          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('batchImage.guide.uiTitle') }}</h3>
@@ -748,6 +763,7 @@
         </div>
       </template>
     </BaseDialog>
+    </div>
   </AppLayout>
 </template>
 
@@ -959,7 +975,7 @@ const apiKeyFilterOptions = computed<SelectOption[]>(() => [
   { value: '', label: t('batchImage.filters.allApiKeys') },
   ...geminiApiKeys.value.map(key => ({
     value: String(key.id),
-    label: key.name || `API Key #${key.id}`,
+      label: key.name || `API 密钥 #${key.id}`,
   })),
 ])
 
@@ -1031,7 +1047,7 @@ const endpointBase = computed(() => {
   const configured = appStore.apiBaseUrl?.trim()
   if (configured) return configured.replace(/\/+$/, '')
   if (typeof window !== 'undefined') return window.location.origin.replace(/\/+$/, '')
-  return '<你的 Sub2API API 端点>'
+  return '<你的 Shour or ToKen API 端点>'
 })
 
 const selectedModelReferenceLimit = computed(() => referenceImageLimitForModel(form.model))
@@ -2689,5 +2705,313 @@ onBeforeUnmount(() => {
   padding-left: 14px;
   padding-right: 34px;
   line-height: 36px;
+}
+
+.scheme3-batch-image {
+  --batch-card: #fffefa;
+  --batch-subtle: #f1eee6;
+  --batch-ink: #27251f;
+  --batch-muted: #777266;
+  --batch-soft: #a49e90;
+  --batch-line: #d8d2c3;
+  --batch-accent: #1e5c42;
+  --batch-accent-hover: #174a35;
+  --batch-primary-fg: #fffefa;
+  --batch-amber: #a56613;
+  --batch-danger: #9e4d3d;
+  display: flex;
+  flex-direction: column;
+  gap: .9rem;
+  color: var(--batch-ink);
+}
+
+.scheme3-batch-image-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--batch-line);
+  padding: .15rem 0 1rem;
+}
+
+.scheme3-batch-image-title > p {
+  margin: 0;
+  color: var(--batch-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .6rem;
+  font-weight: 800;
+}
+
+.scheme3-batch-image-title h1 {
+  margin: .32rem 0 0;
+  color: var(--batch-ink);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 2rem;
+  font-weight: 500;
+  line-height: 1.08;
+}
+
+.scheme3-batch-image-title > span {
+  display: block;
+  margin-top: .45rem;
+  color: var(--batch-muted);
+  font-size: .74rem;
+  line-height: 1.55;
+}
+
+.scheme3-batch-image-ledger {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--batch-line);
+  border-radius: 7px;
+  background: var(--batch-card);
+}
+
+.scheme3-batch-image-ledger span {
+  display: grid;
+  min-width: 5rem;
+  gap: .1rem;
+  border-right: 1px solid var(--batch-line);
+  padding: .48rem .66rem;
+  text-align: right;
+}
+
+.scheme3-batch-image-ledger span:last-child { border-right: 0; }
+
+.scheme3-batch-image-ledger strong {
+  overflow: hidden;
+  color: var(--batch-accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: .88rem;
+  font-weight: 600;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheme3-batch-image-ledger small {
+  color: var(--batch-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .52rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.scheme3-batch-image :deep(.scheme3-batch-table-layout) {
+  height: calc(100dvh - 14.15rem);
+  gap: .76rem;
+}
+
+.scheme3-batch-filter-shell {
+  border: 1px solid var(--batch-line);
+  border-radius: 8px;
+  background: var(--batch-card);
+  box-shadow: 0 9px 21px rgba(54,48,34,.045);
+  padding: .78rem;
+}
+
+.scheme3-batch-image :deep(.btn) {
+  min-height: 2.25rem;
+  border-radius: 7px;
+  font-size: .7rem;
+  font-weight: 800;
+}
+
+.scheme3-batch-image :deep(.btn-secondary) {
+  border-color: var(--batch-line);
+  background: var(--batch-card);
+  color: var(--batch-ink);
+  box-shadow: none;
+}
+
+.scheme3-batch-image :deep(.btn-secondary:hover:not(:disabled)) {
+  border-color: rgba(30,92,66,.3);
+  background: var(--batch-subtle);
+  color: var(--batch-accent);
+}
+
+.scheme3-batch-image :deep(.btn-primary) {
+  border-color: var(--batch-accent);
+  background: var(--batch-accent);
+  color: var(--batch-primary-fg);
+  box-shadow: 0 8px 17px rgba(30,92,66,.14);
+}
+
+.scheme3-batch-image :deep(.btn-primary:hover:not(:disabled)) { background: var(--batch-accent-hover); }
+
+.scheme3-batch-image :deep(.input),
+.scheme3-batch-image :deep(.select-trigger),
+.scheme3-batch-image :deep(textarea),
+.scheme3-batch-image :deep(select) {
+  border-color: var(--batch-line);
+  border-radius: 7px;
+  background: var(--batch-card);
+  color: var(--batch-ink);
+  box-shadow: none;
+}
+
+.scheme3-batch-image :deep(.input),
+.scheme3-batch-image :deep(.select-trigger),
+.scheme3-batch-image :deep(select) { min-height: 2.35rem; font-size: .73rem; }
+.scheme3-batch-image :deep(textarea) { font-size: .75rem; }
+.scheme3-batch-image :deep(.input::placeholder),.scheme3-batch-image :deep(textarea::placeholder) { color: var(--batch-soft); }
+.scheme3-batch-image :deep(.input:focus),.scheme3-batch-image :deep(.select-trigger:focus),.scheme3-batch-image :deep(textarea:focus),.scheme3-batch-image :deep(select:focus) { border-color: var(--batch-accent); box-shadow: 0 0 0 3px rgba(30,92,66,.11); }
+.scheme3-batch-image :deep(.select-icon) { color: var(--batch-soft); }
+
+.scheme3-batch-selection {
+  border-color: rgba(30,92,66,.22) !important;
+  border-radius: 7px !important;
+  background: rgba(30,92,66,.075) !important;
+  box-shadow: none !important;
+}
+
+.scheme3-batch-selection :deep(.text-gray-600),.scheme3-batch-selection :deep(.text-gray-900) { color: var(--batch-accent) !important; }
+
+.scheme3-batch-image :deep(.table-scroll-container) {
+  border: 1px solid var(--batch-line) !important;
+  border-radius: 8px !important;
+  background: var(--batch-card) !important;
+  box-shadow: 0 11px 24px rgba(54,48,34,.06) !important;
+}
+
+.scheme3-batch-image :deep(.table-scroll-container .table-wrapper) { background: var(--batch-card); }
+.scheme3-batch-image :deep(.table-scroll-container table),.scheme3-batch-image :deep(.table-scroll-container tbody) { background: var(--batch-card) !important; color: var(--batch-ink); }
+.scheme3-batch-image :deep(.table-scroll-container thead),.scheme3-batch-image :deep(.table-scroll-container .table-header),.scheme3-batch-image :deep(.table-scroll-container .sticky-header-cell) { background: var(--batch-subtle) !important; }
+.scheme3-batch-image :deep(.table-scroll-container th) { border-color: var(--batch-line) !important; color: var(--batch-muted) !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .59rem !important; font-weight: 800 !important; }
+.scheme3-batch-image :deep(.table-scroll-container td) { border-color: rgba(216,210,195,.78) !important; color: var(--batch-ink) !important; }
+.scheme3-batch-image :deep(.table-scroll-container tbody .sticky-col) { background-color: var(--batch-card) !important; }
+.scheme3-batch-image :deep(.table-scroll-container tbody tr:hover) { background: rgba(30,92,66,.045) !important; }
+.scheme3-batch-image :deep(.table-scroll-container tbody tr:hover .sticky-col) { background-color: rgba(30,92,66,.045) !important; }
+.scheme3-batch-image :deep(.table-scroll-container input[type='checkbox']) { accent-color: var(--batch-accent); border-color: var(--batch-line); background: var(--batch-card); }
+
+.scheme3-batch-image :deep(.scheme3-batch-data-table > .rounded-lg) {
+  border-color: var(--batch-line) !important;
+  border-radius: 8px !important;
+  background: var(--batch-card) !important;
+  box-shadow: 0 9px 20px rgba(54,48,34,.05);
+}
+
+.scheme3-batch-image :deep(.scheme3-batch-data-table [data-field]) { border-color: var(--batch-line); }
+.scheme3-batch-image :deep(.scheme3-batch-data-table [data-field] > span) { color: var(--batch-muted) !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .57rem; font-weight: 800; }
+
+.scheme3-batch-image :deep(.badge) { border: 1px solid transparent; border-radius: 999px; font-size: .62rem; font-weight: 800; }
+.scheme3-batch-image :deep(.badge-primary) { border-color: rgba(183,121,31,.25); background: rgba(183,121,31,.1) !important; color: var(--batch-amber) !important; }
+.scheme3-batch-image :deep(.badge-success) { border-color: rgba(30,92,66,.2); background: rgba(30,92,66,.1) !important; color: var(--batch-accent) !important; }
+.scheme3-batch-image :deep(.badge-warning) { border-color: rgba(183,121,31,.28); background: rgba(183,121,31,.11) !important; color: var(--batch-amber) !important; }
+.scheme3-batch-image :deep(.badge-danger) { border-color: rgba(158,77,61,.28); background: rgba(158,77,61,.1) !important; color: var(--batch-danger) !important; }
+.scheme3-batch-image :deep(.badge-gray) { border-color: var(--batch-line); background: var(--batch-subtle) !important; color: var(--batch-muted) !important; }
+
+.batch-row-action {
+  min-height: 3.15rem;
+  border: 1px solid transparent;
+  border-radius: 6px !important;
+  color: var(--batch-muted) !important;
+  font-size: .59rem;
+}
+
+.batch-row-action:hover:not(:disabled) { border-color: rgba(30,92,66,.22); background: rgba(30,92,66,.075) !important; color: var(--batch-accent) !important; }
+.batch-row-action:active { transform: scale(.96); }
+.batch-prompt-trigger:hover { background: var(--batch-subtle); color: var(--batch-ink); }
+
+.scheme3-batch-pagination {
+  border: 1px solid var(--batch-line) !important;
+  border-radius: 8px !important;
+  background: var(--batch-card) !important;
+  box-shadow: 0 9px 20px rgba(54,48,34,.045);
+}
+
+.scheme3-batch-pagination :deep(.text-gray-700),.scheme3-batch-pagination :deep(.text-gray-300) { color: var(--batch-muted) !important; }
+
+:global(.scheme3-batch-more-menu),
+:global(.scheme3-batch-prompt-popover) {
+  border: 1px solid #d8d2c3 !important;
+  border-radius: 8px !important;
+  background: #fffefa !important;
+  color: #27251f !important;
+  box-shadow: 0 16px 32px rgba(54,48,34,.16) !important;
+}
+
+:global(.scheme3-batch-more-menu button) { color: #655f53; font-size: .72rem; }
+:global(.scheme3-batch-more-menu button:hover) { background: #f1eee6 !important; color: #1e5c42 !important; }
+:global(.scheme3-batch-more-menu button.text-red-600:hover) { background: rgba(158,77,61,.08) !important; color: #9e4d3d !important; }
+:global(.scheme3-batch-prompt-popover .text-gray-500) { color: #777266 !important; }
+
+:global(.scheme3-batch-dialog) {
+  --batch-dialog-card: #fffefa;
+  --batch-dialog-subtle: #f1eee6;
+  --batch-dialog-ink: #27251f;
+  --batch-dialog-muted: #777266;
+  --batch-dialog-line: #d8d2c3;
+  border: 1px solid var(--batch-dialog-line) !important;
+  border-radius: 8px !important;
+  background: var(--batch-dialog-card) !important;
+  color: var(--batch-dialog-ink) !important;
+  box-shadow: 0 22px 54px rgba(54,48,34,.2) !important;
+}
+
+:global(.scheme3-batch-dialog .modal-header) { border-color: var(--batch-dialog-line) !important; background: var(--batch-dialog-subtle); }
+:global(.scheme3-batch-dialog .modal-title) { color: var(--batch-dialog-ink) !important; font-family: Georgia, 'Times New Roman', serif; font-weight: 500; }
+:global(.scheme3-batch-dialog .modal-body) { color: var(--batch-dialog-ink); }
+:global(.scheme3-batch-dialog .modal-footer) { border-color: var(--batch-dialog-line) !important; background: var(--batch-dialog-subtle); }
+:global(.scheme3-batch-dialog .btn) { min-height: 2.25rem; border-radius: 7px; font-size: .72rem; font-weight: 800; }
+:global(.scheme3-batch-dialog .btn-secondary) { border-color: var(--batch-dialog-line); background: var(--batch-dialog-card); color: var(--batch-dialog-ink); }
+:global(.scheme3-batch-dialog .btn-primary) { border-color: #1e5c42; background: #1e5c42; color: #fffefa; box-shadow: 0 8px 17px rgba(30,92,66,.14); }
+:global(.scheme3-batch-dialog .input),:global(.scheme3-batch-dialog select),:global(.scheme3-batch-dialog textarea) { border-color: var(--batch-dialog-line) !important; border-radius: 7px !important; background: var(--batch-dialog-card) !important; color: var(--batch-dialog-ink) !important; box-shadow: none !important; }
+:global(.scheme3-batch-dialog .input:focus),:global(.scheme3-batch-dialog select:focus),:global(.scheme3-batch-dialog textarea:focus) { border-color: #1e5c42 !important; box-shadow: 0 0 0 3px rgba(30,92,66,.11) !important; }
+:global(.scheme3-batch-dialog .rounded-lg),:global(.scheme3-batch-dialog .rounded-md) { border-radius: 7px !important; }
+:global(.scheme3-batch-dialog .bg-gray-50),:global(.scheme3-batch-dialog .bg-gray-50\/70),:global(.scheme3-batch-dialog .bg-white) { background: var(--batch-dialog-subtle) !important; }
+:global(.scheme3-batch-dialog .border-gray-100),:global(.scheme3-batch-dialog .border-gray-200),:global(.scheme3-batch-dialog .border-gray-300) { border-color: var(--batch-dialog-line) !important; }
+:global(.scheme3-batch-dialog .text-gray-900),:global(.scheme3-batch-dialog .text-gray-800),:global(.scheme3-batch-dialog .text-gray-700) { color: var(--batch-dialog-ink) !important; }
+:global(.scheme3-batch-dialog .text-gray-600),:global(.scheme3-batch-dialog .text-gray-500),:global(.scheme3-batch-dialog .text-gray-400) { color: var(--batch-dialog-muted) !important; }
+
+:global(.dark .scheme3-batch-image) {
+  --batch-card: #24231f;
+  --batch-subtle: #2b2924;
+  --batch-ink: #f4f2ec;
+  --batch-muted: #aaa69a;
+  --batch-soft: #827e72;
+  --batch-line: #47443a;
+  --batch-accent: #8fc2a5;
+  --batch-accent-hover: #a7cfb3;
+  --batch-primary-fg: #1b1b18;
+  --batch-amber: #d3a55a;
+  --batch-danger: #d38b79;
+}
+
+:global(.dark .scheme3-batch-more-menu),
+:global(.dark .scheme3-batch-prompt-popover) { border-color: #47443a !important; background: #24231f !important; color: #f4f2ec !important; box-shadow: 0 17px 34px rgba(0,0,0,.3) !important; }
+:global(.dark .scheme3-batch-more-menu button) { color: #aaa69a; }
+:global(.dark .scheme3-batch-more-menu button:hover) { background: #2b2924 !important; color: #8fc2a5 !important; }
+:global(.dark .scheme3-batch-prompt-popover .text-gray-500) { color: #aaa69a !important; }
+
+:global(.dark .scheme3-batch-dialog) {
+  --batch-dialog-card: #24231f;
+  --batch-dialog-subtle: #2b2924;
+  --batch-dialog-ink: #f4f2ec;
+  --batch-dialog-muted: #aaa69a;
+  --batch-dialog-line: #47443a;
+  background: var(--batch-dialog-card) !important;
+  box-shadow: 0 24px 54px rgba(0,0,0,.35) !important;
+}
+
+:global(.dark .scheme3-batch-dialog .btn-primary) { border-color: #8fc2a5; background: #8fc2a5; color: #1b1b18; }
+:global(.dark .scheme3-batch-dialog .btn-secondary) { border-color: var(--batch-dialog-line); background: var(--batch-dialog-card); color: var(--batch-dialog-ink); }
+
+@media (max-width: 1023px) {
+  .scheme3-batch-image :deep(.scheme3-batch-table-layout) { height: auto; }
+}
+
+@media (max-width: 720px) {
+  .scheme3-batch-image-header { align-items: stretch; flex-direction: column; gap: .76rem; padding-bottom: .82rem; }
+  .scheme3-batch-image-title h1 { font-size: 1.62rem; }
+  .scheme3-batch-image-ledger { width: 100%; }
+  .scheme3-batch-image-ledger span { flex: 1 1 0; min-width: 0; padding: .46rem .34rem; }
+  .scheme3-batch-filter-shell { padding: .68rem; }
+  .scheme3-batch-selection { align-items: stretch !important; flex-direction: column; }
+  .scheme3-batch-pagination { padding: .72rem !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scheme3-batch-image *, .scheme3-batch-image *::before, .scheme3-batch-image *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
 </style>

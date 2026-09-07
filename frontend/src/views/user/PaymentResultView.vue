@@ -1,5 +1,5 @@
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-gray-50 px-4 dark:bg-dark-900">
+  <div class="scheme3-payment-result flex min-h-screen items-center justify-center px-4">
     <div class="w-full max-w-md space-y-6">
       <!-- Loading -->
       <div v-if="loading" class="flex items-center justify-center py-20">
@@ -33,7 +33,7 @@
           </p>
         </div>
         <!-- Order Info -->
-        <div v-if="order" class="rounded-xl bg-white p-5 shadow-sm dark:bg-dark-800">
+        <div v-if="order" class="scheme3-payment-result-order p-5">
           <div class="space-y-3 text-sm">
             <div v-if="hasOrderId(order)" class="flex justify-between">
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
@@ -141,8 +141,8 @@ const STATUS_REFRESH_INTERVAL_MS = 2000
 const STATUS_REFRESH_MAX_ATTEMPTS = 15
 
 let statusRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let userBalanceRefreshStarted = false
 const refreshAttempts = ref(0)
-let refreshedUserAfterPayment = false
 
 /** 充值金额 = pay_amount / (1 + fee_rate/100)，fee_rate=0 时等于 pay_amount */
 const baseAmount = computed(() => {
@@ -200,13 +200,21 @@ function setResolvedOrder(nextOrder: ResolvedOrder | null): void {
   if (nextOrder && 'currency' in nextOrder && nextOrder.currency) {
     currency.value = normalizePaymentCurrency(nextOrder.currency)
   }
+  refreshUserBalanceForSuccessfulOrder(nextOrder)
+}
 
-  if (!refreshedUserAfterPayment && isSuccessStatus(nextOrder?.status)) {
-    refreshedUserAfterPayment = true
-    authStore.refreshUser().catch((error) => {
-      console.warn('Failed to refresh user after payment completion:', error)
-    })
+function refreshUserBalanceForSuccessfulOrder(nextOrder: ResolvedOrder | null): void {
+  if (!nextOrder || userBalanceRefreshStarted || normalizeOrderStatus(nextOrder.status) !== 'COMPLETED') {
+    return
   }
+  if ('order_type' in nextOrder && nextOrder.order_type !== 'balance') {
+    return
+  }
+
+  userBalanceRefreshStarted = true
+  void authStore.refreshUser().catch(() => {
+    // The order result remains authoritative even if refreshing profile data fails.
+  })
 }
 
 function hasOrderId(nextOrder: ResolvedOrder | null): nextOrder is PaymentOrder {
@@ -453,3 +461,20 @@ onBeforeUnmount(() => {
   clearStatusRefreshTimer()
 })
 </script>
+
+<style scoped>
+.scheme3-payment-result { --scheme3-result-card: #fffefa; --scheme3-result-line: #d8d2c3; --scheme3-result-ink: #27251f; background: #f4f2ec; }
+.scheme3-payment-result-order { border: 1px solid var(--scheme3-result-line); border-radius: 8px; background: var(--scheme3-result-card); box-shadow: 0 12px 26px rgba(54,48,34,.07); }
+.scheme3-payment-result :deep(.btn-primary) { border-radius: 7px; background: #1e5c42; box-shadow: 0 8px 16px rgba(30,92,66,.15); }
+.scheme3-payment-result :deep(.bg-green-100) { background: rgba(30,92,66,.1) !important; }
+.scheme3-payment-result :deep(.text-green-500) { color: #1e5c42 !important; }
+.scheme3-payment-result :deep(.bg-yellow-100) { background: rgba(183,121,31,.1) !important; }
+.scheme3-payment-result :deep(.text-yellow-500) { color: #b7791f !important; }
+
+:global(.dark .scheme3-payment-result) { --scheme3-result-card: #24231f; --scheme3-result-line: #47443a; --scheme3-result-ink: #f4f2ec; background: #1b1b18; }
+:global(.dark .scheme3-payment-result .btn-primary) { background: #8fc2a5; color: #1b1b18; }
+:global(.dark .scheme3-payment-result .bg-green-100) { background: rgba(143,194,165,.12) !important; }
+:global(.dark .scheme3-payment-result .text-green-500) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-payment-result .bg-yellow-100) { background: rgba(214,166,93,.12) !important; }
+:global(.dark .scheme3-payment-result .text-yellow-500) { color: #d6a65d !important; }
+</style>

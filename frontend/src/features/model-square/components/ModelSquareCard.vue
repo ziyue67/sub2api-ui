@@ -1,5 +1,5 @@
 <template>
-  <article class='bg-white dark:bg-dark-900 border border-gray-200 dark:border-dark-800 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden flex flex-col'>
+  <article class='scheme3-model-square-card bg-white dark:bg-dark-900 border border-gray-200 dark:border-dark-800 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden flex flex-col'>
     <header class='px-6 py-5 flex items-start justify-between border-b border-gray-100 dark:border-dark-800 bg-gray-50/30 dark:bg-dark-950/20'>
       <div class='min-w-0'>
         <h2 class='text-xl font-black tracking-tight text-gray-900 dark:text-white truncate leading-tight'>{{ model.name }}</h2>
@@ -35,3 +35,8 @@ defineProps<Props>()
 
 const { t } = useI18n()
 </script>
+
+<style scoped>
+.scheme3-model-square-card { border-color: var(--scheme3-line, #dad5c8); border-radius: 7px; background: var(--scheme3-card, #fbfaf6); color: var(--scheme3-ink, #16150f); box-shadow: 0 6px 16px rgba(54,48,34,.05); }
+:global(html.dark .scheme3-model-square-card) { border-color: #47443a; background: #24231f; color: #f4f2ec; }
+</style>
