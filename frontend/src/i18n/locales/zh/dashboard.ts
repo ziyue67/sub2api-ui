@@ -1,6 +1,7 @@
 export default {
   dashboard: {
     title: '仪表盘',
+    scheme3Description: '调用账本与路由观察',
     welcomeMessage: '欢迎回来！这是您账户的概览。',
     balance: '余额',
     apiKeys: 'API 密钥',
@@ -189,9 +190,9 @@ export default {
       },
       grok: {
         description:
-          '配置 Grok CLI、Claude Code、Codex 或 OpenCode，让请求通过当前 Sub2API Grok 分组发送。文本模型走 Responses；图片/视频使用 Imagine 模型 ID 与媒体端点。',
-        claudeDescription: '配置 Claude Code，让 Messages API 请求通过当前 Sub2API Grok 分组发送。',
-        codexDescription: '配置 Codex，让 Responses API 请求通过当前 Sub2API Grok 分组发送。',
+          '配置 Grok CLI、Claude Code、Codex 或 OpenCode，让请求通过当前 Grok 路由分组发送。文本模型走 Responses；图片/视频使用 Imagine 模型 ID 与媒体端点。',
+        claudeDescription: '配置 Claude Code，让 Messages API 请求通过当前 Grok 路由分组发送。',
+        codexDescription: '配置 Codex，让 Responses API 请求通过当前 Grok 路由分组发送。',
         configTomlHint:
           '官方路径：~/.grok/config.toml（或 $GROK_HOME）。请填写 [endpoints]（models_base_url / models_list_url / xai_api_base_url / cli_chat_proxy_base_url）、[auth] preferred_method=api_key、[models]、[session]、[features] 图片/视频覆盖。优先 env_key，勿硬编码 api_key；文本模型必须 api_backend=responses。合并前备份，保存后运行 grok inspect。',
         codexConfigTomlHint:
@@ -206,6 +207,32 @@ export default {
           '导出 SUB2API_API_KEY，将 config.toml 保存到 ~/.codex（可用 mkdir -p ~/.codex）。优先 env_key，勿提交密钥。',
         codexNoteWindows:
           '设置 $env:SUB2API_API_KEY，将 config.toml 保存到 %USERPROFILE%\\.codex。优先 env_key，勿提交密钥。'
+      },
+      deepseek: {
+        description: '通过当前 DeepSeek 分组配置 Claude Code、Codex 或 OpenCode。',
+        codexDescription: '使用 API Key 配置 Codex，并通过当前 DeepSeek 分组发送请求。',
+        codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        codexNote: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
+      },
+      composite: {
+        description: '通过当前 Composite 路由分组配置受支持的客户端。',
+        codexDescription: '使用 API Key 和当前 Composite 分组的完整模型目录配置 Codex。',
+        codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        codexNote: '启动 Codex 前先导出 SUB2API_API_KEY；分组会根据目录中选中的模型路由请求。'
+      },
+      routedCodex: {
+        description: '使用当前路由分组的完整模型目录配置 Codex。',
+        configTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        note: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
+      },
+      codexModelCatalog: {
+        title: 'Codex 模型目录',
+        description: '使用当前 API Key 获取目录，并保存到 config.toml 引用的路径。',
+        fetch: '获取目录',
+        retry: '重试',
+        download: '下载目录',
+        modelsCount: '已获取 {count} 个模型',
+        errorDescription: '无法使用当前 API Key 获取模型目录。'
       },
       opencode: {
         title: 'OpenCode 配置示例',
@@ -329,6 +356,7 @@ export default {
 	  modelVariant: '疑似版本变体',
 	  modelMismatch: '模型不一致',
     reasoningEffort: '推理强度',
+    requestedReasoningEffort: '请求推理强度',
     endpoint: '端点',
     endpointDistribution: '端点分布',
     inbound: '入站',
@@ -349,6 +377,10 @@ export default {
     ws: 'WS',
     stream: '流式',
     sync: '同步',
+    nativeCompactionV2: '压缩',
+    compactionFilter: '请求类别',
+    allCompactionTypes: '全部请求',
+    compactionOnly: '仅原生压缩',
     cyber: '安全策略',
     live: 'Live',
     unknown: '未知',
@@ -387,6 +419,7 @@ export default {
     cacheWrite: '写入',
     serviceTier: '服务档位',
     serviceTierPriority: 'Fast',
+    serviceTierUltrafast: 'Ultrafast',
     serviceTierFlex: 'Flex',
     serviceTierStandard: 'Standard',
     rate: '倍率',
@@ -450,18 +483,49 @@ export default {
       openai: 'OpenAI',
       anthropic: 'Anthropic',
       gemini: 'Gemini',
-      grok: 'Grok'
+      grok: 'Grok',
+      antigravity: 'Antigravity',
+      kimi: 'Kimi',
+      zhipu: '智谱 GLM',
+      deepseek: 'DeepSeek'
+    },
+    // 检查模式（监控条目的工作方式）
+    checkMode: {
+      probe: '探活',
+      quota: '配额',
+      quota_probe: '探活 + 配额'
+    },
+    // 配额快照展示（MonitorQuotaView，管理端与用户端共用）
+    quota: {
+      unavailable: '配额信息不可用',
+      windows: {
+        '5h': '5 小时',
+        '7d': '7 天',
+        '7dSonnet': '7 天 Sonnet',
+        '7dFable': '7 天 Fable',
+        weekly: '周',
+        daily: '日',
+        '30d': '30 天',
+        total: '总量'
+      },
+      labels: {
+        requests: '请求',
+        tokens: 'Token',
+        shared: '共享',
+        pro: 'Pro',
+        flash: 'Flash'
+      }
     },
     extraModelsHeader: '附加模型',
     extraModelsEmpty: '无附加模型',
     latencyEmpty: '-',
     availabilityPrefix: '可用性',
     dialogLatency: '对话延迟',
-    endpointPing: '端点 PING',
+    endpointPing: '端点连通',
     history60pts: '近 {n} 次记录',
     nextUpdateIn: '{n}s 后刷新',
-    past: 'PAST',
-    now: 'NOW',
+    past: '此前',
+    now: '现在',
     maintenancePaused: '维护中 · 已暂停时间线采集',
     extraModelsCount: '+ {n} 模型',
     pollEvery: '{n}s 轮询',
@@ -488,9 +552,9 @@ export default {
       '30d': '30 天'
     },
     overall: {
-      operational: 'OPERATIONAL',
-      degraded: 'DEGRADED',
-      unavailable: 'UNAVAILABLE'
+      operational: '运行正常',
+      degraded: '需要留意',
+      unavailable: '不可用'
     },
     columns: {
       name: '名称',
@@ -543,6 +607,8 @@ export default {
       inputPrice: '输入',
       outputPrice: '输出',
       cacheWritePrice: '缓存写入',
+      cacheWrite5mPrice: '缓存写入（5m）',
+      cacheWrite1hPrice: '缓存写入（1h）',
       cacheReadPrice: '缓存读取',
       imageInputPrice: '图片输入',
       imageOutputPrice: '图片输出',
@@ -578,7 +644,8 @@ export default {
       noModels: '该分组暂未配置模型',
       channelCount: '{count} 个渠道',
       noPricing: '未配置定价',
-      peakNote: '高峰时段 {window} 计费倍率 ×{multiplier}'
+      peakNote: '高峰时段 {window} 计费倍率 ×{multiplier}',
+      longContextDisabledNote: '该分组未启用长上下文阶梯计费，超阈值请求仍按基础档计费，官方阶梯仅供参考'
     },
     table: {
       model: '模型',
@@ -587,6 +654,19 @@ export default {
       cache: '缓存',
       cacheWrite: '写入',
       cacheRead: '读取',
+      cacheWriteShort: '写',
+      cacheReadShort: '读',
+      tierHint: '按单次请求的总上下文（输入 + 缓存写入 + 缓存读取）所在档位对整单计价',
+      tierHintMarginal: '仅超过阈值的部分按该档计价，输出不加价',
+      maxReasoningMultiplierBadge: 'Max ×{multiplier}',
+      maxReasoningMultiplierHint: '最终转发的推理强度为 max 时，整次请求的计费与额度消耗乘以 {multiplier}',
+      marginalBadge: '超出部分计价',
+      timePricingRowHint: '按 {timezone} 时间，在该时段内发起的请求按本行价格计费',
+      timePricingRowHintWeekdays:
+        '按 {timezone} 时间，仅工作日（周一至周五）在该时段内发起的请求按本行价格计费，周末全天按标准价',
+      timePricingRowHintPeak: '；本行价格未含高峰倍率，与高峰时段 {window} 重叠的部分实付再乘 ×{multiplier}',
+      timePricingWeekdays: '工作日',
+      timePricingRateHint: '生效倍率 {rate} × 时段倍率 {multiplier}',
       paidPrice: '实付价格(折后)',
       officialPrice: '官方价格',
       rate: '折扣倍率',

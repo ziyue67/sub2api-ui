@@ -5,9 +5,11 @@ const props = withDefaults(defineProps<{
   content?: string
   trigger?: 'hover' | 'click'
   widthClass?: string
+  teleportClass?: string
 }>(), {
   trigger: 'hover',
   widthClass: 'w-64',
+  teleportClass: '',
 })
 
 const show = ref(false)
@@ -29,8 +31,19 @@ function onEnter() {
   openTooltip()
 }
 
-function onLeave() {
+function isInside(container: HTMLElement | null, target: EventTarget | null): boolean {
+  return target instanceof Node && !!container?.contains(target)
+}
+
+function onLeave(event: MouseEvent) {
   if (props.trigger !== 'hover') return
+  if (isInside(tooltipRef.value, event.relatedTarget)) return
+  closeTooltip()
+}
+
+function onTooltipLeave(event: MouseEvent) {
+  if (props.trigger !== 'hover') return
+  if (isInside(triggerRef.value, event.relatedTarget)) return
   closeTooltip()
 }
 
@@ -100,7 +113,9 @@ onBeforeUnmount(() => {
     <!-- Trigger Icon -->
     <slot name="trigger">
       <svg
-        class="h-4 w-4 cursor-help text-gray-400 transition-colors hover:text-primary-600 dark:text-gray-500 dark:hover:text-primary-400"
+        :class="props.teleportClass
+          ? 'scheme3-tooltip-trigger h-4 w-4 cursor-help transition-colors'
+          : 'h-4 w-4 cursor-help text-gray-400 transition-colors hover:text-primary-600 dark:text-gray-500 dark:hover:text-primary-400'"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -121,15 +136,19 @@ onBeforeUnmount(() => {
         v-show="show"
         role="tooltip"
         :class="[
-          'fixed z-[99999] -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 dark:bg-gray-800',
+          props.teleportClass
+            ? 'scheme3-tooltip-shell fixed z-[99999] -translate-x-1/2 -translate-y-full p-3 text-xs leading-relaxed selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:top-full before:h-3 dark:selection:bg-primary-200 dark:selection:text-gray-900'
+            : 'fixed z-[99999] -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:top-full before:h-3 dark:bg-gray-800 dark:selection:bg-primary-200 dark:selection:text-gray-900',
           props.widthClass,
+          props.teleportClass,
         ]"
         :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left }"
+        @mouseleave="onTooltipLeave"
       >
         <button
           v-if="props.trigger === 'click'"
           type="button"
-          class="absolute right-1.5 top-1.5 rounded p-1 text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+          :class="props.teleportClass ? 'scheme3-tooltip-close' : 'absolute right-1.5 top-1.5 rounded p-1 text-gray-300 transition-colors hover:bg-white/10 hover:text-white'"
           aria-label="Close"
           @click.stop="closeTooltip"
         >
@@ -138,7 +157,7 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <slot>{{ content }}</slot>
-        <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+        <div :class="props.teleportClass ? 'scheme3-tooltip-arrow' : 'absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800'"></div>
       </div>
     </Teleport>
   </div>

@@ -188,6 +188,16 @@ export async function register(userData: RegisterRequest): Promise<AuthResponse>
   return data
 }
 
+/** Resolve and persist a click-time affiliate attribution on the server. */
+export async function captureAffiliateAttribution(affCode: string): Promise<boolean> {
+  const code = affCode.trim()
+  if (!code) return false
+  const { data } = await apiClient.get<{ captured?: boolean }>('/auth/affiliate/click', {
+    params: { aff_code: code }
+  })
+  return data.captured === true
+}
+
 /**
  * Get current authenticated user
  * @returns User profile data

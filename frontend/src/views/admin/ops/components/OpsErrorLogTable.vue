@@ -7,6 +7,7 @@
         :columns="columns"
         :data="rows"
         :loading="loading"
+        scheme3
         clickable-rows
         server-side-sort
         default-sort-key="created_at"

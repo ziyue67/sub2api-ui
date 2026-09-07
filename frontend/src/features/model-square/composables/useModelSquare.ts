@@ -1,9 +1,11 @@
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import modelSquareAPI, { type ModelSquareEntry } from '@/api/modelSquare'
 import userGroupsAPI from '@/api/groups'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { ModelSquareChannel, ModelSquareModel } from '../types'
+import { resolveCapabilities, resolveContextWindow, resolveEffectivePricing, hasCustomPricing } from '../utils/modelCatalog'
+import { isRequestBilling } from '../utils/pricing'
 
 function groupChannels(entries: ModelSquareEntry[]): ModelSquareChannel[] {
   const channelsByKey = new Map<string, ModelSquareChannel>()
@@ -13,11 +15,13 @@ function groupChannels(entries: ModelSquareEntry[]): ModelSquareChannel[] {
     if (existing) {
       existing.entries.push(entry)
     } else {
+      const { pricing: effectivePricing, isOfficialFallback } = resolveEffectivePricing(entry.name, entry.pricing)
       channelsByKey.set(key, {
         key,
         name: entry.channel_name || '未关联渠道',
         entries: [entry],
-        pricing: entry.pricing,
+        pricing: effectivePricing,
+        isOfficialFallback,
       })
     }
   }
@@ -31,6 +35,7 @@ export function useModelSquare() {
   const error = ref<string | null>(null)
   const models = ref<ModelSquareEntry[]>([])
   const userGroupRates = ref<Record<number, number>>({})
+  let loadController: AbortController | null = null
 
   const platforms = computed(() => [
     'all',
@@ -56,25 +61,104 @@ export function useModelSquare() {
     }
     return Array.from(modelsByKey.values())
       .map((model) => ({ ...model, channels: groupChannels(model.entries) }))
+      .map((model) => {
+        // Calculate pricing stats across channels and groups
+        const allInputPrices: number[] = []
+        const allOutputPrices: number[] = []
+        const allCacheWritePrices: number[] = []
+        const allCacheReadPrices: number[] = []
+        const multipliers: number[] = []
+        let isReq = false
+        let hasIntervals = false
+        let accounts = 0
+        let hasAnyCustomPrice = false
+
+        for (const entry of model.entries) {
+          accounts += entry.account_count || 0
+          const effectiveMultiplier = userGroupRates.value[entry.group.id] ?? entry.group.rate_multiplier
+          if (effectiveMultiplier != null) {
+            multipliers.push(effectiveMultiplier)
+          }
+          if (hasCustomPricing(entry.pricing)) {
+            hasAnyCustomPrice = true
+          }
+          const { pricing: effectivePricing } = resolveEffectivePricing(model.name, entry.pricing)
+          if (effectivePricing) {
+            if (isRequestBilling(effectivePricing)) isReq = true
+            if (effectivePricing.intervals && effectivePricing.intervals.length > 0) hasIntervals = true
+            if (effectivePricing.input_price != null) allInputPrices.push(effectivePricing.input_price * (effectiveMultiplier ?? 1))
+            if (effectivePricing.output_price != null) allOutputPrices.push(effectivePricing.output_price * (effectiveMultiplier ?? 1))
+            if (effectivePricing.cache_write_price != null) allCacheWritePrices.push(effectivePricing.cache_write_price * (effectiveMultiplier ?? 1))
+            if (effectivePricing.cache_read_price != null) allCacheReadPrices.push(effectivePricing.cache_read_price * (effectiveMultiplier ?? 1))
+          }
+        }
+
+        const firstPricing = model.channels.find((c) => c.pricing != null)?.pricing
+        const { tokens: contextTokens, label: contextWindow } = resolveContextWindow(model.name)
+        const capabilities = resolveCapabilities(model.name, firstPricing)
+
+        return {
+          ...model,
+          contextTokens,
+          contextWindow,
+          capabilities,
+          minInputPrice: allInputPrices.length > 0 ? Math.min(...allInputPrices) : null,
+          maxInputPrice: allInputPrices.length > 0 ? Math.max(...allInputPrices) : null,
+          minOutputPrice: allOutputPrices.length > 0 ? Math.min(...allOutputPrices) : null,
+          maxOutputPrice: allOutputPrices.length > 0 ? Math.max(...allOutputPrices) : null,
+          minCacheWritePrice: allCacheWritePrices.length > 0 ? Math.min(...allCacheWritePrices) : null,
+          minCacheReadPrice: allCacheReadPrices.length > 0 ? Math.min(...allCacheReadPrices) : null,
+          isRequestBilling: isReq,
+          hasIntervals,
+          bestMultiplier: multipliers.length > 0 ? Math.min(...multipliers) : null,
+          totalAccounts: accounts,
+          isOfficialPriceFallback: !hasAnyCustomPrice && (allInputPrices.length > 0 || allOutputPrices.length > 0),
+          searchText: [
+            model.name,
+            model.platform,
+            ...capabilities,
+            ...model.entries.flatMap((entry) => [entry.channel_name, entry.group.name]),
+          ].join(' ').toLowerCase(),
+        }
+      })
       .sort((a, b) => a.platform.localeCompare(b.platform) || a.name.localeCompare(b.name))
   })
 
   async function loadModels() {
+    loadController?.abort()
+    const controller = new AbortController()
+    loadController = controller
     loading.value = true
     error.value = null
     try {
-      models.value = await modelSquareAPI.list()
-      userGroupRates.value = await userGroupsAPI.getUserGroupRates().catch(() => ({}))
+      const [nextModels, nextGroupRates] = await Promise.all([
+        modelSquareAPI.list({ signal: controller.signal }),
+        userGroupsAPI.getUserGroupRates({ signal: controller.signal }).catch((err: unknown) => {
+          if (controller.signal.aborted) throw err
+          return {}
+        }),
+      ])
+      if (controller.signal.aborted || loadController !== controller) return
+      models.value = nextModels
+      userGroupRates.value = nextGroupRates
     } catch (err: unknown) {
+      if (controller.signal.aborted || loadController !== controller) return
       const message = extractApiErrorMessage(err, '加载模型广场失败')
       error.value = message
       appStore.showError(message)
     } finally {
-      loading.value = false
+      if (loadController === controller) {
+        loadController = null
+        loading.value = false
+      }
     }
   }
 
-  onMounted(loadModels)
+  onMounted(() => void loadModels())
+  onBeforeUnmount(() => {
+    loadController?.abort()
+    loadController = null
+  })
 
   return {
     loading,

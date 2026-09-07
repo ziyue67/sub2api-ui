@@ -2,7 +2,7 @@
   <AppLayout>
     <div
       data-testid="profile-shell"
-      class="mx-auto max-w-[950px] space-y-6"
+      class="scheme3-profile-page mx-auto max-w-[950px] space-y-6"
     >
       <ProfileInfoCard
         :user="user"
@@ -17,17 +17,17 @@
 
       <div
         v-if="contactInfo"
-        class="card border-primary-200 bg-primary-50 p-6 dark:bg-primary-900/20"
+        class="scheme3-profile-contact card p-6"
       >
         <div class="flex items-center gap-4">
-          <div class="rounded-xl bg-primary-100 p-3 text-primary-600">
+          <div class="scheme3-profile-contact-mark rounded-xl p-3">
             <Icon name="chat" size="lg" />
           </div>
           <div>
-            <h3 class="font-semibold text-primary-800 dark:text-primary-200">
+            <h3 class="font-semibold">
               {{ t('common.contactSupport') }}
             </h3>
-            <p class="text-sm font-medium">{{ contactInfo }}</p>
+            <p class="scheme3-profile-contact-value text-sm font-medium">{{ contactInfo }}</p>
           </div>
         </div>
       </div>
@@ -113,3 +113,15 @@ onMounted(async () => {
   await Promise.all([profileRefresh, settingsLoad])
 })
 </script>
+
+<style scoped>
+.scheme3-profile-page { --profile-page-ink: #27251f; --profile-page-muted: #777266; --profile-page-line: #d8d2c3; --profile-page-card: #fffefa; color: var(--profile-page-ink); }
+.scheme3-profile-contact { border-color: var(--profile-page-line); background: var(--profile-page-card); box-shadow: 0 10px 24px rgba(54,48,34,.055); }
+.scheme3-profile-contact-mark { border: 1px solid rgba(30,92,66,.24); border-radius: 8px; background: rgba(30,92,66,.1); color: #1e5c42; }
+.scheme3-profile-contact h3 { color: var(--profile-page-ink); }
+.scheme3-profile-contact-value { color: var(--profile-page-muted); }
+
+:global(.dark .scheme3-profile-page) { --profile-page-ink: #f4f2ec; --profile-page-muted: #aaa69a; --profile-page-line: #47443a; --profile-page-card: #24231f; }
+:global(.dark .scheme3-profile-contact) { border-color: var(--profile-page-line); background: var(--profile-page-card); box-shadow: 0 10px 24px rgba(0,0,0,.16); }
+:global(.dark .scheme3-profile-contact-mark) { border-color: rgba(143,194,165,.28); background: rgba(143,194,165,.12); color: #8fc2a5; }
+</style>

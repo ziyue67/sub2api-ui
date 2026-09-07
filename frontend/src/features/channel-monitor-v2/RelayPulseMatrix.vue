@@ -1,25 +1,25 @@
 <template>
   <section
-    class="card flex min-h-[360px] flex-col overflow-visible !rounded-3xl !border-0 !p-6 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700"
+    class="scheme3-v2-panel scheme3-v2-matrix-panel flex min-h-[360px] flex-col overflow-visible"
   >
-    <div class="card-header mb-4 flex shrink-0 flex-wrap items-start justify-between gap-3 !border-0 !p-0">
+    <div class="scheme3-v2-panel-header mb-4 flex shrink-0 flex-wrap items-start justify-between gap-3">
       <div class="min-w-0">
-        <h2 class="flex items-center gap-2 text-sm font-bold text-gray-900 dark:text-white">
-          <span class="inline-flex h-4 w-4 text-emerald-500" aria-hidden="true">
+        <h2 class="scheme3-v2-panel-title flex items-center gap-2">
+          <span class="scheme3-v2-panel-icon inline-flex h-4 w-4" aria-hidden="true">
             <Icon name="grid" size="sm" />
           </span>
           {{ t('channelMonitorV2.matrix.title') }}
         </h2>
-        <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+        <p class="scheme3-v2-panel-description mt-0.5 text-xs">
           {{ t('channelMonitorV2.matrix.description') }}
         </p>
       </div>
-      <div class="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 text-xs text-gray-500 dark:text-gray-400 sm:w-auto">
-        <span class="badge badge-gray shrink-0">{{ bucketLabel }}</span>
-        <span class="hidden text-[11px] text-gray-400 dark:text-dark-400 sm:inline">{{ t('channelMonitorV2.matrix.wheelZoomX') }}</span>
+      <div class="scheme3-v2-panel-tools flex w-full min-w-0 flex-wrap items-center justify-end gap-2 text-xs sm:w-auto">
+        <span class="scheme3-v2-panel-badge shrink-0">{{ bucketLabel }}</span>
+        <span class="scheme3-v2-panel-hint hidden text-[11px] sm:inline">{{ t('channelMonitorV2.matrix.wheelZoomX') }}</span>
         <button
           type="button"
-          class="inline-flex shrink-0 items-center rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-800"
+          class="scheme3-v2-panel-action inline-flex shrink-0 items-center px-2 py-1 text-[11px] font-semibold disabled:opacity-50"
           :disabled="!zoomed"
           @click="resetMatrixZoom"
         >
@@ -28,16 +28,16 @@
       </div>
     </div>
 
-    <div class="card-body min-h-0 flex-1 !p-0">
+    <div class="scheme3-v2-panel-body min-h-0 flex-1">
       <div
         v-if="rows.length"
         ref="scrollRef"
-        class="matrix-scroll max-h-[min(42vh,420px)] max-w-full overflow-auto rounded-2xl bg-gray-50/60 p-2 dark:bg-dark-900/30"
+        class="matrix-scroll scheme3-v2-matrix-scroll max-h-[min(42vh,420px)] max-w-full overflow-auto p-2"
         @wheel="onMatrixWheel"
       >
         <div class="matrix-table w-full" :style="tableStyle">
           <div
-            class="matrix-header matrix-row sticky top-0 z-[3] bg-gray-50 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-dark-900 dark:text-gray-400"
+            class="matrix-header matrix-row scheme3-v2-matrix-header sticky top-0 z-[3] text-[10px] font-semibold uppercase tracking-wide"
             :class="showThroughput ? 'matrix-row--with-tps' : ''"
           >
             <span>{{ t('channelMonitorV2.matrix.dimension') }}</span>
@@ -53,31 +53,31 @@
           <div
             v-for="entry in alignedRows"
             :key="rowKey(entry.row)"
-            class="matrix-row border-b border-gray-100/80 dark:border-dark-700/60"
+            class="matrix-row scheme3-v2-matrix-data-row"
             :class="showThroughput ? 'matrix-row--with-tps' : ''"
           >
-            <div class="dimension-cell flex min-w-0 items-center gap-2 bg-white dark:bg-dark-800" :title="rowLabel(entry.row)">
-              <span :class="['status-dot', cellClass(entry.row.health, entry.row.metrics.request_count)]"></span>
-              <strong class="truncate text-xs font-semibold text-gray-800 dark:text-gray-100">{{ rowLabel(entry.row) }}</strong>
+            <div class="dimension-cell scheme3-v2-matrix-surface flex min-w-0 items-center gap-2" :title="rowLabel(entry.row)">
+              <span :class="['scheme3-v2-status-dot', cellClass(entry.row.health, entry.row.metrics.request_count)]"></span>
+              <strong class="scheme3-v2-dimension-label truncate text-xs font-semibold">{{ rowLabel(entry.row) }}</strong>
             </div>
-            <strong class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300">
+            <strong class="summary-value scheme3-v2-matrix-surface text-xs font-medium tabular-nums">
               {{ successRate(entry.row.metrics) }}
             </strong>
             <strong
-              class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300"
+              class="summary-value scheme3-v2-matrix-surface text-xs font-medium tabular-nums"
               :title="latencyPrivacy(entry.row.metrics.ttft)"
             >
               {{ formatMs(entry.row.metrics.ttft.p50_ms) }}
             </strong>
             <strong
               v-if="showThroughput"
-              class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300"
+              class="summary-value scheme3-v2-matrix-surface text-xs font-medium tabular-nums"
               :title="exactTps(entry.row.metrics.tpm)"
             >
               {{ formatTps(entry.row.metrics.tpm) }}
             </strong>
             <strong
-              class="summary-value bg-white text-xs font-medium tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300"
+              class="summary-value scheme3-v2-matrix-surface text-xs font-medium tabular-nums"
             >
               {{ formatPercent(entry.row.metrics.cache_rate) }}
             </strong>
@@ -92,64 +92,50 @@
                 ]"
                 tabindex="0"
                 role="img"
-                :title="slot.bucket ? bucketTooltip(slot.bucket) : t('channelMonitorV2.matrix.noTrafficAt', { time: formatBucketRange(slot.start) })"
-                :aria-label="slot.bucket ? bucketTooltip(slot.bucket) : t('channelMonitorV2.matrix.noTrafficAt', { time: formatBucketRange(slot.start) })"
+                :title="slot.ariaLabel"
+                :aria-label="slot.ariaLabel"
                 @mouseenter="showTooltip($event, slot)"
                 @mousemove="moveTooltip($event)"
                 @mouseleave="hideTooltip"
                 @focus="showTooltip($event, slot)"
                 @blur="hideTooltip"
-              >
-                <span class="pulse-tooltip" role="tooltip">
-                  <template v-if="slot.bucket">
-                    <span class="pulse-tooltip-line pulse-tooltip-title">{{ formatBucketRange(slot.start) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.matrix.scoreLine', { score: formatScore(slot.bucket.health) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.successRateValue', { value: successRate(slot.bucket.metrics) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.ttftValue', { value: latencyPrivacy(slot.bucket.metrics.ttft) }) }}</span>
-                    <span v-if="showThroughput" class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.tpsValue', { value: formatTps(slot.bucket.metrics.tpm) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.cacheRateValue', { value: formatPercent(slot.bucket.metrics.cache_rate) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(slot.bucket.metrics.error_rate) }) }}</span>
-                    <span v-if="showThroughput" class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.rpmValue', { value: formatRate(slot.bucket.metrics.rpm) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.durationValue', { value: latencyPrivacy(slot.bucket.metrics.duration) }) }}</span>
-                  </template>
-                  <template v-else>
-                    <span class="pulse-tooltip-line pulse-tooltip-title">{{ formatBucketRange(slot.start) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.matrix.noTraffic') }}</span>
-                  </template>
-                </span>
-              </span>
+              ></span>
             </div>
           </div>
         </div>
       </div>
-      <div v-else class="flex min-h-[200px] items-center justify-center py-8">
-        <EmptyState
-          :title="t('channelMonitorV2.matrix.emptyTitle')"
-          :description="t('channelMonitorV2.empty.description')"
-        />
+      <div v-else class="scheme3-v2-empty flex min-h-[200px] items-center justify-center py-8" role="status">
+        <span class="scheme3-v2-empty-mark" aria-hidden="true">
+          <Icon name="grid" size="md" />
+        </span>
+        <div class="scheme3-v2-empty-copy">
+          <strong>{{ t('channelMonitorV2.matrix.emptyTitle') }}</strong>
+          <p>{{ t('channelMonitorV2.empty.description') }}</p>
+        </div>
       </div>
 
-      <div class="mt-4 flex flex-col gap-2" :aria-label="t('channelMonitorV2.matrix.legendAria')">
-        <div class="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+      <div class="scheme3-v2-matrix-legend mt-4 flex flex-col gap-2" :aria-label="t('channelMonitorV2.matrix.legendAria')">
+        <div class="flex items-center gap-2 text-[11px]">
           <span class="shrink-0">{{ t('channelMonitorV2.matrix.bad') }}</span>
           <div class="score-legend h-2.5 flex-1 overflow-hidden rounded-full"></div>
           <span class="shrink-0">{{ t('channelMonitorV2.matrix.good') }}</span>
         </div>
-        <div class="flex flex-wrap gap-4 text-[11px] text-gray-500 dark:text-gray-400">
-          <span class="inline-flex items-center gap-1.5"><i class="status-dot health-score10"></i>{{ t('channelMonitorV2.matrix.healthyLegend') }}</span>
-          <span class="inline-flex items-center gap-1.5"><i class="status-dot health-score6"></i>{{ t('channelMonitorV2.matrix.warningLegend') }}</span>
-          <span class="inline-flex items-center gap-1.5"><i class="status-dot health-score2"></i>{{ t('channelMonitorV2.matrix.criticalLegend') }}</span>
-          <span class="inline-flex items-center gap-1.5"><i class="status-dot health-unknown"></i>{{ t('channelMonitorV2.matrix.unknownLegend') }}</span>
+        <div class="flex flex-wrap gap-4 text-[11px]">
+          <span class="inline-flex items-center gap-1.5"><i class="scheme3-v2-status-dot health-score10"></i>{{ t('channelMonitorV2.matrix.healthyLegend') }}</span>
+          <span class="inline-flex items-center gap-1.5"><i class="scheme3-v2-status-dot health-score6"></i>{{ t('channelMonitorV2.matrix.warningLegend') }}</span>
+          <span class="inline-flex items-center gap-1.5"><i class="scheme3-v2-status-dot health-score2"></i>{{ t('channelMonitorV2.matrix.criticalLegend') }}</span>
+          <span class="inline-flex items-center gap-1.5"><i class="scheme3-v2-status-dot health-unknown"></i>{{ t('channelMonitorV2.matrix.unknownLegend') }}</span>
         </div>
       </div>
     </div>
 
     <Teleport to="body">
       <div
-        v-if="floatingTooltip.visible"
+        v-show="floatingTooltip.visible"
+        ref="tooltipRef"
         class="matrix-floating-tooltip"
-        :style="{ left: `${floatingTooltip.x}px`, top: `${floatingTooltip.y}px` }"
         role="tooltip"
+        :aria-hidden="!floatingTooltip.visible"
       >
         <span
           v-for="(line, index) in floatingTooltip.lines"
@@ -166,7 +152,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import type {
   LatencyMetric,
   MonitorCoverage,
@@ -175,7 +161,6 @@ import type {
   MonitorMatrixRow,
   MonitorMetric,
 } from '@/api/channelMonitorV2'
-import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
   formatLatencyPrivacy,
@@ -211,18 +196,49 @@ const props = withDefaults(
   { showThroughput: true },
 )
 
-type AlignedSlot = { start: string; bucket?: MonitorMatrixBucket }
+type AlignedSlot = { start: string; bucket?: MonitorMatrixBucket; ariaLabel: string }
 
 const floatingTooltip = reactive({
   visible: false,
-  x: 0,
-  y: 0,
   lines: [] as string[],
 })
 
 const scrollRef = ref<HTMLElement | null>(null)
+const tooltipRef = ref<HTMLElement | null>(null)
 const zoom = ref<ZoomState>(resetZoom())
 const zoomed = computed(() => isZoomed(zoom.value))
+
+type PendingMatrixWheel = {
+  deltaX: number
+  deltaY: number
+  shiftKey: boolean
+  clientX: number
+  ratioElement: HTMLElement | null
+}
+
+type PendingTooltipPosition = { clientX: number; clientY: number }
+
+let matrixWheelFrame: number | null = null
+let pendingMatrixWheel: PendingMatrixWheel | null = null
+let tooltipFrame: number | null = null
+let pendingTooltipPosition: PendingTooltipPosition | null = null
+
+function scheduleFrame(callback: (timestamp: number) => void): number {
+  if (typeof window.requestAnimationFrame === 'function') return window.requestAnimationFrame(callback)
+  return window.setTimeout(() => callback(performance.now()), 16)
+}
+
+function cancelFrame(frame: number | null) {
+  if (frame == null) return
+  if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
+  else window.clearTimeout(frame)
+}
+
+function cancelPendingMatrixWheel() {
+  pendingMatrixWheel = null
+  cancelFrame(matrixWheelFrame)
+  matrixWheelFrame = null
+}
 
 const allBucketStarts = computed(() => {
   // X-axis always spans the UI-selected range [requested_start, requested_end).
@@ -287,6 +303,17 @@ const bucketLabel = computed(() => {
   return t('channelMonitorV2.bucket.days', { count: hours / 24 })
 })
 
+const axisTimeFormatter = computed(() => new Intl.DateTimeFormat(locale.value || undefined, {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+}))
+const shortTimeFormatter = computed(() => new Intl.DateTimeFormat(locale.value || undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+}))
+
 /** Shared ISO start → column index for the visible window (rebuilt when zoom/coverage changes). */
 const bucketStartIndex = computed(() => {
   const map = new Map<string, number>()
@@ -299,11 +326,18 @@ const alignedRows = computed(() => {
   const starts = bucketStarts.value
   const indexByStart = bucketStartIndex.value
   return props.rows.map((row) => {
-    const slots: AlignedSlot[] = starts.map((start) => ({ start }))
+    const slots: AlignedSlot[] = starts.map((start) => ({
+      start,
+      ariaLabel: t('channelMonitorV2.matrix.noTrafficAt', { time: formatBucketRange(start) }),
+    }))
     for (const bucket of row.buckets || []) {
       const key = new Date(bucket.bucket_start).toISOString()
       const index = indexByStart.get(key)
-      if (index != null) slots[index] = { start: starts[index], bucket }
+      if (index != null) slots[index] = {
+        start: starts[index],
+        bucket,
+        ariaLabel: bucketTooltip(bucket),
+      }
     }
     return { row, slots }
   })
@@ -321,12 +355,35 @@ function onMatrixWheel(event: WheelEvent) {
   // When not zoomed and user scrolls vertically outside pulse, still zoom if over matrix body.
   if (!overMatrix && !isPan) return
   event.preventDefault()
-  const ratioEl = pulse || track
-  const ratio = clientXRatio(event.clientX, ratioEl)
-  zoom.value = applyWheelZoom(zoom.value, event, ratio)
+  const ratioElement = pulse || track
+  if (pendingMatrixWheel) {
+    pendingMatrixWheel.deltaX += event.deltaX
+    pendingMatrixWheel.deltaY += event.deltaY
+    pendingMatrixWheel.shiftKey = event.shiftKey
+    pendingMatrixWheel.clientX = event.clientX
+    pendingMatrixWheel.ratioElement = ratioElement
+  } else {
+    pendingMatrixWheel = {
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      shiftKey: event.shiftKey,
+      clientX: event.clientX,
+      ratioElement,
+    }
+  }
+  if (matrixWheelFrame != null) return
+  matrixWheelFrame = scheduleFrame(() => {
+    matrixWheelFrame = null
+    const pending = pendingMatrixWheel
+    pendingMatrixWheel = null
+    if (!pending) return
+    const ratio = clientXRatio(pending.clientX, pending.ratioElement)
+    zoom.value = applyWheelZoom(zoom.value, pending, ratio)
+  })
 }
 
 function resetMatrixZoom() {
+  cancelPendingMatrixWheel()
   zoom.value = resetZoom()
 }
 
@@ -339,6 +396,7 @@ watch(
     props.coverage.bucket_seconds,
   ],
   () => {
+    cancelPendingMatrixWheel()
     zoom.value = resetZoom()
   },
 )
@@ -405,29 +463,42 @@ function emptyTooltipLines(start: string): string[] {
 function showTooltip(event: MouseEvent | FocusEvent, slot: AlignedSlot) {
   floatingTooltip.lines = slot.bucket ? bucketTooltipLines(slot.bucket) : emptyTooltipLines(slot.start)
   floatingTooltip.visible = true
-  positionTooltip(event)
+  scheduleTooltipPosition(event)
 }
 
 function moveTooltip(event: MouseEvent) {
   if (!floatingTooltip.visible) return
-  positionTooltip(event)
+  scheduleTooltipPosition(event)
 }
 
 function hideTooltip() {
   floatingTooltip.visible = false
+  pendingTooltipPosition = null
+  cancelFrame(tooltipFrame)
+  tooltipFrame = null
 }
 
-function positionTooltip(event: MouseEvent | FocusEvent) {
+function scheduleTooltipPosition(event: MouseEvent | FocusEvent) {
   if ('clientX' in event) {
-    floatingTooltip.x = Math.min(window.innerWidth - 12, Math.max(12, event.clientX))
-    floatingTooltip.y = Math.min(window.innerHeight - 12, Math.max(12, event.clientY)) - 12
-    return
+    pendingTooltipPosition = { clientX: event.clientX, clientY: event.clientY }
+  } else {
+    const target = event.target as HTMLElement | null
+    const rect = target?.getBoundingClientRect()
+    if (!rect) return
+    pendingTooltipPosition = { clientX: rect.left + rect.width / 2, clientY: rect.top }
   }
-  const target = event.target as HTMLElement | null
-  const rect = target?.getBoundingClientRect()
-  if (!rect) return
-  floatingTooltip.x = rect.left + rect.width / 2
-  floatingTooltip.y = rect.top - 10
+  if (tooltipFrame != null) return
+  tooltipFrame = scheduleFrame(() => {
+    tooltipFrame = null
+    const pending = pendingTooltipPosition
+    pendingTooltipPosition = null
+    const tooltip = tooltipRef.value
+    if (!pending || !tooltip) return
+    const x = Math.min(window.innerWidth - 12, Math.max(12, pending.clientX))
+    const y = Math.min(window.innerHeight - 12, Math.max(12, pending.clientY)) - 12
+    tooltip.style.left = `${x}px`
+    tooltip.style.top = `${y}px`
+  })
 }
 
 function latencyPrivacy(metric: LatencyMetric) {
@@ -456,19 +527,21 @@ function formatMs(value: number | null) {
 }
 
 function formatAxisTime(value: string) {
-  return new Intl.DateTimeFormat(locale.value || undefined, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
+  return axisTimeFormatter.value.format(new Date(value))
 }
 
 function formatBucketRange(value: string) {
   const start = new Date(value)
   const end = new Date(start.getTime() + props.coverage.bucket_seconds * 1000)
-  return `${formatAxisTime(start.toISOString())} - ${new Intl.DateTimeFormat(locale.value || undefined, { hour: '2-digit', minute: '2-digit' }).format(end)}`
+  return `${formatAxisTime(start.toISOString())} - ${shortTimeFormatter.value.format(end)}`
 }
+
+onBeforeUnmount(() => {
+  cancelPendingMatrixWheel()
+  cancelFrame(tooltipFrame)
+  pendingTooltipPosition = null
+  tooltipFrame = null
+})
 </script>
 
 <style scoped>
@@ -499,44 +572,35 @@ function formatBucketRange(value: string) {
 .pulse-track {
   min-width: 0;
 }
-.status-dot {
+.scheme3-v2-status-dot {
   display: inline-block;
-  height: 0.5rem;
-  width: 0.5rem;
+  width: .42rem;
+  height: .42rem;
   flex: none;
   border-radius: 9999px;
 }
 
-/* Multi-stop green → yellow → red (score10 best … score0 worst) */
-.health-score10 { background: #16a34a; }
-.health-score9  { background: #22c55e; }
-.health-score8  { background: #4ade80; }
-.health-score7  { background: #a3e635; }
-.health-score6  { background: #facc15; }
-.health-score5  { background: #fbbf24; }
-.health-score4  { background: #f59e0b; }
-.health-score3  { background: #f97316; }
-.health-score2  { background: #fb7185; }
-.health-score1  { background: #f87171; }
-.health-score0  { background: rgb(239, 67, 67); }
-/* Coarse fallbacks (older payloads without score) */
-.health-healthy  { background: #22c55e; }
-.health-warning  { background: #f59e0b; }
-.health-critical { background: #ef4444; }
-.health-unknown  { background: #9ca3af; }
+/* Restrained third-version health scale: green → amber → red. */
+.health-score10 { background: #1e5c42; }
+.health-score9  { background: #2d7655; }
+.health-score8  { background: #4e8d68; }
+.health-score7  { background: #7aa375; }
+.health-score6  { background: #b7791f; }
+.health-score5  { background: #c48d3e; }
+.health-score4  { background: #bf7740; }
+.health-score3  { background: #b65f45; }
+.health-score2  { background: #9e4d3d; }
+.health-score1  { background: #8e4439; }
+.health-score0  { background: #7d3932; }
+/* Coarse fallbacks (older payloads without score). */
+.health-healthy  { background: #1e5c42; }
+.health-warning  { background: #b7791f; }
+.health-critical { background: #9e4d3d; }
+.health-unknown  { background: #a49e90; }
 
 .score-legend {
-  background: linear-gradient(
-    90deg,
-    rgb(239, 67, 67) 0%,
-    #f87171 15%,
-    #f97316 30%,
-    #f59e0b 45%,
-    #facc15 55%,
-    #a3e635 70%,
-    #22c55e 85%,
-    #16a34a 100%
-  );
+  border-color: var(--scheme3-line, #d8d2c3);
+  background: linear-gradient(90deg, #7d3932 0%, #9e4d3d 28%, #b7791f 52%, #7aa375 76%, #1e5c42 100%);
 }
 
 .pulse-cell {
@@ -552,66 +616,11 @@ function formatBucketRange(value: string) {
 }
 .pulse-cell.has-data:hover,
 .pulse-cell.has-data:focus-visible {
-  outline: 2px solid rgb(var(--color-primary-500, 99 102 241) / 0.55);
+  outline: 2px solid rgba(30, 92, 66, .55);
   outline-offset: 1px;
   z-index: 5;
 }
 
-/* CSS-only hover tooltip — no click modal, no absolute request counts.
-   Native title is also provided so dense/scrolling layouts can always show the
-   full content even when a browser clips transformed children. */
-.pulse-tooltip {
-  pointer-events: none;
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  z-index: 40;
-  min-width: 11.5rem;
-  max-width: 16rem;
-  transform: translateX(-50%) translateY(4px);
-  border-radius: 0.75rem;
-  border: 1px solid rgb(229 231 235);
-  background: rgb(255 255 255);
-  padding: 0.5rem 0.625rem;
-  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.15);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
-  white-space: nowrap;
-}
-:global(.dark) .pulse-tooltip {
-  border-color: rgb(55 65 81);
-  background: rgb(17 24 39);
-  color: rgb(229 231 235);
-}
-.pulse-tooltip-line {
-  display: block;
-  font-size: 11px;
-  line-height: 1.45;
-  color: rgb(75 85 99);
-}
-:global(.dark) .pulse-tooltip-line {
-  color: rgb(209 213 219);
-}
-.pulse-tooltip-title {
-  margin-bottom: 0.2rem;
-  font-weight: 600;
-  color: rgb(17 24 39);
-}
-:global(.dark) .pulse-tooltip-title {
-  color: rgb(243 244 246);
-}
-.pulse-cell:hover .pulse-tooltip,
-.pulse-cell:focus-visible .pulse-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
-}
-/* Keep semantic/test text in-cell, but render the visible tooltip through body
-   Teleport so it cannot be clipped by the matrix viewport. */
-.pulse-tooltip {
-  display: none;
-}
 .matrix-floating-tooltip {
   pointer-events: none;
   position: fixed;
@@ -619,40 +628,53 @@ function formatBucketRange(value: string) {
   min-width: 11.5rem;
   max-width: min(18rem, calc(100vw - 1.5rem));
   transform: translate(-50%, -100%);
-  border-radius: 0.75rem;
-  border: 1px solid rgb(229 231 235);
-  background: rgb(255 255 255);
+  border-radius: 7px;
+  border: 1px solid #d8d2c3;
+  background: #fffefa;
   padding: 0.5rem 0.625rem;
-  box-shadow: 0 18px 40px -12px rgb(0 0 0 / 0.28);
+  box-shadow: 0 18px 40px rgba(54, 48, 34, .18);
   white-space: nowrap;
 }
-:global(.dark) .matrix-floating-tooltip {
-  border-color: rgb(55 65 81);
-  background: rgb(17 24 39);
-  color: rgb(229 231 235);
+:global(.dark .matrix-floating-tooltip) {
+  border-color: #47443a;
+  background: #24231f;
+  color: #f4f2ec;
 }
 .matrix-floating-tooltip-line {
   display: block;
   font-size: 11px;
   line-height: 1.45;
-  color: rgb(75 85 99);
+  color: #777266;
 }
-:global(.dark) .matrix-floating-tooltip-line {
-  color: rgb(209 213 219);
+:global(.dark .matrix-floating-tooltip-line) {
+  color: #aaa69a;
 }
 .matrix-floating-tooltip-title {
   margin-bottom: 0.2rem;
   font-weight: 600;
-  color: rgb(17 24 39);
+  color: #27251f;
 }
-:global(.dark) .matrix-floating-tooltip-title {
-  color: rgb(243 244 246);
+:global(.dark .matrix-floating-tooltip-title) {
+  color: #f4f2ec;
 }
 
 @media (max-width: 640px) {
-  .matrix-row {
+  .matrix-row:not(.matrix-row--with-tps) {
     grid-template-columns: minmax(88px, 1fr) minmax(48px, 0.45fr) minmax(54px, 0.5fr) minmax(96px, 2.6fr);
     gap: 0.35rem;
+  }
+  /* Keep all summary values on one compact row when throughput is enabled.
+     The previous four-column override left TPS/cache in implicit columns,
+     which made the mobile matrix grow vertically and clip the pulse track. */
+  .matrix-row--with-tps {
+    grid-template-columns:
+      minmax(76px, 1.05fr)
+      minmax(42px, 0.55fr)
+      minmax(46px, 0.58fr)
+      minmax(44px, 0.55fr)
+      minmax(44px, 0.55fr)
+      minmax(96px, 2fr);
+    gap: 0.3rem;
   }
   .matrix-row > :nth-child(2) {
     left: 0;
@@ -661,4 +683,50 @@ function formatBucketRange(value: string) {
     left: 0;
   }
 }
+
+.scheme3-v2-panel {
+  border: 1px solid #d8d2c3;
+  border-radius: 8px;
+  background: #fffefa;
+  padding: 1rem 1.15rem;
+  color: #27251f;
+  box-shadow: 0 10px 24px rgba(54, 48, 34, .06);
+}
+.scheme3-v2-panel-header { border-bottom: 1px solid #d8d2c3; padding-bottom: .75rem; }
+.scheme3-v2-panel-title { color: #27251f; font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; font-weight: 600; }
+.scheme3-v2-panel-icon { color: #1e5c42; }
+.scheme3-v2-panel-description, .scheme3-v2-panel-hint, .scheme3-v2-matrix-legend { color: #777266; }
+.scheme3-v2-panel-badge { border: 1px solid #d8d2c3; border-radius: 999px; background: #f1eee6; color: #777266; padding: .18rem .42rem; font-size: .58rem; font-weight: 800; }
+.scheme3-v2-panel-action { border: 1px solid #d8d2c3; border-radius: 6px; background: #fffefa; color: #777266; }
+.scheme3-v2-panel-action:hover { background: #f1eee6; color: #27251f; }
+.scheme3-v2-matrix-scroll { border: 1px solid #d8d2c3; border-radius: 6px; background: #f1eee6; }
+.scheme3-v2-matrix-header { border-bottom: 1px solid #d8d2c3; background: #f1eee6; color: #777266; }
+.scheme3-v2-matrix-data-row { border-bottom: 1px solid #d8d2c3; }
+.scheme3-v2-matrix-data-row:last-child { border-bottom: 0; }
+.scheme3-v2-matrix-surface { background: #fffefa; color: #27251f; }
+.scheme3-v2-dimension-label { color: #27251f; }
+.scheme3-v2-matrix-legend { font-size: .62rem; }
+.scheme3-v2-panel .matrix-floating-tooltip { border-color: #d8d2c3; border-radius: 7px; background: #fffefa; color: #27251f; box-shadow: 0 18px 40px rgba(54, 48, 34, .18); }
+.scheme3-v2-panel .matrix-floating-tooltip-line { color: #777266; }
+.scheme3-v2-panel .matrix-floating-tooltip-title { color: #27251f; }
+.scheme3-v2-empty { gap: .8rem; padding: 1.5rem; text-align: left; }
+.scheme3-v2-empty-mark { display: inline-flex; width: 2.3rem; height: 2.3rem; flex: none; align-items: center; justify-content: center; border: 1px solid rgba(30,92,66,.28); border-radius: 6px; background: rgba(30,92,66,.08); color: #1e5c42; }
+.scheme3-v2-empty-copy strong { display: block; color: #27251f; font-family: Georgia, 'Times New Roman', serif; font-size: .92rem; font-weight: 600; }
+.scheme3-v2-empty-copy p { margin-top: .25rem; max-width: 26rem; color: #777266; font-size: .68rem; line-height: 1.45; }
+:global(.dark .scheme3-v2-panel) { border-color: #47443a; background: #24231f; color: #f4f2ec; box-shadow: 0 14px 28px rgba(0, 0, 0, .22); }
+:global(.dark .scheme3-v2-panel-header), :global(.dark .scheme3-v2-matrix-data-row) { border-color: #47443a; }
+:global(.dark .scheme3-v2-panel-title) { color: #f4f2ec; }
+:global(.dark .scheme3-v2-matrix-surface) { background: #24231f !important; color: #f4f2ec !important; }
+:global(.dark .scheme3-v2-dimension-label) { color: #f4f2ec; }
+:global(.dark .scheme3-v2-panel-icon) { color: #8fc2a5; }
+:global(.dark .scheme3-v2-panel-description), :global(.dark .scheme3-v2-panel-hint), :global(.dark .scheme3-v2-matrix-legend) { color: #aaa69a; }
+:global(.dark .scheme3-v2-panel-badge), :global(.dark .scheme3-v2-matrix-scroll), :global(.dark .scheme3-v2-matrix-header) { border-color: #47443a; background: #2b2924; color: #aaa69a; }
+:global(.dark .scheme3-v2-panel-action) { border-color: #47443a; background: #24231f; color: #aaa69a; }
+:global(.dark .scheme3-v2-panel-action:hover) { background: #2b2924; color: #f4f2ec; }
+:global(.dark .scheme3-v2-panel .matrix-floating-tooltip) { border-color: #47443a; background: #24231f; color: #f4f2ec; }
+:global(.dark .scheme3-v2-panel .matrix-floating-tooltip-line) { color: #aaa69a; }
+:global(.dark .scheme3-v2-panel .matrix-floating-tooltip-title) { color: #f4f2ec; }
+:global(.dark .scheme3-v2-empty-mark) { border-color: rgba(143,194,165,.28); background: rgba(143,194,165,.1); color: #8fc2a5; }
+:global(.dark .scheme3-v2-empty-copy strong) { color: #f4f2ec; }
+:global(.dark .scheme3-v2-empty-copy p) { color: #aaa69a; }
 </style>

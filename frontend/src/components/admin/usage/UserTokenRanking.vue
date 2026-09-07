@@ -15,9 +15,9 @@
     </div>
 
     <!-- Table -->
-    <div class="overflow-x-auto">
-      <table class="w-full min-w-max divide-y divide-gray-200 dark:divide-dark-700">
-        <thead class="bg-gray-50 dark:bg-dark-800">
+    <div class="ranking-table-scroll" tabindex="0">
+      <table class="w-full min-w-[1240px] divide-y divide-gray-200 dark:divide-dark-700">
+        <thead class="sticky top-0 z-10 bg-gray-50 dark:bg-dark-800">
 <tr>
             <th class="w-16 px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400 sm:px-6">#</th>
             <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
@@ -196,3 +196,37 @@ watch(
 
 defineExpose({ reload: load })
 </script>
+
+<style scoped>
+.ranking-table-scroll {
+  max-height: min(70dvh, 44rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(100, 116, 139, 0.8) rgba(148, 163, 184, 0.2);
+}
+
+.ranking-table-scroll::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.ranking-table-scroll::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+}
+
+.ranking-table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.82);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+@media (max-width: 640px) {
+  .ranking-table-scroll {
+    max-height: calc(100dvh - 17rem);
+  }
+}
+</style>

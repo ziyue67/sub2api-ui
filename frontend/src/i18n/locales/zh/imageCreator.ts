@@ -43,5 +43,6 @@ export default {
     loadKeysFailed: '加载 API 密钥失败',
     loadTasksFailed: '加载图片任务失败',
     generateFailed: '图片生成失败',
+    downloadFailed: '图片下载失败',
     generateSuccess: '已生成 {count} 张图片'
   }

@@ -1,5 +1,5 @@
 <template>
-  <div class='mb-8 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between'>
+  <div class='scheme3-model-square-header-legacy mb-8 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between'>
     <div class='px-2'>
       <h1 class='text-3xl font-black tracking-tight text-gray-900 dark:text-white'>模型广场</h1>
       <p class='mt-2 text-sm font-medium text-gray-500 dark:text-dark-400'>按模型汇聚渠道、可用分组和渠道基础定价。</p>
@@ -47,3 +47,14 @@ defineEmits<{
 
 const iconClass = computed(() => (props.loading ? 'animate-spin' : ''))
 </script>
+
+<style scoped>
+.scheme3-model-square-header-legacy { color: var(--scheme3-ink, #16150f); }
+.scheme3-model-square-header-legacy :deep([class*='rounded-full']), .scheme3-model-square-header-legacy :deep([class*='rounded-2xl']) { border-radius: 6px !important; }
+.scheme3-model-square-header-legacy :deep([class*='bg-gradient-']) { background-image: none !important; }
+.scheme3-model-square-header-legacy :deep([class*='text-indigo-']) { color: #1e5c42 !important; }
+.scheme3-model-square-header-legacy :deep([class*='bg-indigo-']), .scheme3-model-square-header-legacy :deep([class*='bg-purple-']) { background-color: rgba(30,92,66,.08) !important; }
+.scheme3-model-square-header-legacy :deep([class*='border-indigo-']) { border-color: rgba(30,92,66,.28) !important; }
+:global(html.dark .scheme3-model-square-header-legacy [class*='text-indigo-']) { color: #a7d0b8 !important; }
+:global(html.dark .scheme3-model-square-header-legacy [class*='bg-indigo-']), :global(html.dark .scheme3-model-square-header-legacy [class*='bg-purple-']) { background-color: rgba(143,194,165,.12) !important; }
+</style>

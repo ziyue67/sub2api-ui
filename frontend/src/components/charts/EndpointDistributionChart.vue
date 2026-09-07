@@ -164,6 +164,7 @@ const props = withDefaults(
     startDate?: string
     endDate?: string
     filters?: Record<string, any>
+    palette?: string[]
   }>(),
   {
     upstreamEndpointStats: () => [],
@@ -226,6 +227,8 @@ const chartColors = [
   '#a855f7'
 ]
 
+const resolvedChartColors = computed(() => props.palette?.length ? props.palette : chartColors)
+
 const displayEndpointStats = computed(() => {
   const sourceStats = props.source === 'upstream'
     ? props.upstreamEndpointStats
@@ -248,7 +251,7 @@ const chartData = computed(() => {
         data: displayEndpointStats.value.map((item) =>
           props.metric === 'actual_cost' ? item.actual_cost : item.total_tokens
         ),
-        backgroundColor: chartColors.slice(0, displayEndpointStats.value.length),
+        backgroundColor: resolvedChartColors.value.slice(0, displayEndpointStats.value.length),
         borderWidth: 0
       }
     ]

@@ -233,6 +233,7 @@ describe('admin GroupsView column settings', () => {
 
     listGroups.mockReset()
     getAllGroups.mockReset()
+    getLiveCapability.mockReset().mockResolvedValue({ supported: false })
     getModelsListCandidates.mockReset()
     getUsageSummary.mockReset()
     getCapacitySummary.mockReset()

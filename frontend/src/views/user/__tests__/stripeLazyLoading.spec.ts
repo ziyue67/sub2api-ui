@@ -13,7 +13,7 @@ function readFrontendFile(path: string): string {
   return readFileSync(resolve(frontendRoot, path), 'utf8')
 }
 
-describe('Stripe lazy-loading contract', () => {
+describe('Payment SDK lazy-loading contract', () => {
   it.each(stripeConsumers)('%s uses the side-effect-free Stripe loader', (path) => {
     const source = readFrontendFile(path)
 
@@ -29,5 +29,19 @@ describe('Stripe lazy-loading contract', () => {
     expect(stripeRule).toBeGreaterThan(-1)
     expect(viteConfig.slice(stripeRule, miscFallback)).toContain("return 'vendor-stripe'")
     expect(stripeRule).toBeLessThan(miscFallback)
+  })
+
+  it('keeps the side-effectful Airwallex SDK out of the preloaded shared vendor chunk', () => {
+    const paymentView = readFrontendFile('src/views/user/AirwallexPaymentView.vue')
+    const viteConfig = readFrontendFile('vite.config.ts')
+    const airwallexRule = viteConfig.indexOf("id.includes('/@airwallex/components-sdk/')")
+    const miscFallback = viteConfig.indexOf("return 'vendor-misc'")
+
+    expect(paymentView).toContain("await import('@airwallex/components-sdk')")
+    expect(paymentView).not.toMatch(/^\s*import\s+.*from\s+['"]@airwallex\/components-sdk['"]/m)
+    expect(airwallexRule).toBeGreaterThan(-1)
+    expect(viteConfig.slice(airwallexRule, miscFallback)).toContain("return 'vendor-airwallex'")
+    expect(airwallexRule).toBeLessThan(miscFallback)
+    expect(viteConfig).toContain("id.includes('/@airwallex/airtracker/')")
   })
 })

@@ -42,7 +42,7 @@
     <span v-if="showTrophy" class="sr-only">{{ ariaLabel }}</span>
     <span
       class="text-xs font-semibold"
-      :class="showTrophy ? rankClass : 'text-gray-500 dark:text-dark-300'"
+      :class="showTrophy ? rankClass : 'scheme3-v2-rank-muted'"
     >
       {{ label }}
     </span>
@@ -59,21 +59,21 @@ const { t } = useI18n()
 const RANK_PALETTES = {
   1: {
     // gold
-    light: '#FFD524',
-    mid: '#F5B200',
-    dark: '#B45309',
+    light: '#d3a55a',
+    mid: '#b7791f',
+    dark: '#8b5d14',
   },
   2: {
     // silver
-    light: '#E5E7EB',
-    mid: '#9CA3AF',
-    dark: '#4B5563',
+    light: '#d8d2c3',
+    mid: '#aaa69a',
+    dark: '#777266',
   },
   3: {
     // bronze
-    light: '#E8A86A',
-    mid: '#CD7F32',
-    dark: '#8B5A2B',
+    light: '#d38b79',
+    mid: '#b65f45',
+    dark: '#9e4d3d',
   },
 } as const
 
@@ -114,9 +114,20 @@ const ariaLabel = computed(() => {
 const titleText = computed(() => ariaLabel.value)
 
 const rankClass = computed(() => {
-  if (rankNum.value === 1) return 'text-amber-600 dark:text-amber-400'
-  if (rankNum.value === 2) return 'text-slate-500 dark:text-slate-300'
-  if (rankNum.value === 3) return 'text-amber-800 dark:text-amber-600'
-  return ''
+  if (rankNum.value === 1) return 'scheme3-v2-rank-gold'
+  if (rankNum.value === 2) return 'scheme3-v2-rank-silver'
+  if (rankNum.value === 3) return 'scheme3-v2-rank-bronze'
+  return 'scheme3-v2-rank-muted'
 })
 </script>
+
+<style scoped>
+.scheme3-v2-rank-gold { color: #b7791f; }
+.scheme3-v2-rank-silver { color: #777266; }
+.scheme3-v2-rank-bronze { color: #9e4d3d; }
+.scheme3-v2-rank-muted { color: #a49e90; }
+:global(.dark .scheme3-v2-rank-gold) { color: #d3a55a; }
+:global(.dark .scheme3-v2-rank-silver) { color: #aaa69a; }
+:global(.dark .scheme3-v2-rank-bronze) { color: #d38b79; }
+:global(.dark .scheme3-v2-rank-muted) { color: #827e72; }
+</style>

@@ -1128,6 +1128,47 @@
                   </button>
                 </div>
 
+                <div
+                  class="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400"
+                  :data-testid="`openai-fast-policy-summary-${ruleIndex}`"
+                >
+                  <span class="font-medium text-gray-700 dark:text-gray-300">
+                    {{
+                      t(
+                        hasOpenAIFastPolicyTargetModels(rule)
+                          ? "admin.settings.openaiFastPolicy.summaryTargetModels"
+                          : "admin.settings.openaiFastPolicy.summaryAllModels",
+                      )
+                    }}
+                  </span>
+                  <span aria-hidden="true">→</span>
+                  <span
+                    class="inline-flex items-center rounded bg-primary-50 px-2 py-0.5 font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+                  >
+                    {{ openaiFastPolicyActionSummary(rule.action) }}
+                  </span>
+                  <template v-if="hasOpenAIFastPolicyTargetModels(rule)">
+                    <span aria-hidden="true">·</span>
+                    <span class="font-medium text-gray-700 dark:text-gray-300">
+                      {{
+                        t(
+                          "admin.settings.openaiFastPolicy.summaryOtherModels",
+                        )
+                      }}
+                    </span>
+                    <span aria-hidden="true">→</span>
+                    <span
+                      class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-medium text-gray-700 dark:bg-dark-600 dark:text-gray-300"
+                    >
+                      {{
+                        openaiFastPolicyActionSummary(
+                          rule.fallback_action || "pass",
+                        )
+                      }}
+                    </span>
+                  </template>
+                </div>
+
                 <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <!-- Service Tier -->
                   <div>
@@ -1227,14 +1268,23 @@
                   </p>
                 </div>
 
-                <!-- Model Whitelist -->
-                <div class="mt-3">
+                <!-- Target Models -->
+                <div
+                  class="mt-3"
+                  role="group"
+                  :aria-labelledby="`openai-fast-policy-models-label-${ruleIndex}`"
+                  :aria-describedby="`openai-fast-policy-models-hint-${ruleIndex}`"
+                >
                   <label
+                    :id="`openai-fast-policy-models-label-${ruleIndex}`"
                     class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
                   >
                     {{ t("admin.settings.openaiFastPolicy.modelWhitelist") }}
                   </label>
-                  <p class="mb-2 text-xs text-gray-400 dark:text-gray-500">
+                  <p
+                    :id="`openai-fast-policy-models-hint-${ruleIndex}`"
+                    class="mb-2 text-xs text-gray-400 dark:text-gray-500"
+                  >
                     {{
                       t("admin.settings.openaiFastPolicy.modelWhitelistHint")
                     }}
@@ -1298,11 +1348,9 @@
                   </button>
                 </div>
 
-                <!-- Fallback Action (only when model_whitelist is non-empty) -->
+                <!-- Other Models Action (only when target models are non-empty) -->
                 <div
-                  v-if="
-                    rule.model_whitelist && rule.model_whitelist.length > 0
-                  "
+                  v-if="hasOpenAIFastPolicyTargetModels(rule)"
                   class="mt-3"
                 >
                   <label
@@ -3911,6 +3959,7 @@
                         <template #selected="{ option }">
                           <GroupBadge
                             v-if="option"
+                            scheme3
                             :name="
                               (
                                 option as unknown as DefaultSubscriptionGroupOption
@@ -4241,6 +4290,7 @@
                             <template #selected="{ option }">
                               <GroupBadge
                                 v-if="option"
+                                scheme3
                                 :name="
                                   (
                                     option as unknown as DefaultSubscriptionGroupOption
@@ -5318,6 +5368,32 @@
                     {{ t("admin.settings.gatewayForwarding.grokDefaultBaseURLModeHint") }}
                   </p>
                 </div>
+
+              <!-- OpenAI Responses 首 token 统计 -->
+              <div class="border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
+                <label
+                  for="openai-ttft-mode"
+                  class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.gatewayForwarding.openaiTTFTMode") }}
+                </label>
+                <select
+                  id="openai-ttft-mode"
+                  v-model="form.openai_ttft_mode"
+                  class="input mt-2 w-full"
+                  data-testid="openai-ttft-mode"
+                >
+                  <option value="semantic">
+                    {{ t("admin.settings.gatewayForwarding.openaiTTFTModeSemantic") }}
+                  </option>
+                  <option value="visible">
+                    {{ t("admin.settings.gatewayForwarding.openaiTTFTModeVisible") }}
+                  </option>
+                </select>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.openaiTTFTModeHint") }}
+                </p>
+              </div>
 
               <!-- Fingerprint Unification -->
               <div class="flex items-center justify-between">
@@ -7140,6 +7216,18 @@
                 </div>
                 <Toggle v-model="form.channel_monitor_hide_throughput" />
               </div>
+
+              <div v-if="form.channel_monitor_mode === 'v1'" class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">
+                    {{ t('admin.settings.features.channelMonitor.showQuota') }}
+                  </p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('admin.settings.features.channelMonitor.showQuotaHint') }}
+                  </p>
+                </div>
+                <Toggle v-model="form.channel_monitor_show_quota" />
+              </div>
             </div>
           </div>
         </div>
@@ -7223,6 +7311,30 @@
                 rows="6"
                 class="input font-mono text-sm"
               ></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.pluginManagement.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.pluginManagement.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.pluginManagement.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.pluginManagement.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.plugin_management_enabled" />
             </div>
           </div>
         </div>
@@ -9494,6 +9606,7 @@ type SettingsForm = Omit<
 > & {
   /** Form always binds a concrete boolean (SystemSettings marks this optional). */
   channel_monitor_hide_throughput: boolean;
+  channel_monitor_show_quota: boolean;
   smtp_password: string;
   turnstile_secret_key: string;
   tencent_captcha_app_secret_key: string;
@@ -9773,6 +9886,7 @@ const form = reactive<SettingsForm>({
   openai_advanced_scheduler_weight_previous_response: "",
   openai_advanced_scheduler_weight_session_sticky: "",
   // Gateway forwarding behavior
+  openai_ttft_mode: "semantic",
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -9807,12 +9921,15 @@ const form = reactive<SettingsForm>({
   channel_monitor_mode: 'v1' as 'v1' | 'v2',
   channel_monitor_default_interval_seconds: 60,
   channel_monitor_hide_throughput: false,
+  channel_monitor_show_quota: false,
   // Available Channels feature switch
   available_channels_enabled: false,
   // Model Plaza feature switches + description
   model_plaza_enabled: false,
   model_plaza_require_auth: false,
   model_plaza_description: '',
+  // Plugin management menu visibility; plugin runtime is unaffected.
+  plugin_management_enabled: false,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
   // Allow user view error requests
@@ -10816,6 +10933,9 @@ async function loadSettings() {
     form.channel_monitor_hide_throughput = Boolean(
       settings.channel_monitor_hide_throughput
     );
+    form.channel_monitor_show_quota = Boolean(
+      settings.channel_monitor_show_quota
+    );
     form.login_agreement_updated_at =
       settings.login_agreement_updated_at || "2026-03-31";
     form.login_agreement_documents =
@@ -11352,6 +11472,8 @@ async function saveSettings() {
       min_claude_code_version: form.min_claude_code_version,
       max_claude_code_version: form.max_claude_code_version,
       allow_ungrouped_key_scheduling: form.allow_ungrouped_key_scheduling,
+      openai_ttft_mode:
+        form.openai_ttft_mode === "visible" ? "visible" : "semantic",
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,
@@ -11471,12 +11593,14 @@ async function saveSettings() {
       channel_monitor_default_interval_seconds:
         Number(form.channel_monitor_default_interval_seconds) || 60,
       channel_monitor_hide_throughput: Boolean(form.channel_monitor_hide_throughput),
+      channel_monitor_show_quota: Boolean(form.channel_monitor_show_quota),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
       // Model Plaza feature switches + description
       model_plaza_enabled: form.model_plaza_enabled,
       model_plaza_require_auth: form.model_plaza_require_auth,
       model_plaza_description: form.model_plaza_description,
+      plugin_management_enabled: form.plugin_management_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
       allow_user_view_error_requests: form.allow_user_view_error_requests,
@@ -12131,6 +12255,10 @@ const openaiFastPolicyTierOptions = computed(() => [
     value: "priority",
     label: t("admin.settings.openaiFastPolicy.tierPriority"),
   },
+  {
+    value: "ultrafast",
+    label: t("admin.settings.openaiFastPolicy.tierUltrafast"),
+  },
   { value: "flex", label: t("admin.settings.openaiFastPolicy.tierFlex") },
 ]);
 
@@ -12143,6 +12271,16 @@ const openaiFastPolicyActionOptions = computed(() => [
   },
   { value: "block", label: t("admin.settings.openaiFastPolicy.actionBlock") },
 ]);
+
+function openaiFastPolicyActionSummary(
+  action: OpenAIFastPolicyRule["action"],
+) {
+  return t(`admin.settings.openaiFastPolicy.summaryAction.${action}`);
+}
+
+function hasOpenAIFastPolicyTargetModels(rule: OpenAIFastPolicyRule) {
+  return Boolean(rule.model_whitelist?.some((pattern) => pattern.trim() !== ""));
+}
 
 const openaiFastPolicyScopeOptions = computed(() => [
   { value: "all", label: t("admin.settings.openaiFastPolicy.scopeAll") },
@@ -12975,11 +13113,12 @@ watch(
 
 /* ============ 系统设置 Tab 导航 ============ */
 .settings-tabs-shell {
-  @apply sticky z-20 -mx-1 rounded-2xl border border-white/80 bg-white/90 p-1.5 backdrop-blur-xl;
-  top: 4.75rem;
-  box-shadow:
-    0 12px 28px rgb(15 23 42 / 0.07),
-    0 1px 0 rgb(255 255 255 / 0.9) inset;
+  @apply sticky z-20 -mx-1 border p-1;
+  top: 0;
+  border-color: #dad5c8;
+  border-radius: 7px;
+  background: #f1eee6;
+  box-shadow: none;
 }
 
 .settings-tabs-scroll {
@@ -12993,11 +13132,16 @@ watch(
 }
 
 .settings-tabs {
-  @apply flex min-w-max items-center gap-1;
+  @apply flex min-w-max items-center gap-0.5;
 }
 
 .settings-tab {
-  @apply relative isolate flex h-10 min-w-[6.75rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-transparent px-3 text-sm font-medium text-gray-600 outline-none transition-colors duration-200 ease-out dark:text-gray-300;
+  @apply relative isolate flex h-10 min-w-[6.75rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap border border-transparent px-3 outline-none transition-colors duration-150 ease-out;
+  border-radius: 5px;
+  color: #777266;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
 }
 
 @media (min-width: 768px) {
@@ -13015,25 +13159,25 @@ watch(
 }
 
 .settings-tab::before {
-  @apply absolute inset-0 -z-10 rounded-xl opacity-0 transition-opacity duration-200;
-  content: "";
-  background: linear-gradient(135deg, rgb(248 250 252 / 0.95), rgb(241 245 249 / 0.8));
+  display: none;
 }
 
-.settings-tab:hover::before,
-.settings-tab:focus-visible::before {
-  opacity: 1;
+.settings-tab:hover {
+  border-color: #dad5c8;
+  background: rgba(255, 254, 250, 0.72);
+  color: #27251f;
 }
 
 .settings-tab:focus-visible {
-  @apply ring-2 ring-primary-500/40 ring-offset-2 ring-offset-white dark:ring-offset-dark-900;
+  outline: 2px solid rgba(30, 92, 66, 0.28);
+  outline-offset: 1px;
 }
 
 .settings-tab-active {
-  @apply border-primary-200/80 bg-white text-primary-700 shadow-sm dark:border-primary-400/30 dark:bg-dark-700/95 dark:text-primary-200;
-  box-shadow:
-    0 8px 18px rgb(15 23 42 / 0.08),
-    0 1px 0 rgb(255 255 255 / 0.92) inset;
+  border-color: rgba(30, 92, 66, 0.28);
+  background: #fffefa;
+  color: #1e5c42;
+  box-shadow: inset 0 -2px 0 #1e5c42;
 }
 
 .settings-tab-active::before {
@@ -13041,27 +13185,23 @@ watch(
 }
 
 .settings-tab-active::after {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 0.25rem;
-  left: 0.75rem;
-  height: 2px;
-  border-radius: 9999px;
-  content: "";
-  background: linear-gradient(90deg, #14b8a6, #0ea5e9);
+  display: none;
 }
 
 .settings-tab-icon {
-  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors duration-200 dark:text-gray-400;
+  @apply flex h-7 w-7 shrink-0 items-center justify-center transition-colors duration-150;
+  border-radius: 5px;
+  color: #8b8578;
 }
 
 .settings-tab:hover .settings-tab-icon,
 .settings-tab:focus-visible .settings-tab-icon {
-  @apply text-gray-700 dark:text-gray-200;
+  color: #27251f;
 }
 
 .settings-tab-active .settings-tab-icon {
-  @apply bg-primary-50 text-primary-600 dark:bg-primary-400/10 dark:text-primary-300;
+  background: rgba(30, 92, 66, 0.08);
+  color: #1e5c42;
 }
 
 .settings-tab-label {
@@ -13074,20 +13214,30 @@ watch(
    because Vue's scoped-CSS compiler was dropping the `:global(.dark) ...`
    rules in the production build, leaving inactive tabs unreadable on dark. */
 .dark .settings-tabs-shell {
-  border-color: rgb(51 65 85 / 0.65);
-  background: rgb(15 23 42 / 0.86);
-  box-shadow:
-    0 16px 36px rgb(0 0 0 / 0.28),
-    0 1px 0 rgb(255 255 255 / 0.06) inset;
+  border-color: #47443a;
+  background: #2b2924;
+  box-shadow: none;
 }
 
-.dark .settings-tab::before {
-  background: linear-gradient(135deg, rgb(30 41 59 / 0.9), rgb(51 65 85 / 0.62));
+.dark .settings-tab {
+  color: #aaa69a;
+}
+
+.dark .settings-tab:hover {
+  border-color: #47443a;
+  background: #24231f;
+  color: #f4f2ec;
 }
 
 .dark .settings-tab-active {
-  box-shadow:
-    0 12px 26px rgb(0 0 0 / 0.22),
-    0 1px 0 rgb(255 255 255 / 0.08) inset;
+  border-color: rgba(143, 194, 165, 0.32);
+  background: #24231f;
+  color: #8fc2a5;
+  box-shadow: inset 0 -2px 0 #8fc2a5;
+}
+
+.dark .settings-tab-active .settings-tab-icon {
+  background: rgba(143, 194, 165, 0.1);
+  color: #8fc2a5;
 }
 </style>

@@ -39,11 +39,15 @@ vi.mock('vue-router', () => ({
   }),
 }))
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
-    t: (key: string) => key,
-  }),
-}))
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return {
+    ...actual,
+    useI18n: () => ({
+      t: (key: string) => key,
+    }),
+  }
+})
 
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({
@@ -52,6 +56,11 @@ vi.mock('@/stores', () => ({
   useAppStore: () => ({
     showError: (...args: any[]) => showErrorMock(...args),
     showSuccess: (...args: any[]) => showSuccessMock(...args),
+    fetchPublicSettings: vi.fn(),
+    siteName: 'Test site',
+    siteLogo: '',
+    cachedPublicSettings: {},
+    publicSettingsLoaded: true,
   }),
 }))
 

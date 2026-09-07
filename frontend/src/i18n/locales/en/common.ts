@@ -44,6 +44,7 @@ export default {
     inactive: 'Inactive',
     more: 'More',
     close: 'Close',
+    clear: 'Clear',
     toggleMenu: 'Toggle menu',
     userMenu: 'User menu',
     pageNotFound: 'Page not found',
@@ -55,6 +56,9 @@ export default {
 	    frozenBalance: 'Frozen balance',
 	    totalBalance: 'Total balance',
 	    available: 'Available',
+	    online: 'Session online',
+	    administratorIdentity: 'Administrator identity',
+	    userIdentity: 'User identity',
     copiedToClipboard: 'Copied to clipboard',
     copied: 'Copied',
     copyFailed: 'Failed to copy',
@@ -157,8 +161,9 @@ export default {
 
   // Navigation
   nav: {
-   dashboard: 'Dashboard',
-   announcements: 'Announcements',
+    dashboard: 'Dashboard',
+    scheme3Workspace: 'Shour or ToKen Console',
+    announcements: 'Announcements',
    apiKeys: 'API Keys',
     leaderboard: 'Admin Leaderboard',
    batchImage: 'Batch Images',
@@ -174,9 +179,11 @@ export default {
     groups: 'Groups',
     channels: 'Channels',
     availableChannels: 'Available Channels',
+    modelSquare: 'Model Catalog',
     modelPlaza: 'Model Plaza',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
+    plugins: 'Plugins',
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
@@ -210,6 +217,14 @@ export default {
 
   // Auth
   auth: {
+    scheme3: {
+      kicker: 'ACCOUNT / ACCESS LEDGER',
+      subtitle: 'Unified request and routing desk',
+      loginEyebrow: 'SIGN-IN / VERIFY IDENTITY',
+      registerEyebrow: 'REGISTRATION / CREATE ACCOUNT',
+      otherEntry: 'Other sign-in options',
+      copyright: 'Account services'
+    },
     welcomeBack: 'Welcome Back',
     signInToAccount: 'Sign in to your account to continue',
     signIn: 'Sign In',

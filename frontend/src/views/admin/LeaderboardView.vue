@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
+    <div class="min-w-0 space-y-6">
       <!-- Real backend search filters -->
       <UsageFilters
         v-model="filters"
@@ -25,7 +25,7 @@
       </UsageFilters>
 
       <!-- Ranking table -->
-      <div class="card overflow-hidden">
+      <div class="card min-w-0 overflow-hidden">
         <UserTokenRanking
           ref="rankingRef"
           :start-date="startDate"
