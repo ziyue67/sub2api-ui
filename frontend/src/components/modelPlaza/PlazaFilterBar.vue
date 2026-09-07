@@ -10,8 +10,7 @@
         :key="`platform-${p}`"
         type="button"
         class="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-30"
-        :class="p === 'all' ? chipClass(platform === 'all') : platform === p ? 'chip-tinted-active scale-[1.02]' : 'chip-tinted hover:scale-[1.02]'"
-        :style="p === 'all' ? undefined : { '--chip-accent': platformAccentColor(p) }"
+        :class="chipClass(platform === p)"
         :disabled="p !== 'all' && !platformEnabled(p)"
         @click="$emit('update:platform', p)"
       >
@@ -38,8 +37,7 @@
         :key="`group-${g.id}`"
         type="button"
         class="rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-200 disabled:opacity-30"
-        :class="groupId === g.id ? 'chip-tinted-active scale-[1.02]' : 'chip-tinted hover:scale-[1.02]'"
-        :style="{ '--chip-accent': platformAccentColor(g.platform) }"
+        :class="chipClass(groupId === g.id)"
         :disabled="!groupEnabled(g)"
         @click="$emit('update:groupId', g.id)"
       >
@@ -108,7 +106,6 @@
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
-import { platformAccentColor } from '@/utils/platformColors'
 import type { GroupPlatform } from '@/types'
 
 const props = defineProps<{
@@ -172,52 +169,19 @@ function chipClass(active: boolean): string {
 
 <style scoped>
 .scheme3-model-plaza-filters { --filter-ink: var(--scheme3-ink,#16150f); --filter-muted: var(--scheme3-muted,#6b695f); --filter-line: var(--scheme3-line,#dad5c8); --filter-card: var(--scheme3-card,#fbfaf6); color: var(--filter-ink); }
-.scheme3-model-plaza-filters > div { gap: .4rem; }.scheme3-model-plaza-filters > div > span { width: 3.5rem; color: var(--filter-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .56rem; letter-spacing: .09em; }
-.scheme3-model-plaza-chip,.scheme3-model-plaza-chip-active,.scheme3-model-plaza-filters :deep(.chip-tinted),.scheme3-model-plaza-filters :deep(.chip-tinted-active) { border-radius: 5px; padding: .35rem .65rem; font-size: .64rem; font-weight: 800; transition: background-color 150ms ease,border-color 150ms ease,color 150ms ease,transform 150ms ease; }
-.scheme3-model-plaza-chip { border: 1px solid var(--filter-line); background: var(--filter-card); color: var(--filter-muted); }.scheme3-model-plaza-chip:hover { border-color: rgba(30,92,66,.4); color: #1e5c42; }.scheme3-model-plaza-chip-active { border: 1px solid #1e5c42; background: #1e5c42; color: #f4f2ec; }
-.scheme3-model-plaza-filters :deep(.chip-tinted) { border: 1px solid var(--filter-line); color: var(--filter-muted); background: var(--filter-card); box-shadow: none; }.scheme3-model-plaza-filters :deep(.chip-tinted-active) { border: 1px solid #1e5c42; color: #f4f2ec; background: #1e5c42; box-shadow: none; }
+.scheme3-model-plaza-filters > div { gap: .4rem; }
+.scheme3-model-plaza-filters > div > span { width: 3.5rem; color: var(--filter-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .56rem; letter-spacing: 0; }
+.scheme3-model-plaza-chip,.scheme3-model-plaza-chip-active { border-radius: 5px; padding: .35rem .65rem; font-size: .64rem; font-weight: 800; transition: background-color 150ms ease,border-color 150ms ease,color 150ms ease; }
+.scheme3-model-plaza-chip { border: 1px solid var(--filter-line); background: var(--filter-card); color: var(--filter-muted); box-shadow: none; }
+.scheme3-model-plaza-chip:not(:disabled):hover { border-color: rgba(30,92,66,.5); background: #eef2ec; color: #1e5c42; }
+.scheme3-model-plaza-chip-active { border: 1px solid #1e5c42; background: #1e5c42; color: #f4f2ec; box-shadow: none; }
+.scheme3-model-plaza-chip-active:not(:disabled):hover { background: #174a35; }
 .scheme3-model-plaza-search { min-height: 2.35rem; border: 1px solid var(--filter-line); border-radius: 6px; padding: .55rem 2.2rem .55rem 2.6rem; background: var(--filter-card); color: var(--filter-ink); outline: 0; font-size: .7rem; }.scheme3-model-plaza-search:focus { border-color: #1e5c42; box-shadow: 0 0 0 3px rgba(30,92,66,.12); }.scheme3-model-plaza-search::placeholder { color: #979286; }
 .scheme3-model-plaza-filters :deep(.text-primary-500) { color: #1e5c42; }
-:global(html.dark) .scheme3-model-plaza-filters { color: #f4f2ec; }:global(html.dark) .scheme3-model-plaza-chip,:global(html.dark) .scheme3-model-plaza-search { border-color: #47443a; background: #24231f; color: #dedbd1; }
-/* 平台/分组 chip 的配色统一从 --chip-accent(平台主色)派生,新增平台无需扩展样式。
-   激活态与非激活态在模板上互斥挂载,避免选择器优先级互相覆盖。 */
-.chip-tinted {
-  color: var(--chip-accent);
-  color: color-mix(in srgb, var(--chip-accent) 78%, black);
-  background-color: color-mix(in srgb, var(--chip-accent) 9%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip-accent) 25%, transparent);
-}
-
-.chip-tinted:not(:disabled):hover {
-  background-color: color-mix(in srgb, var(--chip-accent) 16%, transparent);
-}
-
-.dark .chip-tinted {
-  color: color-mix(in srgb, var(--chip-accent) 72%, white);
-  background-color: color-mix(in srgb, var(--chip-accent) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip-accent) 30%, transparent);
-}
-
-.dark .chip-tinted:not(:disabled):hover {
-  background-color: color-mix(in srgb, var(--chip-accent) 18%, transparent);
-}
-
-.chip-tinted-active {
-  color: #fff;
-  background-color: var(--chip-accent);
-  background-color: color-mix(in srgb, var(--chip-accent) 85%, black);
-  box-shadow: 0 1px 2px 0 color-mix(in srgb, var(--chip-accent) 35%, transparent);
-}
-
-.chip-tinted-active:not(:disabled):hover {
-  background-color: color-mix(in srgb, var(--chip-accent) 75%, black);
-}
-
-.dark .chip-tinted-active {
-  background-color: color-mix(in srgb, var(--chip-accent) 80%, transparent);
-}
-
-.dark .chip-tinted-active:not(:disabled):hover {
-  background-color: var(--chip-accent);
-}
+:global(html.dark .scheme3-model-plaza-filters) { --filter-ink: #f4f2ec; --filter-muted: #aaa69a; --filter-line: #47443a; --filter-card: #24231f; color: #f4f2ec; }
+:global(html.dark .scheme3-model-plaza-chip),:global(html.dark .scheme3-model-plaza-search) { border-color: #47443a; background: #24231f; color: #dedbd1; }
+:global(html.dark .scheme3-model-plaza-chip:not(:disabled):hover) { border-color: rgba(143,194,165,.55); background: #2b3028; color: #8fc2a5; }
+:global(html.dark .scheme3-model-plaza-chip-active) { border-color: #8fc2a5; background: #1e5c42; color: #f4f2ec; }
+:global(html.dark .scheme3-model-plaza-chip-active:not(:disabled):hover) { background: #286a4e; }
+:global(html.dark .scheme3-model-plaza-filters .text-primary-500) { color: #8fc2a5; }
 </style>

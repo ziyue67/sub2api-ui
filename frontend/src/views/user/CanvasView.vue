@@ -1660,12 +1660,26 @@ function canvasNodeHasInvalidCustomDimensions(node: CanvasNode): boolean {
 
 function canvasSizeForResolutionAndRatio(resolution: string, aspectRatio: string): string {
   const [ratioWidth, ratioHeight] = aspectRatio.split(':').map(Number)
-  const base = resolution === '4K' ? 3840 : resolution === '2K' ? 2048 : 1024
-  const ratio = ratioWidth > 0 && ratioHeight > 0 ? ratioWidth / ratioHeight : 1
-  let width = ratio >= 1 ? base : Math.round(base * ratio)
-  let height = ratio >= 1 ? Math.round(base / ratio) : base
-  width = Math.max(16, Math.round(width / 16) * 16)
-  height = Math.max(16, Math.round(height / 16) * 16)
+  const safeRatioWidth = ratioWidth > 0 ? ratioWidth : 1
+  const safeRatioHeight = ratioHeight > 0 ? ratioHeight : 1
+  const isSquare = safeRatioWidth === safeRatioHeight
+  // Image tiers use model presets: 1K landscape/portrait outputs use a
+  // 1536px long edge (for example, 1536x1024 at 3:2), while square 1K is
+  // 1024x1024.  4K is capped by the gateway's 8,294,400-pixel limit.
+  const base = resolution === '4K' ? 3840 : resolution === '2K' ? 2048 : isSquare ? 1024 : 1536
+  // Keep the requested tier as the long-edge target, while respecting the
+  // gateway's 8,294,400-pixel limit (4K square would otherwise be invalid).
+  const maxPixels = 8_294_400
+  const scale = Math.min(
+    base / Math.max(safeRatioWidth, safeRatioHeight),
+    Math.sqrt(maxPixels / (safeRatioWidth * safeRatioHeight)),
+  )
+  let width = Math.max(16, Math.round((safeRatioWidth * scale) / 16) * 16)
+  let height = Math.max(16, Math.round((safeRatioHeight * scale) / 16) * 16)
+  while (width * height > maxPixels) {
+    if (width >= height) width -= 16
+    else height -= 16
+  }
   return `${width}x${height}`
 }
 

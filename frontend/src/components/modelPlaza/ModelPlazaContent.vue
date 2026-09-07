@@ -160,8 +160,8 @@ const filteredGroups = computed(() => {
 .scheme3-model-plaza-empty { border: 1px dashed var(--plaza-line); border-radius: 7px; padding: 3rem 1.25rem; color: var(--plaza-muted); font-size: .72rem; text-align: center; }
 .scheme3-model-plaza :deep(.scheme3-model-plaza-filters) { border-bottom: 1px solid var(--plaza-line); padding: .2rem 0 1rem; }
 .scheme3-model-plaza :deep(.scheme3-model-plaza-group) { overflow: hidden; border: 1px solid var(--plaza-line) !important; border-radius: 7px; background: var(--plaza-card); box-shadow: 0 8px 18px rgba(54,48,34,.045); }
-:global(html.dark) .scheme3-model-plaza-description,:global(html.dark) .scheme3-model-plaza-group { border-color: #47443a; background: #24231f; color: #f4f2ec; }
-:global(html.dark) .scheme3-model-plaza-description { background: #1b1b18; }
+:global(html.dark .scheme3-model-plaza-description),:global(html.dark .scheme3-model-plaza-group) { border-color: #47443a; background: #24231f; color: #f4f2ec; }
+:global(html.dark .scheme3-model-plaza-description) { background: #1b1b18; }
 .plaza-description {
   line-height: 1.7;
   overflow-wrap: anywhere;
@@ -170,34 +170,79 @@ const filteredGroups = computed(() => {
 .plaza-description :deep(h1),
 .plaza-description :deep(h2),
 .plaza-description :deep(h3) {
-  @apply mb-2 mt-3 font-semibold text-gray-900 first:mt-0 dark:text-white;
+  margin-top: .75rem;
+  margin-bottom: .5rem;
+  color: var(--plaza-ink);
+  font-weight: 600;
+}
+
+.plaza-description :deep(h1:first-child),
+.plaza-description :deep(h2:first-child),
+.plaza-description :deep(h3:first-child) {
+  margin-top: 0;
 }
 
 .plaza-description :deep(p) {
-  @apply mb-2 text-gray-700 last:mb-0 dark:text-dark-200;
+  margin-bottom: .5rem;
+  color: var(--plaza-muted);
+}
+
+.plaza-description :deep(p:last-child) {
+  margin-bottom: 0;
 }
 
 .plaza-description :deep(a) {
-  @apply text-primary-600 underline underline-offset-4 hover:text-primary-700 dark:text-primary-300;
+  color: #1e5c42;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.plaza-description :deep(a:hover) {
+  color: #174a35;
 }
 
 .plaza-description :deep(ul) {
-  @apply mb-2 list-disc pl-5;
+  margin-bottom: .5rem;
+  padding-left: 1.25rem;
+  list-style: disc;
 }
 
 .plaza-description :deep(ol) {
-  @apply mb-2 list-decimal pl-5;
+  margin-bottom: .5rem;
+  padding-left: 1.25rem;
+  list-style: decimal;
 }
 
 .plaza-description :deep(li) {
-  @apply mb-0.5 text-gray-700 dark:text-dark-200;
+  margin-bottom: .125rem;
+  color: var(--plaza-muted);
 }
 
 .plaza-description :deep(code) {
-  @apply rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs dark:bg-dark-800;
+  border-radius: 4px;
+  padding: .125rem .375rem;
+  background: var(--plaza-subtle, #f1eee6);
+  color: var(--plaza-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .75rem;
 }
 
 .plaza-description :deep(blockquote) {
-  @apply my-2 border-l-4 border-gray-300 pl-3 text-gray-600 dark:border-dark-600 dark:text-dark-300;
+  margin: .5rem 0;
+  border-left: 4px solid var(--plaza-line);
+  padding-left: .75rem;
+  color: var(--plaza-muted);
+}
+
+:global(html.dark .plaza-description a) {
+  color: #8fc2a5;
+}
+
+:global(html.dark .plaza-description a:hover) {
+  color: #a7d0b8;
+}
+
+:global(html.dark .plaza-description code) {
+  background: var(--plaza-subtle, #2b2924);
 }
 </style>

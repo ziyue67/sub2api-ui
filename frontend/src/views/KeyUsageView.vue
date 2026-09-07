@@ -972,7 +972,7 @@ onUnmounted(() => {
   animation: shimmer-kv 1.8s ease-in-out infinite;
   border-radius: 8px;
 }
-:global(.dark) .skeleton {
+:global(.dark .scheme3-key-usage .skeleton) {
   background: linear-gradient(90deg, #334155 25%, #1e293b 50%, #334155 75%);
   background-size: 200% 100%;
 }
@@ -1020,9 +1020,9 @@ onUnmounted(() => {
 
 :global(.dark .scheme3-key-usage) { --scheme3-key-paper: #1b1b18; --scheme3-key-card: #24231f; --scheme3-key-ink: #f4f2ec; --scheme3-key-muted: #aaa69a; --scheme3-key-line: #47443a; }
 :global(.dark .scheme3-key-brand-mark) { border-color: rgba(143,194,165,.3); color: #8fc2a5; }
-:global(.dark .scheme3-key-usage :deep(.bg-gray-50)), :global(.dark .scheme3-key-usage :deep(.bg-gray-100)) { background-color: #2b2924 !important; }
-:global(.dark .scheme3-key-usage :deep(.bg-dark-900)), :global(.dark .scheme3-key-usage :deep(.bg-dark-950)) { background-color: var(--scheme3-key-paper) !important; }
-:global(.dark .scheme3-key-usage :deep(.border-dark-700)) { border-color: var(--scheme3-key-line) !important; }
-:global(.dark .scheme3-key-usage :deep(.bg-primary-500)), :global(.dark .scheme3-key-usage :deep(.bg-primary-600)) { background-color: #8fc2a5 !important; color: #1b1b18 !important; }
-:global(.dark .scheme3-key-usage :deep(.text-primary-600)), :global(.dark .scheme3-key-usage :deep(.text-primary-500)) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-key-usage .bg-gray-50), :global(.dark .scheme3-key-usage .bg-gray-100) { background-color: #2b2924 !important; }
+:global(.dark .scheme3-key-usage .bg-dark-900), :global(.dark .scheme3-key-usage .bg-dark-950) { background-color: var(--scheme3-key-paper) !important; }
+:global(.dark .scheme3-key-usage .border-dark-700) { border-color: var(--scheme3-key-line) !important; }
+:global(.dark .scheme3-key-usage .bg-primary-500), :global(.dark .scheme3-key-usage .bg-primary-600) { background-color: #8fc2a5 !important; color: #1b1b18 !important; }
+:global(.dark .scheme3-key-usage .text-primary-600), :global(.dark .scheme3-key-usage .text-primary-500) { color: #8fc2a5 !important; }
 </style>

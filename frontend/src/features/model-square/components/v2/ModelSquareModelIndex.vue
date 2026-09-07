@@ -2,7 +2,7 @@
   <aside
     ref='indexRef'
     tabindex='0'
-    class='hidden lg:flex h-fit w-full flex-col rounded-3xl border border-gray-200 dark:border-dark-700/60 bg-white/80 dark:bg-dark-900/60 backdrop-blur-xl shadow-2xl shadow-black/10 dark:shadow-black/20 focus:outline-none focus:ring-2 focus:ring-indigo-500/30'
+    class='scheme3-model-square-index hidden lg:flex h-fit w-full flex-col rounded-3xl border border-gray-200 dark:border-dark-700/60 bg-white/80 dark:bg-dark-900/60 backdrop-blur-xl shadow-2xl shadow-black/10 dark:shadow-black/20 focus:outline-none focus:ring-2 focus:ring-indigo-500/30'
     @keydown='onKeydown'
   >
     <div class='px-5 py-4 border-b border-white/10 dark:border-dark-700/60'>
@@ -52,7 +52,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: string | null]
 }>()
 
-const activeClass = 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 text-indigo-900 dark:text-white shadow-lg shadow-indigo-500/10 border border-indigo-500/30'
+const activeClass = 'bg-emerald-700/10 text-emerald-900 dark:text-emerald-100 shadow-sm border border-emerald-700/30'
 const inactiveClass = 'text-gray-600 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800/60 border border-transparent'
 
 const indexRef = ref<HTMLElement | null>(null)
@@ -142,3 +142,61 @@ onUnmounted(() => {
   if (observer) observer.disconnect()
 })
 </script>
+
+<style scoped>
+.scheme3-model-square-index {
+  border-radius: 6px !important;
+  border-color: rgba(30, 92, 66, 0.24) !important;
+  background: #f7f7f2 !important;
+  box-shadow: 0 8px 24px rgba(31, 43, 36, 0.08) !important;
+  backdrop-filter: none !important;
+}
+
+.scheme3-model-square-index [class*='rounded-2xl'],
+.scheme3-model-square-index [class*='rounded-3xl'] {
+  border-radius: 6px !important;
+}
+
+.scheme3-model-square-index [class*='bg-gradient-'],
+.scheme3-model-square-index [class*='shadow-indigo-'],
+.scheme3-model-square-index [class*='shadow-purple-'] {
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.scheme3-model-square-index [class*='text-indigo-'],
+.scheme3-model-square-index [class*='text-purple-'] {
+  color: #1e5c42 !important;
+}
+
+.scheme3-model-square-index [class*='bg-indigo-'],
+.scheme3-model-square-index [class*='bg-purple-'] {
+  background-color: rgba(30, 92, 66, 0.08) !important;
+}
+
+.scheme3-model-square-index [class*='border-indigo-'],
+.scheme3-model-square-index [class*='border-purple-'] {
+  border-color: rgba(30, 92, 66, 0.28) !important;
+}
+
+:global(html.dark .scheme3-model-square-index) {
+  border-color: rgba(143, 194, 165, 0.28) !important;
+  background: #20251f !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24) !important;
+}
+
+:global(html.dark .scheme3-model-square-index [class*='text-indigo-']),
+:global(html.dark .scheme3-model-square-index [class*='text-purple-']) {
+  color: #a7d0b8 !important;
+}
+
+:global(html.dark .scheme3-model-square-index [class*='bg-indigo-']),
+:global(html.dark .scheme3-model-square-index [class*='bg-purple-']) {
+  background-color: rgba(143, 194, 165, 0.12) !important;
+}
+
+:global(html.dark .scheme3-model-square-index [class*='border-indigo-']),
+:global(html.dark .scheme3-model-square-index [class*='border-purple-']) {
+  border-color: rgba(143, 194, 165, 0.3) !important;
+}
+</style>

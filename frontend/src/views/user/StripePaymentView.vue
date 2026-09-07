@@ -327,5 +327,5 @@ onUnmounted(() => {
 :global(.dark .scheme3-stripe-payment-amount p:first-child) { color: #aaa69a; }
 :global(.dark .scheme3-stripe-payment-amount p:last-child) { color: #8fc2a5; }
 :global(.dark .scheme3-stripe-payment-qr) { border-color: rgba(143,194,165,.32); background: #2b2924; }
-:global(.dark .scheme3-stripe-payment :deep(.btn-primary)), :global(.dark .scheme3-stripe-payment :deep(.btn-stripe)) { background: #8fc2a5 !important; color: #1b1b18 !important; }
+:global(.dark .scheme3-stripe-payment .btn-primary), :global(.dark .scheme3-stripe-payment .btn-stripe) { background: #8fc2a5 !important; color: #1b1b18 !important; }
 </style>

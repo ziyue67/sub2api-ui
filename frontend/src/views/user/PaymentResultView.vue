@@ -141,8 +141,8 @@ const STATUS_REFRESH_INTERVAL_MS = 2000
 const STATUS_REFRESH_MAX_ATTEMPTS = 15
 
 let statusRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let userBalanceRefreshStarted = false
 const refreshAttempts = ref(0)
-let refreshedUserAfterPayment = false
 
 /** 充值金额 = pay_amount / (1 + fee_rate/100)，fee_rate=0 时等于 pay_amount */
 const baseAmount = computed(() => {
@@ -200,13 +200,21 @@ function setResolvedOrder(nextOrder: ResolvedOrder | null): void {
   if (nextOrder && 'currency' in nextOrder && nextOrder.currency) {
     currency.value = normalizePaymentCurrency(nextOrder.currency)
   }
+  refreshUserBalanceForSuccessfulOrder(nextOrder)
+}
 
-  if (!refreshedUserAfterPayment && isSuccessStatus(nextOrder?.status)) {
-    refreshedUserAfterPayment = true
-    authStore.refreshUser().catch((error) => {
-      console.warn('Failed to refresh user after payment completion:', error)
-    })
+function refreshUserBalanceForSuccessfulOrder(nextOrder: ResolvedOrder | null): void {
+  if (!nextOrder || userBalanceRefreshStarted || normalizeOrderStatus(nextOrder.status) !== 'COMPLETED') {
+    return
   }
+  if ('order_type' in nextOrder && nextOrder.order_type !== 'balance') {
+    return
+  }
+
+  userBalanceRefreshStarted = true
+  void authStore.refreshUser().catch(() => {
+    // The order result remains authoritative even if refreshing profile data fails.
+  })
 }
 
 function hasOrderId(nextOrder: ResolvedOrder | null): nextOrder is PaymentOrder {
@@ -464,9 +472,9 @@ onBeforeUnmount(() => {
 .scheme3-payment-result :deep(.text-yellow-500) { color: #b7791f !important; }
 
 :global(.dark .scheme3-payment-result) { --scheme3-result-card: #24231f; --scheme3-result-line: #47443a; --scheme3-result-ink: #f4f2ec; background: #1b1b18; }
-:global(.dark .scheme3-payment-result :deep(.btn-primary)) { background: #8fc2a5; color: #1b1b18; }
-:global(.dark .scheme3-payment-result :deep(.bg-green-100)) { background: rgba(143,194,165,.12) !important; }
-:global(.dark .scheme3-payment-result :deep(.text-green-500)) { color: #8fc2a5 !important; }
-:global(.dark .scheme3-payment-result :deep(.bg-yellow-100)) { background: rgba(214,166,93,.12) !important; }
-:global(.dark .scheme3-payment-result :deep(.text-yellow-500)) { color: #d6a65d !important; }
+:global(.dark .scheme3-payment-result .btn-primary) { background: #8fc2a5; color: #1b1b18; }
+:global(.dark .scheme3-payment-result .bg-green-100) { background: rgba(143,194,165,.12) !important; }
+:global(.dark .scheme3-payment-result .text-green-500) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-payment-result .bg-yellow-100) { background: rgba(214,166,93,.12) !important; }
+:global(.dark .scheme3-payment-result .text-yellow-500) { color: #d6a65d !important; }
 </style>

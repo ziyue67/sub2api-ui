@@ -10,13 +10,14 @@
       <div
         v-for="r in results"
         :key="r.model"
-        class="scheme3-monitor-result-row flex items-center justify-between px-3 py-2 text-sm"
+        class="scheme3-monitor-result-row flex flex-col items-stretch gap-2 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
       >
-        <div class="flex flex-col">
-          <span class="scheme3-monitor-table-primary font-medium">{{ r.model }}</span>
+        <div class="min-w-0 flex flex-col">
+          <span class="scheme3-monitor-table-primary font-medium">{{ formatMonitorModel(r.model) }}</span>
           <span v-if="r.message" class="scheme3-monitor-table-muted text-xs">{{ r.message }}</span>
+          <MonitorQuotaView :snapshot="r.quota" class="mt-1" />
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex shrink-0 items-center justify-end gap-2 sm:justify-start">
           <span
             class="scheme3-monitor-status-badge inline-flex items-center px-2 py-0.5 text-[11px]"
             :class="statusClass(r.status)"
@@ -41,6 +42,7 @@
 import { useI18n } from 'vue-i18n'
 import type { CheckResult, MonitorStatus } from '@/api/admin/channelMonitor'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import MonitorQuotaView from '@/components/common/MonitorQuotaView.vue'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 
 defineProps<{
@@ -53,7 +55,7 @@ defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { statusLabel, formatLatency } = useChannelMonitorFormat()
+const { statusLabel, formatLatency, formatMonitorModel } = useChannelMonitorFormat()
 
 function statusClass(status: MonitorStatus): string {
   switch (status) {

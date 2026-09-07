@@ -1,0 +1,176 @@
+<template>
+  <div class="scheme3-square-table scheme3-model-square-table overflow-x-auto rounded-2xl border border-gray-200/80 bg-white/90 shadow-sm backdrop-blur dark:border-dark-700/80 dark:bg-dark-900/90">
+    <table class="w-full text-left text-xs text-gray-600 dark:text-dark-300">
+      <thead class="bg-gray-50/80 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:bg-dark-950/40 dark:text-dark-500 border-b border-gray-100 dark:border-dark-800">
+        <tr>
+          <th scope="col" class="py-3.5 pl-4 pr-3">模型名称</th>
+          <th scope="col" class="px-3 py-3.5">提供商</th>
+          <th scope="col" class="px-3 py-3.5">上下文</th>
+          <th scope="col" class="px-3 py-3.5">能力特性</th>
+          <th scope="col" class="px-3 py-3.5">输入价格 (1M)</th>
+          <th scope="col" class="px-3 py-3.5">输出价格 (1M)</th>
+          <th scope="col" class="px-3 py-3.5">可用渠道</th>
+          <th scope="col" class="py-3.5 pl-3 pr-4 text-right">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100 dark:divide-dark-800/80 font-medium">
+        <tr
+          v-for="model in models"
+          :key="model.key"
+          class="hover:bg-gray-50/70 dark:hover:bg-dark-800/50 transition-colors"
+        >
+          <!-- 模型名称 -->
+          <td class="py-3 pl-4 pr-3">
+            <div class="flex items-center gap-2.5">
+              <div
+                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-dark-800"
+                :class="platformTextClass(model.platform)"
+              >
+                <PlatformIcon :platform="model.platform" size="sm" />
+              </div>
+              <div class="min-w-0">
+                <span class="font-bold text-gray-900 dark:text-white truncate block max-w-[200px]" :title="model.name">
+                  {{ model.name }}
+                </span>
+                <span v-if="model.bestMultiplier != null && model.bestMultiplier < 1" class="text-[10px] text-rose-500 font-bold">
+                  {{ formatMultiplier(model.bestMultiplier) }}
+                </span>
+              </div>
+            </div>
+          </td>
+
+          <!-- 提供商 -->
+          <td class="px-3 py-3">
+            <span class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-dark-800 dark:text-gray-300">
+              {{ platformLabel(model.platform) }}
+            </span>
+          </td>
+
+          <!-- 上下文 -->
+          <td class="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
+            {{ model.contextWindow || '128K' }}
+          </td>
+
+          <!-- 能力特性 -->
+          <td class="px-3 py-3">
+            <div class="flex flex-wrap gap-1 max-w-xs">
+              <span
+                v-for="cap in (model.capabilities || []).slice(0, 3)"
+                :key="cap"
+                class="inline-flex items-center gap-1 rounded bg-gray-100/80 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-dark-800 dark:text-dark-300"
+                :title="capabilityMeta(cap).description"
+              >
+                <Icon :name="capabilityMeta(cap).icon as any" size="xs" />
+                <span>{{ capabilityMeta(cap).label }}</span>
+              </span>
+              <span
+                v-if="(model.capabilities || []).length > 3"
+                class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-400 dark:bg-dark-800"
+              >
+                +{{ model.capabilities!.length - 3 }}
+              </span>
+            </div>
+          </td>
+
+          <!-- 输入价格 -->
+          <td class="px-3 py-3 font-mono font-bold text-emerald-600 dark:text-emerald-400">
+            <div class="flex items-center gap-1.5">
+              <span>{{ formatPriceDisplay(model.minInputPrice) }}</span>
+              <span v-if="model.isOfficialPriceFallback" class="rounded px-1 py-0.2 text-[9px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 font-sans" title="官方参考定价">官方</span>
+            </div>
+          </td>
+
+          <!-- 输出价格 -->
+          <td class="px-3 py-3 font-mono font-bold text-blue-600 dark:text-blue-400">
+            <div class="flex items-center gap-1.5">
+              <span>{{ formatPriceDisplay(model.minOutputPrice) }}</span>
+              <span v-if="model.isOfficialPriceFallback" class="rounded px-1 py-0.2 text-[9px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 font-sans" title="官方参考定价">官方</span>
+            </div>
+          </td>
+
+          <!-- 可用渠道数 -->
+          <td class="px-3 py-3 font-mono">
+            <span class="rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-300">
+              {{ model.channels.length }} 个
+            </span>
+          </td>
+
+          <!-- 操作 -->
+          <td class="py-3 pl-3 pr-4 text-right">
+            <div class="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                class="scheme3-square-table-icon rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-800 dark:hover:text-gray-200"
+                title="复制模型名称"
+                @click="copyModel(model.name)"
+              >
+                <Icon name="copy" size="xs" />
+              </button>
+              <button
+                type="button"
+                class="scheme3-square-table-action rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
+                @click="$emit('view-details', model)"
+              >
+                查看定价
+              </button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</template>
+
+<script setup lang="ts">
+import Icon from '@/components/icons/Icon.vue'
+import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import { platformLabel, platformTextClass } from '@/utils/platformColors'
+import { capabilityMeta } from '../utils/capabilities'
+import { formatMultiplier, formatTokenPrice } from '../utils/pricing'
+import type { ModelSquareModel } from '../types'
+
+interface Props {
+  models: ModelSquareModel[]
+  userGroupRates: Record<number, number>
+}
+
+defineProps<Props>()
+
+defineEmits<{
+  'view-details': [model: ModelSquareModel]
+}>()
+
+function formatPriceDisplay(val?: number | null) {
+  if (val == null) return '免费 / 未设'
+  return formatTokenPrice(val)
+}
+
+function copyModel(name: string) {
+  navigator.clipboard.writeText(name)
+}
+</script>
+
+<style scoped>
+.scheme3-square-table {
+  border-color: var(--scheme3-line,#dad5c8);
+  border-radius: 7px;
+  background: var(--scheme3-card,#fbfaf6);
+  box-shadow: 0 9px 20px rgba(54,48,34,.05);
+}
+.scheme3-square-table table { color: var(--scheme3-muted,#6b695f); }
+.scheme3-square-table thead { border-color: var(--scheme3-line,#dad5c8); background: #f8f6ef; color: var(--scheme3-muted,#6b695f); }
+.scheme3-square-table tbody { border-color: var(--scheme3-line,#dad5c8); }
+.scheme3-square-table tbody tr:hover { background: rgba(30,92,66,.045); }
+.scheme3-square-table-action { border: 1px solid rgba(30,92,66,.32); border-radius: 4px; background: rgba(30,92,66,.08); color: #1e5c42; }
+.scheme3-square-table-action:hover { background: rgba(30,92,66,.14); }
+.scheme3-square-table-icon { border-radius: 4px; }
+.scheme3-model-square-table :deep([class*='text-blue-']) { color: #1e5c42 !important; }
+.scheme3-model-square-table :deep([class*='bg-blue-']), .scheme3-model-square-table :deep([class*='bg-indigo-']) { background-color: rgba(30,92,66,.08) !important; }
+.scheme3-model-square-table :deep([class*='text-indigo-']) { color: #1e5c42 !important; }
+:global(html.dark .scheme3-square-table) { border-color: #47443a; background: #24231f; }
+:global(html.dark .scheme3-square-table thead) { border-color: #47443a; background: #1b1b18; color: #aaa69a; }
+:global(html.dark .scheme3-square-table tbody) { border-color: #47443a; }
+:global(html.dark .scheme3-square-table tbody tr:hover) { background: rgba(143,194,165,.06); }
+:global(html.dark .scheme3-square-table-action) { border-color: #8fc2a5; background: rgba(143,194,165,.12); color: #a7d0b8; }
+:global(html.dark .scheme3-model-square-table [class*='text-blue-']), :global(html.dark .scheme3-model-square-table [class*='text-indigo-']) { color: #a7d0b8 !important; }
+</style>

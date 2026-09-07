@@ -1445,8 +1445,8 @@ tbody tr:hover .sticky-col {
   .scheme3-table-mobile-value { overflow-wrap: anywhere; }
 }
 
-:global(html.dark) .scheme3-table-wrapper,
-:global(html.dark) .scheme3-table-mobile-list {
+:global(html.dark .scheme3-table-wrapper),
+:global(html.dark .scheme3-table-mobile-list) {
   --scheme3-table-surface: var(--admin-surface, #24231f);
   --scheme3-table-subtle: var(--admin-subtle, #2b2924);
   --scheme3-table-ink: var(--admin-ink, #f4f2ec);

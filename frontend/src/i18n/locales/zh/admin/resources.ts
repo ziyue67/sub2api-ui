@@ -320,6 +320,8 @@ export default {
       customExpiry: '自定义',
       customExpiryDays: '自定义天数',
       expiryDaysRequired: '请输入有效的过期天数',
+      expiryDateRequired: '请输入有效的过期日期和时间',
+      localTimeZoneHint: '自定义时间按浏览器本地时区（{timezone}）解释。',
       groupRequired: '请选择订阅分组',
       days: '天',
       status: {
@@ -372,6 +374,7 @@ export default {
     announcements: {
       title: '公告管理',
       description: '创建公告并按条件投放',
+      createFirstAnnouncement: '还没有公告，创建您的第一条公告。',
       createAnnouncement: '创建公告',
       editAnnouncement: '编辑公告',
       deleteAnnouncement: '删除公告',
@@ -382,6 +385,7 @@ export default {
         title: '标题',
         status: '状态',
         notifyMode: '通知方式',
+        ticker: '轮播',
         targeting: '展示条件',
         timeRange: '有效期',
         createdAt: '创建时间',
@@ -395,6 +399,14 @@ export default {
       notifyModeLabels: {
         silent: '静默',
         popup: '弹窗'
+      },
+      ticker: {
+        title: '置顶轮播',
+        enabled: '上轮播',
+        disabled: '不上轮播',
+        hint: '开启后会显示在用户端标题栏轮播中',
+        priority: '轮播优先级',
+        priorityHint: '0-100，数值越大越靠前；同优先级按最新公告优先'
       },
       form: {
         title: '标题',
@@ -515,7 +527,9 @@ export default {
       account: '账户',
       group: '分组',
       requestId: '请求ID',
+      upstreamRequestId: '上游ID',
       requestIdCopied: '请求ID已复制',
+      upstreamRequestIdCopied: '上游ID已复制',
       allModels: '全部模型',
       allAccounts: '全部账户',
       allGroups: '全部分组',

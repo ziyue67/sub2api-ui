@@ -80,7 +80,7 @@
                   <span class="text-gray-900 dark:text-white">${{ creditedAmount.toFixed(2) }}</span>
                 </div>
                 <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { usd: balanceRechargeMultiplier.toFixed(2) }) }}
+                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
                 </p>
               </div>
             </div>
@@ -1183,8 +1183,8 @@ onMounted(async () => {
 :global(.dark .scheme3-payment-tab-active) { border-color: #47443a; background: #24231f; color: #8fc2a5; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 :global(.dark .scheme3-payment-account p:last-child) { color: #8fc2a5 !important; }
 :global(.dark .scheme3-payment-active-sub) { background: #2b2924; }
-:global(.dark .scheme3-payment :deep(.scheme3-payment-primary)) { background: #8fc2a5 !important; color: #1b1b18 !important; box-shadow: 0 9px 18px rgba(143,194,165,.13); }
-:global(.dark .scheme3-payment :deep(.scheme3-payment-primary:hover:not(:disabled))) { background: #a7d2b7 !important; }
+:global(.dark .scheme3-payment .scheme3-payment-primary) { background: #8fc2a5 !important; color: #1b1b18 !important; box-shadow: 0 9px 18px rgba(143,194,165,.13); }
+:global(.dark .scheme3-payment .scheme3-payment-primary:hover:not(:disabled)) { background: #a7d2b7 !important; }
 :global(.dark .scheme3-payment-modal) { border-color: #47443a; background: #24231f; color: #f4f2ec; box-shadow: 0 22px 60px rgba(0,0,0,.42); }
 :global(.dark .scheme3-payment-modal-close:hover) { border-color: #47443a; background: #2b2924; color: #f4f2ec; }
 

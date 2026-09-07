@@ -58,6 +58,7 @@ const routes = [
   '/admin/channels/monitor',
   '/admin/subscriptions',
   '/admin/accounts',
+  '/admin/plugins',
   '/admin/announcements',
   '/admin/proxies',
   '/admin/risk-control',
@@ -86,6 +87,7 @@ type PublicFlags = {
   payment_enabled?: boolean
   affiliate_enabled?: boolean
   risk_control_enabled?: boolean
+  plugin_management_enabled?: boolean
 }
 
 function makeRouter(): Router {
@@ -128,6 +130,7 @@ async function mountLayout(options: {
     payment_enabled: true,
     affiliate_enabled: true,
     risk_control_enabled: true,
+    plugin_management_enabled: true,
     custom_menu_items: [
       { id: 'user-entry', label: '用户扩展', visibility: 'user', sort_order: 10, icon_svg: '' },
       { id: 'admin-public-entry', label: '公开管理扩展', visibility: 'admin', sort_order: 20, icon_svg: '' },
@@ -158,6 +161,7 @@ async function mountLayout(options: {
     global: {
       plugins: [router],
       stubs: {
+        AnnouncementTicker: { template: '<div class="announcement-ticker-stub" />' },
         AnnouncementBell: true,
         LocaleSwitcher: true,
         SubscriptionProgressMini: true,
@@ -202,6 +206,7 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
       '/dashboard',
       '/keys',
       '/model-square',
+      '/model-plaza?embedded=1',
       '/canvas',
       '/leaderboard',
       '/batch-image',
@@ -218,6 +223,7 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
     ])
     expect(wrapper.find('.scheme3-console-topbar-right a[href="/model-plaza?embedded=1"]').exists()).toBe(true)
     expect(wrapper.find('.scheme3-console-topbar-right a[href="/model-plaza?embedded=1"] span').text()).not.toBe('模型行情')
+    expect(wrapper.find('.scheme3-console-announcement-ticker').exists()).toBe(true)
     expect(wrapper.text()).toContain('总排行榜')
     expect(wrapper.text()).not.toContain('后台总排行榜')
     expect(wrapper.text()).not.toContain('公开管理扩展')
@@ -259,6 +265,7 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
       '/dashboard',
       '/keys',
       '/model-square',
+      '/model-plaza?embedded=1',
       '/canvas',
       '/leaderboard',
       '/monitor',
@@ -282,6 +289,7 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
     expect(sectionHrefs(wrapper, 0)).toEqual([
       '/admin/dashboard',
       '/model-square',
+      '/model-plaza?embedded=1',
       '/admin/ops',
       '/admin/users',
       '/admin/groups',
@@ -289,6 +297,7 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
       '/admin/channels/monitor',
       '/admin/subscriptions',
       '/admin/accounts',
+      '/admin/plugins',
       '/admin/announcements',
       '/admin/proxies',
       '/admin/risk-control',
@@ -310,6 +319,7 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
     expect(sectionHrefs(wrapper, 1)).toEqual([
       '/keys',
       '/model-square',
+      '/model-plaza?embedded=1',
       '/canvas',
       '/leaderboard',
       '/batch-image',
@@ -345,6 +355,7 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
         payment_enabled: false,
         affiliate_enabled: false,
         risk_control_enabled: false,
+        plugin_management_enabled: false,
       },
     })
     await expandAllGroups(wrapper)
@@ -389,8 +400,10 @@ describe('Scheme3ConsoleLayout navigation contract', () => {
     expect(sectionHrefs(wrapper)).toEqual([
       '/admin/dashboard',
       '/model-square',
+      '/model-plaza?embedded=1',
       '/admin/ops',
       '/admin/accounts',
+      '/admin/plugins',
       '/admin/announcements',
       '/admin/proxies',
       '/admin/risk-control',

@@ -31,7 +31,7 @@
             :key="m.model"
             class="scheme3-monitor-detail-row"
           >
-            <td class="scheme3-monitor-detail-primary py-2 pr-3 font-medium">{{ m.model }}</td>
+            <td class="scheme3-monitor-detail-primary py-2 pr-3 font-medium">{{ formatMonitorModel(m.model) }}</td>
             <td class="py-2 pr-3">
               <span
                 class="scheme3-monitor-status-badge inline-flex items-center px-2 py-0.5 text-[11px]"
@@ -85,7 +85,7 @@ defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const { statusLabel, formatLatency, formatPercent } = useChannelMonitorFormat()
+const { statusLabel, formatLatency, formatPercent, formatMonitorModel } = useChannelMonitorFormat()
 
 function statusClass(status: MonitorStatus | ''): string {
   switch (status) {

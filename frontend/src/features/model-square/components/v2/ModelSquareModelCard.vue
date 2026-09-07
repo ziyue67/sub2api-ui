@@ -2,7 +2,7 @@
   <article
     :id='cardId'
     :data-model-key='model.key'
-    class='scroll-mt-8 relative bg-white/80 dark:bg-dark-900/60 border border-gray-200 dark:border-dark-700/60 rounded-3xl shadow-2xl shadow-black/10 dark:shadow-black/20 hover:shadow-indigo-500/10 hover:-translate-y-1 transition-all duration-500 overflow-hidden backdrop-blur-xl group'
+    class='scheme3-model-square-model-card scroll-mt-8 relative bg-white/80 dark:bg-dark-900/60 border border-gray-200 dark:border-dark-700/60 rounded-3xl shadow-2xl shadow-black/10 dark:shadow-black/20 hover:shadow-indigo-500/10 hover:-translate-y-1 transition-all duration-500 overflow-hidden backdrop-blur-xl group'
   >
     <!-- 平台渐变顶部条 -->
     <div class='h-1.5 w-full' :class='platformGradientClass(model.platform)'></div>
@@ -93,3 +93,14 @@ const props = defineProps<Props>()
 const showConfig = ref(false)
 const cardId = computed(() => 'model-' + props.model.key)
 </script>
+
+<style scoped>
+.scheme3-model-square-model-card { border-color: var(--scheme3-line, #dad5c8); border-radius: 7px; background: var(--scheme3-card, #fbfaf6); color: var(--scheme3-ink, #16150f); box-shadow: 0 8px 20px rgba(54,48,34,.05); }
+.scheme3-model-square-model-card :deep([class*='rounded-']) { border-radius: 5px !important; }
+.scheme3-model-square-model-card :deep([class*='bg-gradient-']) { background-image: none !important; }
+.scheme3-model-square-model-card :deep([class*='text-indigo-']), .scheme3-model-square-model-card :deep([class*='text-purple-']) { color: #1e5c42 !important; }
+.scheme3-model-square-model-card :deep([class*='bg-indigo-']), .scheme3-model-square-model-card :deep([class*='bg-purple-']) { background-color: rgba(30,92,66,.08) !important; }
+:global(html.dark .scheme3-model-square-model-card) { border-color: #47443a; background: #24231f; color: #f4f2ec; }
+:global(html.dark .scheme3-model-square-model-card [class*='text-indigo-']), :global(html.dark .scheme3-model-square-model-card [class*='text-purple-']) { color: #a7d0b8 !important; }
+:global(html.dark .scheme3-model-square-model-card [class*='bg-indigo-']), :global(html.dark .scheme3-model-square-model-card [class*='bg-purple-']) { background-color: rgba(143,194,165,.12) !important; }
+</style>

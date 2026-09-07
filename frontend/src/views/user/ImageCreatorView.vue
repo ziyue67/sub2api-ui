@@ -225,14 +225,17 @@
               <div class="flex aspect-square items-center justify-center bg-gray-100 dark:bg-dark-900">
                 <button
                   type="button"
-                  class="group relative flex h-full w-full cursor-zoom-in items-center justify-center overflow-hidden"
+                  class="group relative flex h-full w-full items-center justify-center overflow-hidden"
+                  :class="item.url ? 'cursor-zoom-in' : 'cursor-wait'"
+                  :disabled="!item.url"
                   :aria-label="t('imageCreator.previewImage')"
                   :title="t('imageCreator.previewImage')"
                   data-testid="image-result-preview"
                   @click="openPreview(item)"
                   @dblclick="openPreview(item)"
                 >
-                  <img :src="item.url" alt="" class="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02] group-focus-visible:scale-[1.02]" />
+                  <img v-if="item.url" :src="item.url" alt="" class="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02] group-focus-visible:scale-[1.02]" />
+                  <span v-else class="scheme3-image-result-loading" aria-hidden="true"></span>
                   <span class="pointer-events-none absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white opacity-0 shadow-lg backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                     <Icon name="search" size="sm" />
                   </span>
@@ -246,7 +249,7 @@
                   <span class="text-xs text-gray-400 dark:text-dark-400">
                     {{ item.outputFormat.toUpperCase() }}
                   </span>
-                  <button type="button" class="btn btn-secondary btn-sm" @click="downloadImage(item, index)">
+                  <button type="button" class="btn btn-secondary btn-sm" :disabled="!item.url" @click="downloadImage(item, index)">
                     <Icon name="download" size="sm" class="mr-1.5" />
                     {{ t('imageCreator.download') }}
                   </button>
@@ -347,6 +350,7 @@ const activeTaskId = ref<number | null>(null)
 let generationTimerId: ReturnType<typeof setInterval> | null = null
 let taskPollTimerId: ReturnType<typeof setInterval> | null = null
 let imagePreviewLoadToken = 0
+let componentMounted = false
 const generatedImageObjectUrls = new Set<string>()
 
 const modelOptions = [
@@ -504,10 +508,12 @@ function taskIsActive(task: ImageCreatorTask | null | undefined): boolean {
 }
 
 function storedImageToResult(image: ImageCreatorStoredImage, index: number): GeneratedImage {
+  const sourceUrl = image.url
   return {
     id: String(image.id || `${Date.now()}-${index}`),
-    url: image.url,
-    sourceUrl: image.url,
+    // Protected files must be fetched with Authorization before they reach <img>.
+    url: shouldFetchImageUrl(sourceUrl) ? '' : sourceUrl,
+    sourceUrl,
     revisedPrompt: image.revised_prompt || '',
     outputFormat: image.output_format || outputFormat.value,
     mimeType: image.mime_type || '',
@@ -557,11 +563,20 @@ async function createObjectUrlForImage(item: GeneratedImage): Promise<string> {
 }
 
 async function ensureImageDisplayUrl(item: GeneratedImage): Promise<string> {
-  if (!shouldFetchImageUrl(item.url)) {
+  if (item.url && !shouldFetchImageUrl(item.url)) {
     return item.url
   }
+  const sourceUrl = item.sourceUrl || item.url
+  if (!shouldFetchImageUrl(sourceUrl)) {
+    return sourceUrl
+  }
+  const token = imagePreviewLoadToken
   const objectUrl = await createObjectUrlForImage(item)
   const current = results.value.find((result) => result.id === item.id)
+  if (!componentMounted || token !== imagePreviewLoadToken || current !== item) {
+    revokeGeneratedImageObjectUrl(objectUrl)
+    throw new Error('Image preview expired')
+  }
   if (current) {
     revokeGeneratedImageObjectUrl(current.url)
     current.url = objectUrl
@@ -575,15 +590,16 @@ async function ensureImageDisplayUrl(item: GeneratedImage): Promise<string> {
 async function hydrateGeneratedImagePreviews(token: number): Promise<void> {
   const items = results.value.slice()
   await Promise.all(items.map(async (item) => {
-    if (!shouldFetchImageUrl(item.url)) return
+    const sourceUrl = item.sourceUrl || item.url
+    if (!shouldFetchImageUrl(sourceUrl)) return
     try {
       const objectUrl = await createObjectUrlForImage(item)
-      if (token !== imagePreviewLoadToken) {
+      if (!componentMounted || token !== imagePreviewLoadToken) {
         revokeGeneratedImageObjectUrl(objectUrl)
         return
       }
       const current = results.value.find((result) => result.id === item.id)
-      if (!current) {
+      if (!current || current !== item) {
         revokeGeneratedImageObjectUrl(objectUrl)
         return
       }
@@ -593,7 +609,11 @@ async function hydrateGeneratedImagePreviews(token: number): Promise<void> {
         previewImage.value.url = objectUrl
       }
     } catch {
-      // Keep the original URL as a fallback for cookie-based sessions.
+      const current = results.value.find((result) => result.id === item.id)
+      if (current && token === imagePreviewLoadToken) {
+        // Cookie-authenticated deployments can still use the original URL as a fallback.
+        current.url = current.sourceUrl
+      }
     }
   }))
 }
@@ -733,17 +753,21 @@ function clearResults(): void {
 }
 
 async function downloadImage(item: GeneratedImage, index: number): Promise<void> {
-  const href = await ensureImageDisplayUrl(item)
-  const link = document.createElement('a')
-  link.href = href
-  link.download = `image-${Date.now()}-${index + 1}.${String(item.outputFormat || outputFormat.value).toLowerCase()}`
-  if (!href.startsWith('data:') && !href.startsWith('blob:')) {
-    link.target = '_blank'
-    link.rel = 'noopener'
+  try {
+    const href = await ensureImageDisplayUrl(item)
+    const link = document.createElement('a')
+    link.href = href
+    link.download = `image-${Date.now()}-${index + 1}.${String(item.outputFormat || outputFormat.value).toLowerCase()}`
+    if (!href.startsWith('data:') && !href.startsWith('blob:')) {
+      link.target = '_blank'
+      link.rel = 'noopener'
+    }
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  } catch {
+    appStore.showError(t('imageCreator.downloadFailed'))
   }
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
 }
 
 function openPreview(item: GeneratedImage): void {
@@ -767,12 +791,14 @@ function onPreviewKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
+  componentMounted = true
   window.addEventListener('keydown', onPreviewKeydown)
   loadApiKeys()
   loadImageCreatorTasks()
 })
 
 onUnmounted(() => {
+  componentMounted = false
   window.removeEventListener('keydown', onPreviewKeydown)
   stopTaskPolling()
   stopGenerationTimer()
@@ -968,6 +994,7 @@ onUnmounted(() => {
 
 .scheme3-image-creator-reference-dropzone { border-color: var(--image-line) !important; border-radius: 7px !important; background: var(--image-subtle) !important; color: var(--image-muted); }
 .scheme3-image-creator-reference-dropzone:hover { border-color: rgba(30,92,66,.38) !important; background: rgba(30,92,66,.055) !important; }
+.scheme3-image-result-loading { width: 1.65rem; height: 1.65rem; border: 2px solid var(--image-line); border-top-color: var(--image-accent); border-radius: 999px; animation: image-wait-spin 1s linear infinite; }
 .scheme3-image-creator-action-bar { border-color: var(--image-line) !important; background: var(--image-subtle); }
 .scheme3-image-creator-generate { min-height: 2.55rem; border-radius: 7px; background: var(--image-accent) !important; color: var(--image-primary-fg); box-shadow: 0 9px 17px rgba(30,92,66,.14); }
 .scheme3-image-creator-generate:hover:not(:disabled) { background: #174a35 !important; }
@@ -1001,10 +1028,10 @@ onUnmounted(() => {
 
 :global(.dark .scheme3-image-creator) { --image-card: #24231f; --image-field: #24231f; --image-subtle: #2b2924; --image-field-disabled: #35332d; --image-primary-fg: #1b1b18; --image-ink: #f4f2ec; --image-muted: #aaa69a; --image-soft: #827e72; --image-line: #47443a; --image-accent: #8fc2a5; --image-amber: #d3a55a; --image-danger: #d38b79; }
 :global(.dark .scheme3-image-creator-panel-header),:global(.dark .scheme3-image-creator-action-bar) { background: #1b1b18; }
-:global(.dark) .scheme3-image-creator :deep(.text-primary-600),:global(.dark) .scheme3-image-creator :deep(.text-primary-500) { color: #8fc2a5 !important; }
-:global(.dark) .scheme3-image-creator :deep(.text-gray-500),:global(.dark) .scheme3-image-creator :deep(.text-gray-600) { color: #aaa69a !important; }
-:global(.dark) .scheme3-image-creator :deep(.text-gray-400) { color: #827e72 !important; }
-:global(.dark) .scheme3-image-creator :deep(.text-gray-900) { color: #f4f2ec !important; }
+:global(.dark .scheme3-image-creator .text-primary-600),:global(.dark .scheme3-image-creator .text-primary-500) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-image-creator .text-gray-500),:global(.dark .scheme3-image-creator .text-gray-600) { color: #aaa69a !important; }
+:global(.dark .scheme3-image-creator .text-gray-400) { color: #827e72 !important; }
+:global(.dark .scheme3-image-creator .text-gray-900) { color: #f4f2ec !important; }
 :global(.dark .scheme3-image-creator-reference-dropzone) { border-color: #47443a !important; background: var(--image-subtle) !important; }
 :global(.dark .scheme3-image-creator-reference-dropzone:hover) { border-color: rgba(143,194,165,.34) !important; background: rgba(143,194,165,.08) !important; }
 :global(.dark .scheme3-image-creator-generate) { border-color: #8fc2a5; background: #8fc2a5 !important; color: var(--image-primary-fg); }
@@ -1013,14 +1040,14 @@ onUnmounted(() => {
 :global(.dark .scheme3-image-creator-clear) { border-color: #47443a; background: var(--image-field); color: var(--image-ink); }
 :global(.dark .scheme3-image-creator-clear:hover) { background: var(--image-subtle); color: #8fc2a5; }
 :global(.dark .scheme3-image-creator-safety) { border-color: rgba(211,165,90,.3) !important; background: rgba(211,165,90,.1) !important; color: #d3a55a !important; }
-:global(.dark) .scheme3-image-creator-empty :deep(.empty-state) { background: var(--image-subtle); }
-:global(.dark) .scheme3-image-creator-wait :deep(.bg-gray-100) { background: var(--image-subtle) !important; }
-:global(.dark) .scheme3-image-creator-wait :deep(.bg-primary-500) { background: #8fc2a5 !important; }
+:global(.dark .scheme3-image-creator-empty .empty-state) { background: var(--image-subtle); }
+:global(.dark .scheme3-image-creator-wait .bg-gray-100) { background: var(--image-subtle) !important; }
+:global(.dark .scheme3-image-creator-wait .bg-primary-500) { background: #8fc2a5 !important; }
 :global(.dark .scheme3-image-result-card) { border-color: #47443a !important; background: var(--image-field) !important; box-shadow: 0 12px 25px rgba(0,0,0,.22); }
 :global(.dark .scheme3-image-result-card:hover) { border-color: rgba(143,194,165,.35) !important; box-shadow: 0 17px 31px rgba(0,0,0,.3); }
-:global(.dark) .scheme3-image-result-card :deep(.bg-gray-100) { background: var(--image-subtle) !important; }
-:global(.dark) .scheme3-image-result-card :deep(.btn-secondary) { border-color: #47443a; background: var(--image-field); color: var(--image-ink); }
-:global(.dark) .scheme3-image-result-card :deep(.btn-secondary:hover) { background: var(--image-subtle); color: #8fc2a5; }
+:global(.dark .scheme3-image-result-card .bg-gray-100) { background: var(--image-subtle) !important; }
+:global(.dark .scheme3-image-result-card .btn-secondary) { border-color: #47443a; background: var(--image-field); color: var(--image-ink); }
+:global(.dark .scheme3-image-result-card .btn-secondary:hover) { background: var(--image-subtle); color: #8fc2a5; }
 
 @media (max-width: 1023px) {
   .scheme3-image-creator-workspace { min-height: 0; }

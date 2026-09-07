@@ -184,6 +184,7 @@
           @reset-status="handleBulkResetStatus"
           @refresh-token="handleBulkRefreshToken"
           @probe-upstream-billing="handleBulkProbeUpstreamBilling"
+          @test-connection="openBatchTest"
           @edit-selected="openBulkEditSelected"
           @edit-filtered="openBulkEditFiltered"
           @clear="clearSelection"
@@ -305,7 +306,7 @@
             />
           </template>
           <template #cell-groups="{ row }">
-            <AccountGroupsCell :groups="row.groups" :max-display="4" />
+            <AccountGroupsCell :groups="accountGroupsForRow(row)" :max-display="4" />
           </template>
           <template #header-usage="{ column }">
             <div class="flex items-center">
@@ -440,6 +441,10 @@
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                 <span class="text-xs">{{ t('common.delete') }}</span>
               </button>
+              <button @click="handleProxyLanes(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-cyan-50 hover:text-cyan-600 dark:hover:bg-cyan-900/20 dark:hover:text-cyan-400" :title="t('admin.accounts.proxyLanes.manage')">
+                <Icon name="server" size="sm" />
+                <span class="hidden text-xs sm:inline">{{ t('admin.accounts.proxyLanes.manageShort') }}</span>
+              </button>
               <button @click="openMenu(row, $event)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white">
                 <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
                 <span class="text-xs">{{ t('common.more') }}</span>
@@ -455,9 +460,11 @@
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <BatchAccountTestModal :show="showBatchTest" :account-ids="selIds" :accounts="accounts" @close="showBatchTest = false" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
+    <AccountProxyLanesModal :show="showProxyLanes" :account="proxyLanesAcc" :proxies="proxies" @close="showProxyLanes = false" @updated="reload" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @lanes="handleProxyLanes" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -504,7 +511,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
+import { CreateAccountModal, EditAccountModal, AccountProxyLanesModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
@@ -512,6 +519,7 @@ import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
+import BatchAccountTestModal from '@/components/admin/account/BatchAccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -533,7 +541,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
-import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
+import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -541,6 +549,12 @@ const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
+const groupsByID = computed(() => new Map(groups.value.map(group => [group.id, group])))
+const accountGroupsForRow = (account: Pick<AccountListItem, 'group_ids'>): AdminGroup[] => {
+  const groupIDs = account.group_ids ?? []
+  if (groupIDs.length === 0) return []
+  return groupIDs.map(id => groupsByID.value.get(id)).filter((group): group is AdminGroup => Boolean(group))
+}
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
 type AccountBulkEditTarget =
@@ -595,7 +609,9 @@ const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)
 const showTest = ref(false)
+const showBatchTest = ref(false)
 const showStats = ref(false)
+const showProxyLanes = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
 const edAcc = ref<Account | null>(null)
@@ -605,6 +621,7 @@ const creatingShadowAcc = ref<Account | null>(null)
 const reAuthAcc = ref<Account | null>(null)
 const testingAcc = ref<Account | null>(null)
 const statsAcc = ref<Account | null>(null)
+const proxyLanesAcc = ref<Account | null>(null)
 const showSchedulePanel = ref(false)
 const scheduleAcc = ref<Account | null>(null)
 const scheduleModelOptions = ref<SelectOption[]>([])
@@ -614,7 +631,9 @@ const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
 const upstreamBillingProbeGloballyEnabled = ref<boolean | undefined>(undefined)
 const upstreamBillingNow = ref(Date.now())
-let lastUpstreamBillingSortRefreshMinute = -1
+const upstreamBillingRateETag = ref<string | null>(null)
+const upstreamBillingRateRefreshing = ref(false)
+let upstreamBillingRateAbortController: AbortController | null = null
 useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 
 // Account tools dropdown
@@ -635,7 +654,7 @@ const accountToolsDropdownStyle = computed(() => ({
   width: `${accountToolsDropdownPosition.width}px`
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'scheduler_score', 'rate_multiplier']
+const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
@@ -1069,7 +1088,7 @@ const {
   debouncedReload: baseDebouncedReload,
   handlePageChange: baseHandlePageChange,
   handlePageSizeChange: baseHandlePageSizeChange
-} = useTableLoader<Account, any>({
+} = useTableLoader<AccountListItem, any>({
   fetchFn: adminAPI.accounts.list,
   initialParams: {
     platform: '',
@@ -1078,6 +1097,7 @@ const {
     privacy_mode: '',
     group: '',
     search: '',
+    lite: '1',
     include_scheduler_score: shouldIncludeSchedulerScore() ? '1' : '0',
     sort_by: sortState.sort_by,
     sort_order: sortState.sort_order
@@ -1098,7 +1118,7 @@ const {
   toggleVisible,
   selectVisible: selectCurrentPage,
   batchUpdate
-} = useTableSelection<Account>({
+} = useTableSelection<AccountListItem>({
   rows: accounts,
   getId: (account) => account.id
 })
@@ -1138,36 +1158,25 @@ useSwipeSelect(accountTableRef, {
 
 const resetAutoRefreshCache = () => {
   autoRefreshETag.value = null
+  upstreamBillingRateETag.value = null
 }
 
-const isFirstLoad = ref(true)
-
-function markUpstreamBillingSortRefresh() {
-  if (sortState.sort_by === 'upstream_billing_rate') {
-    lastUpstreamBillingSortRefreshMinute = Math.floor(Date.now() / 60_000)
-  }
+type AccountLoadOptions = {
+  refreshTodayStats?: boolean
 }
 
-const load = async () => {
+const load = async (options: AccountLoadOptions = {}) => {
   const requestParams = params as any
-  markUpstreamBillingSortRefresh()
   syncAccountListDerivedParams()
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
-  if (isFirstLoad.value) {
-    requestParams.lite = '1'
-  }
+  requestParams.lite = '1'
   await baseLoad()
-  if (isFirstLoad.value) {
-    isFirstLoad.value = false
-    delete requestParams.lite
-  }
-  await refreshTodayStatsBatch()
+  if (options.refreshTodayStats !== false) await refreshTodayStatsBatch()
 }
 
 const reload = async () => {
-  markUpstreamBillingSortRefresh()
   syncAccountListDerivedParams()
   hasPendingListSync.value = false
   resetAutoRefreshCache()
@@ -1176,18 +1185,119 @@ const reload = async () => {
   await refreshTodayStatsBatch()
 }
 
-const refreshUpstreamBillingSortedList = async (force = false) => {
-  if (sortState.sort_by !== 'upstream_billing_rate') return
-
-  const minute = Math.floor(upstreamBillingNow.value / 60_000)
-  if (!force && lastUpstreamBillingSortRefreshMinute === minute) return
-  lastUpstreamBillingSortRefreshMinute = minute
-  try {
-    await reload()
-  } catch (error) {
-    console.error('Failed to refresh upstream billing sort:', error)
+const buildUpstreamBillingRateFilters = () => {
+  const rawParams = toRaw(params) as Record<string, unknown>
+  return {
+    platform: typeof rawParams.platform === 'string' ? rawParams.platform : '',
+    type: typeof rawParams.type === 'string' ? rawParams.type : '',
+    status: typeof rawParams.status === 'string' ? rawParams.status : '',
+    group: typeof rawParams.group === 'string' ? rawParams.group : '',
+    search: typeof rawParams.search === 'string' ? rawParams.search : '',
+    privacy_mode: typeof rawParams.privacy_mode === 'string' ? rawParams.privacy_mode : '',
+    sort_by: sortState.sort_by,
+    sort_order: sortState.sort_order
   }
 }
+
+const sameAccountIDOrder = (left: number[], right: number[]) =>
+  left.length === right.length && left.every((id, index) => id === right[index])
+
+const upstreamBillingRateContextKey = () => JSON.stringify({
+  page: pagination.page,
+  pageSize: pagination.page_size,
+  filters: buildUpstreamBillingRateFilters()
+})
+
+const applyUpstreamBillingRateSnapshots = async (
+  result: NonNullable<Awaited<ReturnType<typeof adminAPI.accounts.getUpstreamBillingRatesWithEtag>>['data']>
+) => {
+  const nextIDs = result.items.map(item => item.account_id)
+  const currentIDs = accounts.value.map(account => account.id)
+
+  // The compact response cannot fill a row that crossed a page boundary.
+  // Only that case needs the expensive, full account-list request.
+  if (result.total !== pagination.total || !sameAccountIDOrder(nextIDs, currentIDs)) {
+    try {
+      await load({ refreshTodayStats: false })
+    } catch (error) {
+      console.error('Failed to reconcile upstream billing sort:', error)
+    }
+    return
+  }
+
+  const itemsByID = new Map(result.items.map(item => [item.account_id, item]))
+  let changed = false
+  const nextAccounts = accounts.value.map(account => {
+    const item = itemsByID.get(account.id)
+    if (!item) return account
+    const nextSnapshot = item.snapshot ?? null
+    const previousSnapshot = account.extra?.upstream_billing_probe ?? null
+    if (JSON.stringify(previousSnapshot) === JSON.stringify(nextSnapshot)) return account
+
+    const nextExtra = { ...(account.extra ?? {}) }
+    if (nextSnapshot) nextExtra.upstream_billing_probe = nextSnapshot
+    else delete nextExtra.upstream_billing_probe
+    const nextAccount = {
+      ...account,
+      ...(typeof nextSnapshot?.synced_rate_multiplier === 'number'
+        ? { rate_multiplier: nextSnapshot.synced_rate_multiplier }
+        : {}),
+      extra: nextExtra
+    }
+    syncAccountRefs(nextAccount)
+    changed = true
+    return nextAccount
+  })
+
+  if (changed) {
+    accounts.value = nextAccounts
+    upstreamBillingNow.value = Date.now()
+  }
+}
+
+const refreshUpstreamBillingRates = async (force = false) => {
+  if (upstreamBillingRateRefreshing.value || loading.value || accounts.value.length === 0) return
+  if (!force && (
+    probingUpstreamBilling.size > 0 ||
+    isAnyModalOpen.value ||
+    menu.show ||
+    showAccountToolsDropdown.value ||
+    showAutoRefreshDropdown.value ||
+    (typeof document !== 'undefined' && document.hidden)
+  )) return
+
+  const controller = new AbortController()
+  upstreamBillingRateAbortController = controller
+  upstreamBillingRateRefreshing.value = true
+  try {
+    syncAccountListDerivedParams()
+    const requestContextKey = upstreamBillingRateContextKey()
+    const result = await adminAPI.accounts.getUpstreamBillingRatesWithEtag(
+      pagination.page,
+      pagination.page_size,
+      buildUpstreamBillingRateFilters(),
+      { etag: force ? null : upstreamBillingRateETag.value, signal: controller.signal }
+    )
+    if (loading.value || requestContextKey !== upstreamBillingRateContextKey()) return
+    if (result.etag) upstreamBillingRateETag.value = result.etag
+    if (!result.notModified && result.data) await applyUpstreamBillingRateSnapshots(result.data)
+  } catch (error) {
+    const refreshError = error as { name?: string; code?: string }
+    if (refreshError.name !== 'AbortError' && refreshError.name !== 'CanceledError' && refreshError.code !== 'ERR_CANCELED') {
+      console.error('Failed to refresh upstream billing rates:', error)
+    }
+  } finally {
+    if (upstreamBillingRateAbortController === controller) upstreamBillingRateAbortController = null
+    upstreamBillingRateRefreshing.value = false
+  }
+}
+
+const refreshUpstreamBillingSortedList = async (force = false) => {
+  if (!force && sortState.sort_by !== 'upstream_billing_rate') return
+  await refreshUpstreamBillingRates(force)
+}
+
+useIntervalFn(() => { void refreshUpstreamBillingRates() }, 5 * 60_000, { immediate: false })
 
 const debouncedReload = () => {
   clearSelection()
@@ -1256,12 +1366,6 @@ watch(accounts, (rows) => {
   )
 })
 
-watch(upstreamBillingNow, () => {
-  if (sortState.sort_by !== 'upstream_billing_rate' || loading.value) return
-  if (typeof document !== 'undefined' && document.hidden) return
-  void refreshUpstreamBillingSortedList()
-})
-
 const isAnyModalOpen = computed(() => {
   return (
     showCreate.value ||
@@ -1275,6 +1379,7 @@ const isAnyModalOpen = computed(() => {
     showReAuth.value ||
     showTest.value ||
     showStats.value ||
+    showProxyLanes.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
     showTLSFingerprintProfiles.value
@@ -1374,7 +1479,6 @@ const refreshAccountsIncrementally = async () => {
       pagination.pages = result.data.pages || 0
       mergeAccountsIncrementally(result.data.items || [])
       hasPendingListSync.value = false
-      markUpstreamBillingSortRefresh()
     }
     upstreamBillingNow.value = Date.now()
 
@@ -1730,7 +1834,27 @@ const cols = computed(() =>
   )
 )
 
-const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
+const accountDetailLoading = new Set<number>()
+const loadAccountDetails = async (account: Pick<AccountListItem, 'id'>): Promise<Account | null> => {
+  if (accountDetailLoading.has(account.id)) return null
+  accountDetailLoading.add(account.id)
+  try {
+    return await adminAPI.accounts.getById(account.id)
+  } catch (error) {
+    console.error('Failed to load account details:', error)
+    appStore.showError(extractApiErrorMessage(error, t('common.error')))
+    return null
+  } finally {
+    accountDetailLoading.delete(account.id)
+  }
+}
+
+const handleEdit = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  edAcc.value = account
+  showEdit.value = true
+}
 const openMenu = (a: Account, e: MouseEvent) => {
   menu.acc = a
 
@@ -1738,7 +1862,7 @@ const openMenu = (a: Account, e: MouseEvent) => {
   if (target) {
     const rect = target.getBoundingClientRect()
     const menuWidth = 200
-    const menuHeight = 240
+    const menuHeight = 280
     const padding = 8
     const viewportWidth = window.innerWidth
     const viewportHeight = window.innerHeight
@@ -2151,19 +2275,17 @@ const patchAccountInList = (updatedAccount: Account) => {
 const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBillingProbeSnapshot) => {
   const account = accounts.value.find(item => item.id === accountID)
   if (!account) return
-  markUpstreamBillingSortRefresh()
   upstreamBillingNow.value = Date.now()
   patchAccountInList({
     ...account,
+    ...(typeof snapshot.synced_rate_multiplier === 'number'
+      ? { rate_multiplier: snapshot.synced_rate_multiplier }
+      : {}),
     extra: { ...account.extra, upstream_billing_probe: snapshot }
   })
 }
 const refreshAccountsAfterUpstreamBillingProbe = async () => {
-  try {
-    await load()
-  } catch (error) {
-    console.error('Failed to refresh accounts after upstream billing probe:', error)
-  }
+  await refreshUpstreamBillingSortedList(true)
 }
 const handleProbeUpstreamBilling = async (account: Account) => {
   if (probingUpstreamBilling.has(account.id)) return
@@ -2243,8 +2365,20 @@ const accountExportStepUp = useStepUp()
 const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
-const handleTest = (a: Account) => { testingAcc.value = a; showTest.value = true }
-const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
+const handleTest = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  testingAcc.value = account
+  showTest.value = true
+}
+const openBatchTest = () => { if (selIds.value.length > 0) showBatchTest.value = true }
+const handleViewStats = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  statsAcc.value = account
+  showStats.value = true
+}
+const handleProxyLanes = (a: Account) => { proxyLanesAcc.value = a; showProxyLanes.value = true }
 const handleSchedule = async (a: Account) => {
   scheduleAcc.value = a
   scheduleModelOptions.value = []
@@ -2455,12 +2589,19 @@ onMounted(async () => {
 
   load()
   loadUpstreamBillingProbeGlobalState()
-  try {
-    const [p, g] = await Promise.all([adminAPI.proxies.getAll(), adminAPI.groups.getAll()])
-    proxies.value = p
-    groups.value = g
-  } catch (error) {
-    console.error('Failed to load proxies/groups:', error)
+  const [proxiesResult, groupsResult] = await Promise.allSettled([
+    adminAPI.proxies.getAll(),
+    adminAPI.groups.getAll()
+  ])
+  if (proxiesResult.status === 'fulfilled') {
+    proxies.value = proxiesResult.value
+  } else {
+    console.error('Failed to load proxies:', proxiesResult.reason)
+  }
+  if (groupsResult.status === 'fulfilled') {
+    groups.value = groupsResult.value
+  } else {
+    console.error('Failed to load groups:', groupsResult.reason)
   }
   window.addEventListener('scroll', handleScroll, true)
   window.addEventListener('resize', handleViewportResize)
@@ -2475,6 +2616,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  upstreamBillingRateAbortController?.abort()
   if (usageBatchFlushTimer !== null) {
     clearTimeout(usageBatchFlushTimer)
     usageBatchFlushTimer = null

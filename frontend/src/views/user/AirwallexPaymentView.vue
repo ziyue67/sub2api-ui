@@ -141,6 +141,6 @@ onMounted(async () => {
 
 :global(.dark .scheme3-external-payment-shell) { background: #1b1b18; }
 :global(.dark .scheme3-airwallex-payment) { --scheme3-airwallex-card: #24231f; --scheme3-airwallex-line: #47443a; }
-:global(.dark .scheme3-airwallex-payment :deep(.border-emerald-500)) { border-color: #8fc2a5 !important; }
-:global(.dark .scheme3-airwallex-payment :deep(.btn-primary)) { background: #8fc2a5; color: #1b1b18; }
+:global(.dark .scheme3-airwallex-payment .border-emerald-500) { border-color: #8fc2a5 !important; }
+:global(.dark .scheme3-airwallex-payment .btn-primary) { background: #8fc2a5; color: #1b1b18; }
 </style>

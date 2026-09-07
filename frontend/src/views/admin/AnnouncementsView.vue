@@ -90,6 +90,17 @@
             </span>
           </template>
 
+          <template #cell-ticker="{ row }">
+            <div class="flex items-center gap-1.5 text-sm">
+              <span :class="['badge', row.ticker_enabled ? 'badge-success' : 'badge-gray']">
+                {{ row.ticker_enabled ? t('admin.announcements.ticker.enabled') : t('admin.announcements.ticker.disabled') }}
+              </span>
+              <span v-if="row.ticker_enabled && row.priority > 0" class="text-xs text-gray-500 dark:text-dark-400">
+                P{{ row.priority }}
+              </span>
+            </div>
+          </template>
+
           <template #cell-targeting="{ row }">
             <span class="text-sm text-gray-600 dark:text-gray-300">
               {{ targetingSummary(row.targeting) }}
@@ -149,7 +160,7 @@
           <template #empty>
             <EmptyState
               :title="t('empty.noData')"
-              :description="t('admin.announcements.failedToLoad')"
+              :description="t('admin.announcements.createFirstAnnouncement')"
               :action-text="t('admin.announcements.createAnnouncement')"
               @action="openCreateDialog"
             />
@@ -192,10 +203,26 @@
             <label class="input-label">{{ t('admin.announcements.form.status') }}</label>
             <Select v-model="form.status" :options="statusOptions" />
           </div>
+
           <div>
             <label class="input-label">{{ t('admin.announcements.form.notifyMode') }}</label>
             <Select v-model="form.notify_mode" :options="notifyModeOptions" />
             <p class="input-hint">{{ t('admin.announcements.form.notifyModeHint') }}</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label class="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2.5 dark:border-dark-700">
+            <input v-model="form.ticker_enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+            <span>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.announcements.ticker.enabled') }}</span>
+              <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('admin.announcements.ticker.hint') }}</span>
+            </span>
+          </label>
+          <div>
+            <label class="input-label">{{ t('admin.announcements.ticker.priority') }}</label>
+            <input v-model.number="form.priority" type="number" min="0" max="100" step="1" class="input" :disabled="!form.ticker_enabled" />
+            <p class="input-hint">{{ t('admin.announcements.ticker.priorityHint') }}</p>
           </div>
         </div>
 
@@ -326,6 +353,7 @@ const columns = computed<Column[]>(() => [
   { key: 'title', label: t('admin.announcements.columns.title'), sortable: true },
   { key: 'status', label: t('admin.announcements.columns.status'), sortable: true },
   { key: 'notify_mode', label: t('admin.announcements.columns.notifyMode'), sortable: true },
+  { key: 'ticker', label: t('admin.announcements.ticker.title') },
   { key: 'targeting', label: t('admin.announcements.columns.targeting') },
   { key: 'timeRange', label: t('admin.announcements.columns.timeRange') },
   { key: 'created_at', label: t('admin.announcements.columns.createdAt'), sortable: true },
@@ -433,6 +461,8 @@ const form = reactive({
   content: '',
   status: 'draft',
   notify_mode: 'silent',
+  ticker_enabled: true,
+  priority: 0,
   starts_at_str: '',
   ends_at_str: '',
   targeting: { any_of: [] } as AnnouncementTargeting
@@ -455,6 +485,8 @@ function resetForm() {
   form.content = ''
   form.status = 'draft'
   form.notify_mode = 'silent'
+  form.ticker_enabled = true
+  form.priority = 0
   form.starts_at_str = ''
   form.ends_at_str = ''
   form.targeting = { any_of: [] }
@@ -465,6 +497,8 @@ function fillFormFromAnnouncement(a: Announcement) {
   form.content = a.content
   form.status = a.status
   form.notify_mode = a.notify_mode || 'silent'
+  form.ticker_enabled = a.ticker_enabled !== false
+  form.priority = a.priority || 0
 
   // Backend returns RFC3339 strings
   form.starts_at_str = a.starts_at ? formatDateTimeLocalInput(Math.floor(new Date(a.starts_at).getTime() / 1000)) : ''
@@ -499,6 +533,8 @@ function buildCreatePayload() {
     content: form.content,
     status: form.status as any,
     notify_mode: form.notify_mode as any,
+    ticker_enabled: form.ticker_enabled,
+    priority: Number(form.priority) || 0,
     targeting: form.targeting,
     starts_at: startsAt ?? undefined,
     ends_at: endsAt ?? undefined
@@ -512,6 +548,8 @@ function buildUpdatePayload(original: Announcement) {
   if (form.content !== original.content) payload.content = form.content
   if (form.status !== original.status) payload.status = form.status
   if (form.notify_mode !== (original.notify_mode || 'silent')) payload.notify_mode = form.notify_mode
+  if (form.ticker_enabled !== original.ticker_enabled) payload.ticker_enabled = form.ticker_enabled
+  if (Number(form.priority) !== Number(original.priority || 0)) payload.priority = Number(form.priority) || 0
 
   // starts_at / ends_at: distinguish unchanged vs clear(0) vs set
   const originalStarts = original.starts_at ? Math.floor(new Date(original.starts_at).getTime() / 1000) : null

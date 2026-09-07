@@ -494,8 +494,8 @@ onMounted(async () => {
 .scheme3-redeem :deep(.input) { border-color: var(--redeem-line); border-radius: 6px; background: var(--redeem-card); }.scheme3-redeem :deep(.btn-primary) { border-radius: 6px; background: #1e5c42; }.scheme3-redeem :deep(.btn-primary:hover) { background: #174a35; }
 .scheme3-redeem-info { border-color: rgba(30,92,66,.28) !important; background: rgba(30,92,66,.045) !important; }.scheme3-redeem-info :deep(.text-primary-800),.scheme3-redeem-info :deep(.text-primary-700) { color: #1e5c42; }.scheme3-redeem-info :deep(.bg-primary-100) { background: rgba(30,92,66,.1); }.scheme3-redeem-info :deep(.text-primary-600) { color: #1e5c42; }
 .scheme3-redeem-history :deep(.border-gray-100) { border-color: var(--redeem-line); }.scheme3-redeem-history :deep(.bg-gray-50) { background: #f4f2ec; }.scheme3-redeem-history :deep(.text-gray-900) { color: var(--redeem-ink); }
-:global(html.dark) .scheme3-redeem :deep(.card) { border-color: #47443a; background: #24231f; color: #f4f2ec; }.scheme3-redeem :deep(.text-gray-900) { color: var(--redeem-ink); }.scheme3-redeem :deep(.text-gray-500) { color: var(--redeem-muted); }
-:global(html.dark) .scheme3-redeem-info { border-color: rgba(143,194,165,.32) !important; background: rgba(143,194,165,.08) !important; }.scheme3-redeem-info :deep(.text-primary-800),.scheme3-redeem-info :deep(.text-primary-700) { color: #b7d9c5; }
+:global(html.dark .scheme3-redeem .card) { border-color: #47443a; background: #24231f; color: #f4f2ec; }.scheme3-redeem :deep(.text-gray-900) { color: var(--redeem-ink); }.scheme3-redeem :deep(.text-gray-500) { color: var(--redeem-muted); }
+:global(html.dark .scheme3-redeem-info) { border-color: rgba(143,194,165,.32) !important; background: rgba(143,194,165,.08) !important; }.scheme3-redeem-info :deep(.text-primary-800),.scheme3-redeem-info :deep(.text-primary-700) { color: #b7d9c5; }
 .fade-enter-active,
 .fade-leave-active {
   transition: all 0.3s ease;

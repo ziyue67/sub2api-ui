@@ -14,6 +14,8 @@ import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
 import { resolveDisplaySiteName } from '@/utils/branding'
+import { captureAffiliateAttribution } from '@/api/auth'
+import { pickOAuthAffiliateCode, storeAffiliateReferralCode } from '@/utils/oauthAffiliate'
 
 /**
  * Route definitions with lazy loading
@@ -652,6 +654,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/plugins',
+    name: 'AdminPlugins',
+    component: () => import('@/views/admin/PluginsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Plugin Management',
+      titleKey: 'admin.plugins.title',
+      descriptionKey: 'admin.plugins.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),
@@ -907,6 +921,24 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
 }
 
 router.beforeEach(async (to, _from, next) => {
+  // Lock affiliate attribution as soon as any route receives an aff link.
+  // This covers short links landing on / or another public page before the
+  // user reaches registration, while keeping navigation bounded if the API is slow.
+  // Some callers (and older integrations) provide a minimal RouteLocation
+  // without a query object. Affiliate attribution is optional, so navigation
+  // must remain safe when query is absent.
+  const affCode = pickOAuthAffiliateCode(to.query?.aff, to.query?.aff_code)
+  if (affCode) {
+    storeAffiliateReferralCode(affCode)
+    try {
+      await Promise.race([
+        captureAffiliateAttribution(affCode),
+        new Promise<boolean>((resolve) => window.setTimeout(() => resolve(false), 5000))
+      ])
+    } catch {
+      // The localStorage fallback remains available when the public endpoint is offline.
+    }
+  }
   // 开始导航加载状态
   navigationLoading.startNavigation()
 

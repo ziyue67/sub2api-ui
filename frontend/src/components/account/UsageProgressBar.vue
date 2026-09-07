@@ -27,10 +27,8 @@
 
     <!-- Progress bar row -->
     <div class="flex items-center gap-1">
-      <!-- Label badge (fixed width for alignment) -->
-      <span
-        :class="['w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium', labelClass]"
-      >
+      <!-- Label badge (label-width: fixed = 定宽居中, auto = 限宽截断左对齐) -->
+      <span :class="[labelSizeClass, labelClass]">
         {{ label }}
       </span>
 
@@ -62,15 +60,22 @@ import { useI18n } from 'vue-i18n'
 import type { WindowStats } from '@/types'
 import { formatCompactNumber } from '@/utils/format'
 
-const props = defineProps<{
-  label: string
-  utilization: number // Percentage (0-100+)
-  resetsAt?: string | null
-  color: 'indigo' | 'emerald' | 'purple' | 'amber'
-  windowStats?: WindowStats | null
-  showNowWhenIdle?: boolean
-  remainingCapacity?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    label: string
+    utilization: number // Percentage (0-100+)
+    resetsAt?: string | null
+    color: 'indigo' | 'emerald' | 'purple' | 'amber'
+    /** Keep the upstream behavior while allowing Scheme3 consumers to opt into its skin. */
+    scheme3?: boolean
+    windowStats?: WindowStats | null
+    showNowWhenIdle?: boolean
+    remainingCapacity?: boolean
+    /** fixed: 定宽居中徽章（账号页纵向对齐）；auto: 限宽截断左对齐（监控页组合标签） */
+    labelWidth?: 'fixed' | 'auto'
+  }>(),
+  { labelWidth: 'fixed', scheme3: false }
+)
 
 const { t } = useI18n()
 
@@ -99,6 +104,9 @@ watch(
 
 // Label background colors
 const labelClass = computed(() => {
+  if (props.scheme3) {
+    return `scheme3-usage-label scheme3-usage-label-${props.color}`
+  }
   const colors = {
     indigo: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
     emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
@@ -108,8 +116,26 @@ const labelClass = computed(() => {
   return colors[props.color]
 })
 
+// Label badge width mode: fixed 定宽保证账号页纵向对齐；auto 限宽截断适配
+// 监控页「Pro/7 天」类组合标签。百分比列在两种模式下保持不变。
+const labelSizeClass = computed(() =>
+  props.labelWidth === 'auto'
+    ? 'max-w-[72px] shrink-0 truncate rounded px-1 text-left text-[10px] font-medium'
+    : 'w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium'
+)
+
 // Progress bar color based on utilization
 const barClass = computed(() => {
+  if (props.scheme3) {
+    if (props.remainingCapacity) {
+      if (props.utilization <= 20) return 'scheme3-usage-bar scheme3-usage-bar-critical'
+      if (props.utilization <= 50) return 'scheme3-usage-bar scheme3-usage-bar-warning'
+      return 'scheme3-usage-bar scheme3-usage-bar-healthy'
+    }
+    if (props.utilization >= 90) return 'scheme3-usage-bar scheme3-usage-bar-critical'
+    if (props.utilization >= 75) return 'scheme3-usage-bar scheme3-usage-bar-warning'
+    return 'scheme3-usage-bar scheme3-usage-bar-healthy'
+  }
   if (props.remainingCapacity) {
     if (props.utilization <= 20) {
       return 'bg-red-500'
@@ -118,9 +144,9 @@ const barClass = computed(() => {
     }
     return 'bg-green-500'
   }
-  if (props.utilization >= 100) {
+  if (props.utilization >= 90) {
     return 'bg-red-500'
-  } else if (props.utilization >= 80) {
+  } else if (props.utilization >= 75) {
     return 'bg-amber-500'
   } else {
     return 'bg-green-500'
@@ -129,6 +155,16 @@ const barClass = computed(() => {
 
 // Text color based on utilization
 const textClass = computed(() => {
+  if (props.scheme3) {
+    if (props.remainingCapacity) {
+      if (props.utilization <= 20) return 'scheme3-usage-text scheme3-usage-text-critical'
+      if (props.utilization <= 50) return 'scheme3-usage-text scheme3-usage-text-warning'
+      return 'scheme3-usage-text scheme3-usage-text-healthy'
+    }
+    if (props.utilization >= 90) return 'scheme3-usage-text scheme3-usage-text-critical'
+    if (props.utilization >= 75) return 'scheme3-usage-text scheme3-usage-text-warning'
+    return 'scheme3-usage-text scheme3-usage-text-healthy'
+  }
   if (props.remainingCapacity) {
     if (props.utilization <= 20) {
       return 'text-red-600 dark:text-red-400'
@@ -137,9 +173,9 @@ const textClass = computed(() => {
     }
     return 'text-gray-600 dark:text-gray-400'
   }
-  if (props.utilization >= 100) {
+  if (props.utilization >= 90) {
     return 'text-red-600 dark:text-red-400'
-  } else if (props.utilization >= 80) {
+  } else if (props.utilization >= 75) {
     return 'text-amber-600 dark:text-amber-400'
   } else {
     return 'text-gray-600 dark:text-gray-400'
@@ -219,3 +255,39 @@ const formatUserCost = computed(() => {
 })
 
 </script>
+
+<style scoped>
+/* Scheme3 skin: no upstream Tailwind color classes leak into customized pages. */
+.scheme3-usage-label {
+  border: 1px solid #dad5c8;
+  border-radius: 4px;
+  background: #f1eee6;
+  padding: .12rem .38rem;
+  color: #5f5b50;
+}
+.scheme3-usage-label-indigo { color: #1e5c42; }
+.scheme3-usage-label-emerald { color: #356b4d; }
+.scheme3-usage-label-purple { color: #655c48; }
+.scheme3-usage-label-amber { color: #8b5d14; }
+.scheme3-usage-bar-healthy { background: #1e5c42; }
+.scheme3-usage-bar-warning { background: #8b5d14; }
+.scheme3-usage-bar-critical { background: #9e4d3d; }
+.scheme3-usage-text-healthy { color: #1e5c42; }
+.scheme3-usage-text-warning { color: #8b5d14; }
+.scheme3-usage-text-critical { color: #9e4d3d; }
+:global(html.dark .scheme3-usage-label) {
+  border-color: #47443a;
+  background: #2b2924;
+  color: #c7c2b6;
+}
+:global(html.dark .scheme3-usage-label-indigo),
+:global(html.dark .scheme3-usage-text-healthy) { color: #8fc2a5; }
+:global(html.dark .scheme3-usage-label-emerald) { color: #9ac7ab; }
+:global(html.dark .scheme3-usage-label-purple) { color: #d0c4a8; }
+:global(html.dark .scheme3-usage-label-amber),
+:global(html.dark .scheme3-usage-text-warning) { color: #d3a45c; }
+:global(html.dark .scheme3-usage-bar-healthy) { background: #8fc2a5; }
+:global(html.dark .scheme3-usage-bar-warning) { background: #d3a45c; }
+:global(html.dark .scheme3-usage-bar-critical),
+:global(html.dark .scheme3-usage-text-critical) { color: #d38b79; background: #d38b79; }
+</style>

@@ -116,6 +116,10 @@
               <label class="input-label">{{ t('usage.type') }}</label>
               <Select v-model="filters.request_type" :options="requestTypeOptions" @change="applyFilters" />
             </div>
+            <div class="w-full sm:w-auto sm:min-w-[180px]">
+              <label class="input-label">{{ t('usage.compactionFilter') }}</label>
+              <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="applyFilters" />
+            </div>
             <div class="w-full sm:w-auto sm:min-w-[200px]">
               <label class="input-label">{{ t('admin.usage.billingType') }}</label>
               <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="applyFilters" />
@@ -136,6 +140,7 @@
             <div class="relative" ref="columnDropdownRef">
               <button
                 type="button"
+                data-testid="usage-column-settings"
                 @click="showColumnDropdown = !showColumnDropdown"
                 class="btn btn-secondary px-2 md:px-3"
                 :title="t('admin.users.columnSettings')"
@@ -151,6 +156,7 @@
                   v-for="col in currentToggleableColumns"
                   :key="col.key"
                   type="button"
+                  :data-testid="`usage-column-toggle-${col.key}`"
                   @click="toggleCurrentColumn(col.key)"
                   class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
                 >
@@ -237,6 +243,7 @@ import Icon from '@/components/icons/Icon.vue'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
+import { getGranularityForRange, getLast24HourRange, toDateInputValue } from '@/utils/dateRange'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
@@ -359,22 +366,7 @@ let chartReqSeq = 0
 let statsReqSeq = 0
 let modelStatsReqSeq = 0
 
-const formatLocalDate = (date: Date): string =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-
-const getLast24HoursRangeDates = () => {
-  const end = new Date()
-  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
-  return { start: formatLocalDate(start), end: formatLocalDate(end) }
-}
-
-const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
-  const startTime = new Date(`${start}T00:00:00`).getTime()
-  const endTime = new Date(`${end}T00:00:00`).getTime()
-  return Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24)) <= 1 ? 'hour' : 'day'
-}
-
-const defaultRange = getLast24HoursRangeDates()
+const defaultRange = getLast24HourRange()
 const startDate = ref(defaultRange.start)
 const endDate = ref(defaultRange.end)
 const granularity = ref<'day' | 'hour'>(getGranularityForRange(startDate.value, endDate.value))
@@ -390,6 +382,7 @@ const filters = ref<UsageQueryParams>({
   start_date: startDate.value,
   end_date: endDate.value,
   request_type: undefined,
+  native_compaction_v2: null,
   billing_type: null,
   billing_mode: null,
 })
@@ -414,6 +407,10 @@ const requestTypeOptions = computed<SelectOption[]>(() => [
   { value: 'live', label: t('usage.live') },
   { value: 'stream', label: t('usage.stream') },
   { value: 'sync', label: t('usage.sync') },
+])
+const compactionOptions = computed<SelectOption[]>(() => [
+  { value: null, label: t('usage.allCompactionTypes') },
+  { value: true, label: t('usage.compactionOnly') },
 ])
 const billingTypeOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allBillingTypes') },
@@ -579,13 +576,14 @@ const refreshData = () => {
 }
 
 const resetFilters = () => {
-  const range = getLast24HoursRangeDates()
+  const range = getLast24HourRange()
   startDate.value = range.start
   endDate.value = range.end
   filters.value = {
     start_date: range.start,
     end_date: range.end,
     request_type: undefined,
+    native_compaction_v2: null,
     billing_type: null,
     billing_mode: null,
   }
@@ -716,7 +714,7 @@ const exportToCSV = async () => {
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `usage_${startDate.value}_to_${endDate.value}.csv`
+    link.download = `usage_${toDateInputValue(startDate.value)}_to_${toDateInputValue(endDate.value)}.csv`
     link.click()
     window.URL.revokeObjectURL(url)
     appStore.showSuccess(t('usage.exportSuccess'))
@@ -1042,11 +1040,11 @@ watch(endpointDistributionSource, () => {
 .scheme3-user-usage-stats :deep(.text-green-600) { color: #1e5c42 !important; }
 .scheme3-user-usage-stats :deep(.text-orange-500) { color: #b7791f !important; }
 
-:global(.dark .scheme3-user-usage-stats :deep(.card)) { border-color: #47443a; background: #24231f; box-shadow: 0 10px 24px rgba(0,0,0,.16); }
-:global(.dark .scheme3-user-usage-stats :deep(.bg-blue-100)), :global(.dark .scheme3-user-usage-stats :deep(.bg-green-100)) { border-color: rgba(143,194,165,.24); background: rgba(143,194,165,.1) !important; color: #8fc2a5 !important; }
-:global(.dark .scheme3-user-usage-stats :deep(.bg-amber-100)) { border-color: rgba(214,166,93,.24); background: rgba(214,166,93,.1) !important; color: #d6a65d !important; }
-:global(.dark .scheme3-user-usage-stats :deep(.bg-purple-100)) { border-color: #47443a; background: #2b2924 !important; color: #c4c0b6 !important; }
-:global(.dark .scheme3-user-usage-stats :deep(.text-green-600)) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-user-usage-stats .card) { border-color: #47443a; background: #24231f; box-shadow: 0 10px 24px rgba(0,0,0,.16); }
+:global(.dark .scheme3-user-usage-stats .bg-blue-100), :global(.dark .scheme3-user-usage-stats .bg-green-100) { border-color: rgba(143,194,165,.24); background: rgba(143,194,165,.1) !important; color: #8fc2a5 !important; }
+:global(.dark .scheme3-user-usage-stats .bg-amber-100) { border-color: rgba(214,166,93,.24); background: rgba(214,166,93,.1) !important; color: #d6a65d !important; }
+:global(.dark .scheme3-user-usage-stats .bg-purple-100) { border-color: #47443a; background: #2b2924 !important; color: #c4c0b6 !important; }
+:global(.dark .scheme3-user-usage-stats .text-green-600) { color: #8fc2a5 !important; }
 
 :global(.dark .scheme3-user-usage) {
   --usage-ink: #f4f2ec;
@@ -1057,7 +1055,7 @@ watch(endpointDistributionSource, () => {
   --usage-accent: #8fc2a5;
 }
 
-:global(.dark .scheme3-user-usage :deep(.card)) {
+:global(.dark .scheme3-user-usage .card) {
   border-color: var(--usage-line);
   background: var(--usage-card);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
@@ -1065,71 +1063,71 @@ watch(endpointDistributionSource, () => {
 
 :global(.dark .scheme3-user-usage-filter) { background: var(--usage-subtle) !important; }
 
-:global(.dark .scheme3-user-usage :deep(.date-picker-trigger)),
-:global(.dark .scheme3-user-usage :deep(.date-picker-dropdown)) {
+:global(.dark .scheme3-user-usage .date-picker-trigger),
+:global(.dark .scheme3-user-usage .date-picker-dropdown) {
   border-color: var(--usage-line);
   background: var(--usage-card);
   color: var(--usage-ink);
 }
 
-:global(.dark .scheme3-user-usage :deep(.date-picker-trigger-open)),
-:global(.dark .scheme3-user-usage :deep(.date-picker-trigger:focus)) {
+:global(.dark .scheme3-user-usage .date-picker-trigger-open),
+:global(.dark .scheme3-user-usage .date-picker-trigger:focus) {
   border-color: var(--usage-accent);
   box-shadow: 0 0 0 3px rgba(143, 194, 165, 0.13);
 }
 
-:global(.dark .scheme3-user-usage :deep(.date-picker-preset:hover)),
-:global(.dark .scheme3-user-usage :deep(.date-picker-preset-active)) {
+:global(.dark .scheme3-user-usage .date-picker-preset:hover),
+:global(.dark .scheme3-user-usage .date-picker-preset-active) {
   background: rgba(143, 194, 165, 0.1);
   color: var(--usage-accent);
 }
 
-:global(.dark .scheme3-user-usage :deep(.date-picker-input)) {
+:global(.dark .scheme3-user-usage .date-picker-input) {
   border-color: var(--usage-line);
   background: var(--usage-subtle);
   color: var(--usage-ink);
 }
 
-:global(.dark .scheme3-user-usage :deep(.date-picker-apply)) {
+:global(.dark .scheme3-user-usage .date-picker-apply) {
   background: var(--usage-accent);
   color: #1b1b18;
 }
 
-:global(.dark .scheme3-user-usage :deep(.inline-flex.rounded-lg.border.border-gray-200)),
-:global(.dark .scheme3-user-usage :deep(.inline-flex.rounded-lg.bg-gray-100)) {
+:global(.dark .scheme3-user-usage .inline-flex.rounded-lg.border.border-gray-200),
+:global(.dark .scheme3-user-usage .inline-flex.rounded-lg.bg-gray-100) {
   border-color: var(--usage-line);
   background: var(--usage-subtle);
 }
 
-:global(.dark .scheme3-user-usage :deep(.inline-flex.rounded-lg.border.border-gray-200 > button.bg-white)),
-:global(.dark .scheme3-user-usage :deep(.inline-flex.rounded-lg.bg-gray-100 > button.bg-white)) {
+:global(.dark .scheme3-user-usage .inline-flex.rounded-lg.border.border-gray-200 > button.bg-white),
+:global(.dark .scheme3-user-usage .inline-flex.rounded-lg.bg-gray-100 > button.bg-white) {
   background: var(--usage-card);
   color: var(--usage-ink);
 }
 
-:global(.dark .scheme3-user-usage :deep(.scheme3-user-usage-column-dropdown)) {
+:global(.dark .scheme3-user-usage .scheme3-user-usage-column-dropdown) {
   border-color: var(--usage-line) !important;
   background: var(--usage-card) !important;
   box-shadow: 0 18px 36px rgba(0, 0, 0, 0.3);
 }
 
-:global(.dark .scheme3-user-usage :deep(.scheme3-user-usage-column-dropdown button:hover)) { background: var(--usage-subtle); }
+:global(.dark .scheme3-user-usage .scheme3-user-usage-column-dropdown button:hover) { background: var(--usage-subtle); }
 :global(.dark .scheme3-user-usage-tabs) { border-color: var(--usage-line) !important; }
-:global(.dark .scheme3-user-usage-tabs :deep(.tab)) { color: var(--usage-muted); }
-:global(.dark .scheme3-user-usage-tabs :deep(.tab:hover)),
-:global(.dark .scheme3-user-usage-tabs :deep(.tab-active)) { border-bottom-color: var(--usage-accent); color: var(--usage-accent); }
+:global(.dark .scheme3-user-usage-tabs .tab) { color: var(--usage-muted); }
+:global(.dark .scheme3-user-usage-tabs .tab:hover),
+:global(.dark .scheme3-user-usage-tabs .tab-active) { border-bottom-color: var(--usage-accent); color: var(--usage-accent); }
 
-:global(.dark .scheme3-user-usage :deep(table thead)),
-:global(.dark .scheme3-user-usage :deep(table thead tr)) { background: var(--usage-subtle); }
-:global(.dark .scheme3-user-usage :deep(table th)),
-:global(.dark .scheme3-user-usage :deep(table td)) { border-color: var(--usage-line); }
-:global(.dark .scheme3-user-usage :deep(.text-blue-600)),
-:global(.dark .scheme3-user-usage :deep(.text-blue-500)),
-:global(.dark .scheme3-user-usage :deep(.text-indigo-800)),
-:global(.dark .scheme3-user-usage :deep(.text-purple-600)),
-:global(.dark .scheme3-user-usage :deep(.text-violet-600)),
-:global(.dark .scheme3-user-usage :deep(.text-sky-600)),
-:global(.dark .scheme3-user-usage :deep(.text-cyan-600)) { color: var(--usage-accent) !important; }
+:global(.dark .scheme3-user-usage table thead),
+:global(.dark .scheme3-user-usage table thead tr) { background: var(--usage-subtle); }
+:global(.dark .scheme3-user-usage table th),
+:global(.dark .scheme3-user-usage table td) { border-color: var(--usage-line); }
+:global(.dark .scheme3-user-usage .text-blue-600),
+:global(.dark .scheme3-user-usage .text-blue-500),
+:global(.dark .scheme3-user-usage .text-indigo-800),
+:global(.dark .scheme3-user-usage .text-purple-600),
+:global(.dark .scheme3-user-usage .text-violet-600),
+:global(.dark .scheme3-user-usage .text-sky-600),
+:global(.dark .scheme3-user-usage .text-cyan-600) { color: var(--usage-accent) !important; }
 </style>
 
 <style>

@@ -3,7 +3,9 @@
     <!-- Admin: Full version badge with dropdown -->
     <template v-if="isAdmin">
       <button
+        type="button"
         @click="toggleDropdown"
+        ref="triggerRef"
         class="scheme3-version-trigger flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors"
         :class="[
           hasUpdate
@@ -26,14 +28,16 @@
         </span>
       </button>
 
-      <!-- Dropdown -->
-      <transition name="dropdown">
-        <div
-          v-if="dropdownOpen"
-          ref="dropdownRef"
-          class="scheme3-version-dropdown absolute left-0 z-50 mt-2 overflow-hidden whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
-          :class="rollbackPanelOpen && isReleaseBuild ? 'w-80' : 'w-64'"
-        >
+      <!-- Dropdown is viewport-positioned so compact/sticky sidebars cannot clip it. -->
+      <Teleport to="body">
+        <transition name="dropdown">
+          <div
+            v-if="dropdownOpen"
+            ref="dropdownRef"
+            class="scheme3-version-dropdown fixed z-50 overflow-y-auto whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
+            :class="rollbackPanelOpen && isReleaseBuild ? 'w-80' : 'w-64'"
+            :style="dropdownStyle"
+          >
           <!-- Header with refresh button -->
           <div
             class="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-dark-700"
@@ -626,8 +630,9 @@
               </div>
             </template>
           </div>
-        </div>
-      </transition>
+          </div>
+        </transition>
+      </Teleport>
     </template>
 
     <!-- Non-admin: Simple static version text -->
@@ -638,7 +643,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
@@ -667,7 +672,18 @@ const appStore = useAppStore()
 const isAdmin = computed(() => authStore.isAdmin)
 
 const dropdownOpen = ref(false)
+const triggerRef = ref<HTMLElement | null>(null)
 const dropdownRef = ref<HTMLElement | null>(null)
+const dropdownStyle = ref<Record<string, string>>({
+  position: 'fixed',
+  visibility: 'hidden'
+})
+let positionFrame: number | null = null
+
+const DROPDOWN_GUTTER = 8
+const DROPDOWN_GAP = 8
+const DEFAULT_DROPDOWN_WIDTH = 256
+const ROLLBACK_DROPDOWN_WIDTH = 320
 
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
@@ -730,13 +746,91 @@ const activeManualCommand = computed(() =>
 
 // Only show update check for release builds (binary/docker deployment)
 const isReleaseBuild = computed(() => buildType.value === 'release')
+const dropdownWidth = computed(() =>
+  rollbackPanelOpen.value && isReleaseBuild.value
+    ? ROLLBACK_DROPDOWN_WIDTH
+    : DEFAULT_DROPDOWN_WIDTH
+)
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
+  if (dropdownOpen.value) {
+    dropdownStyle.value = { position: 'fixed', visibility: 'hidden' }
+    void nextTick(updateDropdownPosition)
+  }
 }
 
 function closeDropdown() {
   dropdownOpen.value = false
+}
+
+function updateDropdownPosition() {
+  if (!dropdownOpen.value || !triggerRef.value || typeof window === 'undefined') return
+
+  const triggerRect = triggerRef.value.getBoundingClientRect()
+  const viewportWidth = Math.max(
+    window.innerWidth || 0,
+    document.documentElement?.clientWidth || 0
+  )
+  const viewportHeight = Math.max(
+    window.innerHeight || 0,
+    document.documentElement?.clientHeight || 0
+  )
+  if (!viewportWidth || !viewportHeight) return
+
+  const width = Math.min(dropdownWidth.value, Math.max(1, viewportWidth - DROPDOWN_GUTTER * 2))
+  const maxLeft = Math.max(DROPDOWN_GUTTER, viewportWidth - width - DROPDOWN_GUTTER)
+  const preferredLeft = triggerRef.value.closest('.scheme3-console-version-control')
+    ? triggerRect.right - width
+    : triggerRect.left
+  const left = Math.min(Math.max(DROPDOWN_GUTTER, preferredLeft), maxLeft)
+  const measuredHeight = dropdownRef.value?.getBoundingClientRect().height || 0
+  const belowTop = triggerRect.bottom + DROPDOWN_GAP
+  const canOpenAbove =
+    measuredHeight > 0 &&
+    belowTop + measuredHeight > viewportHeight - DROPDOWN_GUTTER &&
+    triggerRect.top - measuredHeight - DROPDOWN_GAP >= DROPDOWN_GUTTER
+  const top = canOpenAbove
+    ? triggerRect.top - measuredHeight - DROPDOWN_GAP
+    : Math.min(
+        Math.max(DROPDOWN_GUTTER, belowTop),
+        Math.max(DROPDOWN_GUTTER, viewportHeight - DROPDOWN_GUTTER - Math.max(measuredHeight, 120))
+      )
+  const availableHeight = Math.max(80, viewportHeight - top - DROPDOWN_GUTTER)
+
+  dropdownStyle.value = {
+    position: 'fixed',
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`,
+    width: `${Math.round(width)}px`,
+    maxWidth: `calc(100vw - ${DROPDOWN_GUTTER * 2}px)`,
+    maxHeight: `${Math.round(availableHeight)}px`,
+    visibility: 'visible'
+  }
+}
+
+function scheduleDropdownPosition() {
+  if (!dropdownOpen.value || typeof window === 'undefined' || positionFrame !== null) return
+  if (typeof window.requestAnimationFrame === 'function') {
+    positionFrame = window.requestAnimationFrame(() => {
+      positionFrame = null
+      updateDropdownPosition()
+    })
+    return
+  }
+  positionFrame = window.setTimeout(() => {
+    positionFrame = null
+    updateDropdownPosition()
+  }, 0)
+}
+
+function handleDropdownLayoutChange() {
+  if (!dropdownOpen.value) return
+  dropdownStyle.value = { ...dropdownStyle.value, visibility: 'hidden' }
+  void nextTick(() => {
+    updateDropdownPosition()
+    scheduleDropdownPosition()
+  })
 }
 
 async function refreshVersion(force = true) {
@@ -902,12 +996,34 @@ async function checkServiceAndReload() {
 }
 
 function handleClickOutside(event: MouseEvent) {
-  const target = event.target as Node
-  const button = (event.target as Element).closest('button')
-  if (dropdownRef.value && !dropdownRef.value.contains(target) && !button?.contains(target)) {
+  const target = event.target
+  if (!(target instanceof Node)) return
+  if (
+    dropdownRef.value &&
+    !dropdownRef.value.contains(target) &&
+    !triggerRef.value?.contains(target)
+  ) {
     closeDropdown()
   }
 }
+
+watch(
+  [
+    dropdownOpen,
+    rollbackPanelOpen,
+    isReleaseBuild,
+    loading,
+    rollbackVersionsLoading,
+    selectedRollbackVersion,
+    updateError,
+    updateSuccess,
+    needRestart,
+    restarting
+  ],
+  ([open]) => {
+    if (open) handleDropdownLayoutChange()
+  }
+)
 
 onMounted(() => {
   if (isAdmin.value) {
@@ -915,10 +1031,21 @@ onMounted(() => {
     appStore.fetchVersion(false)
   }
   document.addEventListener('click', handleClickOutside)
+  window.addEventListener('resize', scheduleDropdownPosition)
+  window.addEventListener('scroll', scheduleDropdownPosition, true)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('resize', scheduleDropdownPosition)
+  window.removeEventListener('scroll', scheduleDropdownPosition, true)
+  if (positionFrame !== null) {
+    if (typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(positionFrame)
+    }
+    window.clearTimeout(positionFrame)
+    positionFrame = null
+  }
 })
 </script>
 

@@ -1,6 +1,8 @@
 <template>
-  <div class="scheme3-monitor-model-cell flex items-center gap-2">
-    <span class="scheme3-monitor-model-name text-sm">{{ row.primary_model }}</span>
+  <div class="scheme3-monitor-model-cell flex flex-col gap-0.5">
+    <div class="flex items-center gap-2">
+      <!-- Pure quota monitors use "quota" as a data-source placeholder. -->
+      <span class="scheme3-monitor-model-name text-sm">{{ formatMonitorModel(row.primary_model) }}</span>
       <HelpTooltip teleport-class="scheme3-monitor-tooltip">
       <template #trigger>
         <span
@@ -12,7 +14,7 @@
       </template>
       <div class="scheme3-monitor-tooltip-content space-y-2">
         <div class="scheme3-monitor-tooltip-title text-xs font-semibold">
-          {{ row.primary_model }}
+          {{ formatMonitorModel(row.primary_model) }}
           <span
             class="scheme3-monitor-status-badge ml-1 inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium"
             :class="statusClass(row.primary_status)"
@@ -52,7 +54,10 @@
           </table>
         </div>
       </div>
-    </HelpTooltip>
+      </HelpTooltip>
+    </div>
+    <!-- 配额模式监控：主模型行内联展示最新用量/余额快照（管理端不受用户端开关限制） -->
+    <MonitorQuotaView :snapshot="row.latest_quota" />
   </div>
 </template>
 
@@ -60,6 +65,7 @@
 import { useI18n } from 'vue-i18n'
 import type { ChannelMonitor, MonitorStatus } from '@/api/admin/channelMonitor'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import MonitorQuotaView from '@/components/common/MonitorQuotaView.vue'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 
 defineProps<{
@@ -67,7 +73,7 @@ defineProps<{
 }>()
 
 const { t } = useI18n()
-const { statusLabel, formatLatency } = useChannelMonitorFormat()
+const { statusLabel, formatLatency, formatMonitorModel } = useChannelMonitorFormat()
 
 function statusClass(status: MonitorStatus | ''): string {
   switch (status) {

@@ -104,7 +104,11 @@ export default {
     total: '条公告',
     emptyDescription: '暂时没有任何系统公告',
     readStatus: '您已阅读此公告',
-    markReadHint: '点击"已读"标记此公告'
+    markReadHint: '点击"已读"标记此公告',
+    previous: '上一条公告',
+    next: '下一条公告',
+    pause: '暂停公告轮播',
+    resume: '继续公告轮播'
   },
 
   // User Subscriptions Page
@@ -414,7 +418,7 @@ export default {
     amountTooLow: '最低金额为 {min}',
     amountTooHigh: '最高金额为 {max}',
     amountNoMethod: '该金额没有可用的支付方式',
-    rechargeRatePreview: '当前倍率：1 CNY = {usd} USD',
+    rechargeRatePreview: '当前倍率：1 {currency} = {usd} USD',
     refundReason: '退款原因',
     refundReasonPlaceholder: '请描述您的退款原因',
     stripeLoadFailed: '支付组件加载失败，请刷新页面重试',

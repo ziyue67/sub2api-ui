@@ -49,5 +49,5 @@ onMounted(async () => {
 
 <style scoped>
 .scheme3-model-plaza-standalone { min-height: 100vh; background: #f4f2ec; color: #16150f; }.scheme3-model-plaza-standalone-main { max-width: 78rem; }
-:global(html.dark) .scheme3-model-plaza-standalone { background: #1b1b18; color: #f4f2ec; }
+:global(html.dark .scheme3-model-plaza-standalone) { background: #1b1b18; color: #f4f2ec; }
 </style>

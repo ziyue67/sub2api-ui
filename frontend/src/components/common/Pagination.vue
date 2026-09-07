@@ -285,16 +285,16 @@ const submitJump = () => {
 .scheme3-pagination-button.is-page.is-current { position: relative; z-index: 1; border-color: #1e5c42; background: rgba(30, 92, 66, .1); color: #1e5c42; }
 .scheme3-pagination-button.is-page.is-placeholder { cursor: default; color: #a49e90; }
 
-:global(html.dark) .scheme3-pagination { border-color: #47443a; color: #aaa69a; }
-:global(html.dark) .scheme3-pagination-info { color: #aaa69a; }
-:global(html.dark) .scheme3-pagination-info .font-medium { color: #f4f2ec; }
-:global(html.dark) .scheme3-pagination-input,
-:global(html.dark) .scheme3-pagination-button { border-color: #47443a; background: #24231f; color: #aaa69a; }
-:global(html.dark) .scheme3-pagination-input:focus { border-color: #8fc2a5; box-shadow: 0 0 0 2px rgba(143, 194, 165, .12); }
-:global(html.dark) .scheme3-pagination-button:hover:not(:disabled) { border-color: rgba(143, 194, 165, .3); background: #2b2924; color: #f4f2ec; }
-:global(html.dark) .scheme3-pagination-button:focus-visible { outline-color: rgba(143, 194, 165, .38); }
-:global(html.dark) .scheme3-pagination-button.is-page.is-current { border-color: #8fc2a5; background: rgba(143, 194, 165, .1); color: #8fc2a5; }
-:global(html.dark) .scheme3-pagination-button.is-page.is-placeholder { color: #827e72; }
+:global(html.dark .scheme3-pagination) { border-color: #47443a; color: #aaa69a; }
+:global(html.dark .scheme3-pagination-info) { color: #aaa69a; }
+:global(html.dark .scheme3-pagination-info .font-medium) { color: #f4f2ec; }
+:global(html.dark .scheme3-pagination-input),
+:global(html.dark .scheme3-pagination-button) { border-color: #47443a; background: #24231f; color: #aaa69a; }
+:global(html.dark .scheme3-pagination-input:focus) { border-color: #8fc2a5; box-shadow: 0 0 0 2px rgba(143, 194, 165, .12); }
+:global(html.dark .scheme3-pagination-button:hover:not(:disabled)) { border-color: rgba(143, 194, 165, .3); background: #2b2924; color: #f4f2ec; }
+:global(html.dark .scheme3-pagination-button:focus-visible) { outline-color: rgba(143, 194, 165, .38); }
+:global(html.dark .scheme3-pagination-button.is-page.is-current) { border-color: #8fc2a5; background: rgba(143, 194, 165, .1); color: #8fc2a5; }
+:global(html.dark .scheme3-pagination-button.is-page.is-placeholder) { color: #827e72; }
 
 @media (max-width: 639px) {
   .scheme3-pagination { padding-top: .65rem; }

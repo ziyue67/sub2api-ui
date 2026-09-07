@@ -127,6 +127,7 @@
           </div>
         </div>
         <div class="scheme3-console-topbar-right">
+          <AnnouncementTicker v-if="authStore.user" class="scheme3-console-announcement-ticker" />
           <AnnouncementBell v-if="authStore.user" class="scheme3-console-tool" />
           <a v-if="docUrl" :href="docUrl" target="_blank" rel="noopener noreferrer" class="scheme3-console-doc-link">
             <Icon name="book" size="sm" />
@@ -205,6 +206,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import AnnouncementTicker from '@/components/common/AnnouncementTicker.vue'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
@@ -237,6 +239,7 @@ type ConsoleNavIcon =
   | 'shield'
   | 'cog'
   | 'book'
+  | 'cube'
 
 interface ConsoleNavItem {
   path: string
@@ -320,6 +323,7 @@ const pageDescription = computed(() => {
 const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
 const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
 const flagModelPlaza = makeSidebarFlag(FeatureFlags.modelPlaza)
+const flagPluginManagement = makeSidebarFlag(FeatureFlags.pluginManagement)
 const flagPayment = makeSidebarFlag(FeatureFlags.payment)
 const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
@@ -348,7 +352,8 @@ function buildSelfNavItems(withDashboard: boolean): ConsoleNavItem[] {
   if (withDashboard) items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: 'home' })
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: 'key' },
-    { path: '/model-square', label: '模型广场', icon: 'grid' },
+    { path: '/model-square', label: t('nav.modelSquare'), icon: 'grid' },
+    { path: '/model-plaza', query: { embedded: '1' }, label: t('nav.modelPlaza'), icon: 'grid', featureFlag: flagModelPlaza },
     { path: '/canvas', label: '绘图工作站', icon: 'image' },
     { path: '/leaderboard', label: '总排行榜', icon: 'chart' },
     { path: '/batch-image', label: t('nav.batchImage'), icon: 'image', hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
@@ -374,7 +379,8 @@ function buildSelfNavItems(withDashboard: boolean): ConsoleNavItem[] {
 function buildAdminNavItems(): ConsoleNavItem[] {
   const items: ConsoleNavItem[] = [
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: 'home' },
-    { path: '/model-square', label: '模型广场', icon: 'grid' },
+    { path: '/model-square', label: t('nav.modelSquare'), icon: 'grid' },
+    { path: '/model-plaza', query: { embedded: '1' }, label: t('nav.modelPlaza'), icon: 'grid', featureFlag: flagModelPlaza },
     { path: '/admin/ops', label: t('nav.ops'), icon: 'chartBar', featureFlag: flagOpsMonitoring },
     { path: '/admin/users', label: t('nav.users'), icon: 'users', hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: 'folder', hideInSimpleMode: true },
@@ -391,6 +397,7 @@ function buildAdminNavItems(): ConsoleNavItem[] {
     },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: 'creditCard', hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: 'globe' },
+    { path: '/admin/plugins', label: t('nav.plugins'), icon: 'cube', featureFlag: flagPluginManagement },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: 'bell' },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: 'server' },
     {
@@ -640,6 +647,7 @@ onBeforeUnmount(() => {
   --scheme3-paper: #f4f2ec;
   --scheme3-card: #fbfaf6;
   --scheme3-subtle: #f1eee6;
+  --scheme3-console-topbar-height: 4.25rem;
   display: grid;
   grid-template-columns: 15.5rem minmax(0, 1fr);
   min-height: 100vh;
@@ -669,8 +677,10 @@ onBeforeUnmount(() => {
 .scheme3-console-version-control :deep(.scheme3-version-static) { color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; font-weight: 800; }
 .scheme3-console-version-control :deep(.scheme3-version-trigger) { display: inline-flex; min-height: 1.55rem; align-items: center; gap: .3rem; border: 1px solid var(--scheme3-line); border-radius: 5px; padding: .22rem .38rem; background: transparent; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .54rem; font-weight: 800; }
 .scheme3-console-version-control :deep(.scheme3-version-trigger:hover) { border-color: #1e5c42; background: rgba(30,92,66,.08); color: #1e5c42; }
-.scheme3-console-version-control :deep(.scheme3-version-dropdown) { top: calc(100% + .5rem); left: auto; right: 0; z-index: 90; border: 1px solid var(--scheme3-line); border-radius: 7px; background: var(--scheme3-card); box-shadow: 0 1rem 2.5rem rgba(54,48,34,.16); }
-.scheme3-console-version-control :deep(.scheme3-version-dropdown button) { border-radius: 5px; }
+:global(body.scheme3-user-context .scheme3-version-dropdown),
+:global(body.scheme3-admin-context .scheme3-version-dropdown) { z-index: 90; border: 1px solid #dad5c8; border-radius: 7px; background: #fbfaf6; box-shadow: 0 1rem 2.5rem rgba(54,48,34,.16); }
+:global(body.scheme3-user-context .scheme3-version-dropdown button),
+:global(body.scheme3-admin-context .scheme3-version-dropdown button) { border-radius: 5px; }
 .scheme3-console-close { display: none; margin-left: auto; border: 0; background: transparent; color: var(--scheme3-muted); }
 .scheme3-console-caption { padding: 1.2rem 1rem .5rem; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .58rem; font-weight: 700; letter-spacing: .16em; }
 .scheme3-console-links { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: .8rem; overflow-y: auto; padding: 0 .65rem .9rem; }
@@ -712,6 +722,18 @@ onBeforeUnmount(() => {
 .scheme3-console-topbar-kicker { display: block; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .55rem; letter-spacing: .13em; }
 .scheme3-console-topbar-left strong { display: block; margin-top: .18rem; color: var(--scheme3-ink); font-family: Georgia,'Times New Roman',serif; font-size: 1.15rem; font-weight: 400; }
 .scheme3-console-topbar-right { display: flex; min-width: 0; align-items: center; gap: .65rem; }
+.scheme3-console-announcement-ticker { flex: 0 1 min(42vw, 360px); }
+.scheme3-console-announcement-ticker :deep(.announcement-ticker) {
+  max-width: 100%;
+  border-color: var(--scheme3-line);
+  background: var(--scheme3-surface);
+}
+.scheme3-console-announcement-ticker :deep(.announcement-ticker__title) { color: var(--scheme3-ink); }
+.scheme3-console-announcement-ticker :deep(.announcement-ticker__controls) { border-left-color: var(--scheme3-line); }
+.scheme3-console-announcement-ticker :deep(.announcement-ticker__control),
+.scheme3-console-announcement-ticker :deep(.announcement-ticker__count) { color: var(--scheme3-muted); }
+.scheme3-console-announcement-ticker :deep(.announcement-ticker__main:hover),
+.scheme3-console-announcement-ticker :deep(.announcement-ticker__control:hover) { background: var(--scheme3-subtle); }
 .scheme3-console-balance,.scheme3-console-status { display: inline-flex; align-items: center; gap: .28rem; color: var(--scheme3-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: .61rem; white-space: nowrap; }
 .scheme3-console-balance { color: #b7791f; }
 .scheme3-console-status i { width: .36rem; height: .36rem; border-radius: 999px; background: #1e5c42; box-shadow: 0 0 0 .2rem rgba(30,92,66,.13); }
@@ -743,7 +765,8 @@ onBeforeUnmount(() => {
 .scheme3-console-menu-button { display: none; align-items: center; justify-content: center; border: 1px solid var(--scheme3-line); border-radius: 7px; padding: .45rem; background: var(--scheme3-card); color: var(--scheme3-ink); }
 .scheme3-console-overlay { display: none; }
 .scheme3-console-content { min-width: 0; padding: 1.15rem 1.35rem 1.6rem; }
-.scheme3-console-page-frame { min-height: calc(100vh - 7rem); overflow-x: hidden; }
+/* Clip horizontal paint without turning this frame into the sticky scroll container. */
+.scheme3-console-page-frame { min-height: calc(100vh - 7rem); overflow-x: clip; }
 .scheme3-console-page-frame :deep(.card) { border-color: var(--scheme3-line); border-radius: 7px; background: var(--scheme3-card); box-shadow: none; }
 .scheme3-console-page-frame :deep(.rounded-3xl),
 .scheme3-console-page-frame :deep(.rounded-2xl),
@@ -821,7 +844,8 @@ onBeforeUnmount(() => {
 :global(.dark .scheme3-console-version-control .scheme3-version-trigger) { border-color: #47443a; background: transparent; color: #aaa69a; }
 :global(.dark .scheme3-console-version-control .scheme3-version-trigger:hover) { border-color: #8fc2a5; background: rgba(143,194,165,.1); color: #8fc2a5; }
 :global(.dark .scheme3-console-version-control .scheme3-version-static) { color: #aaa69a; }
-:global(.dark .scheme3-console-version-control .scheme3-version-dropdown) { border-color: #47443a; background: #24231f; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.34); }
+:global(html.dark body.scheme3-user-context .scheme3-version-dropdown),
+:global(html.dark body.scheme3-admin-context .scheme3-version-dropdown) { border-color: #47443a; background: #24231f; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.34); }
 :global(.dark .scheme3-console-user:hover),:global(.dark .scheme3-console-user[aria-expanded="true"]) { border-color: #47443a; background: rgba(143,194,165,.08); }
 :global(.dark .scheme3-console-account-popover) { background: #24231f; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.34); }
 :global(.dark .scheme3-console-account-summary small) { color: #8fc2a5; }
@@ -829,18 +853,18 @@ onBeforeUnmount(() => {
 :global(.dark .scheme3-console-account-logout:hover) { background: rgba(238,149,129,.1); color: #ee9581; }
 :global(.dark .scheme3-console-link-active) { border-color: rgba(143,194,165,.3); background: rgba(143,194,165,.1); color: #8fc2a5; box-shadow: inset 3px 0 0 #8fc2a5; }
 :global(.dark .scheme3-console-current) { background: rgba(143,194,165,.12); color: #8fc2a5; }
-:global(.dark .scheme3-console-page-frame :deep(.card)),:global(.dark .scheme3-console-page-frame :deep(.bg-white)) { background-color: var(--scheme3-card); }
-:global(.dark .scheme3-console-page-frame :deep(.bg-dark-800)),:global(.dark .scheme3-console-page-frame :deep(.bg-dark-900)),:global(.dark .scheme3-console-page-frame :deep(.bg-dark-950)) { background-color: var(--scheme3-card) !important; }
-:global(.dark .scheme3-console-page-frame :deep(.text-dark-100)),:global(.dark .scheme3-console-page-frame :deep(.text-dark-200)),:global(.dark .scheme3-console-page-frame :deep(.text-dark-300)),:global(.dark .scheme3-console-page-frame :deep(.text-dark-400)) { color: var(--scheme3-muted) !important; }
-:global(.dark .scheme3-console-page-frame :deep(.input-hint)) { color: var(--scheme3-muted) !important; }
-:global(.dark .scheme3-console-page-frame :deep(.text-primary-900)),:global(.dark .scheme3-console-page-frame :deep(.text-primary-800)),:global(.dark .scheme3-console-page-frame :deep(.text-primary-700)),:global(.dark .scheme3-console-page-frame :deep(.text-primary-600)),:global(.dark .scheme3-console-page-frame :deep(.text-primary-500)) { color: #8fc2a5 !important; }
-:global(.dark .scheme3-console-page-frame :deep(.bg-primary-200)),:global(.dark .scheme3-console-page-frame :deep(.bg-primary-300)) { background-color: #2b2924 !important; }
-:global(.dark .scheme3-console-page-frame :deep(.bg-primary-400)) { background-color: rgba(143,194,165,.18) !important; }
-:global(.dark .scheme3-console-page-frame :deep(.bg-primary-500)),:global(.dark .scheme3-console-page-frame :deep(.bg-primary-600)),:global(.dark .scheme3-console-page-frame :deep(.bg-primary-700)) { background-color: #8fc2a5 !important; }
-:global(.dark .scheme3-console-page-frame :deep(.bg-primary-800)),:global(.dark .scheme3-console-page-frame :deep(.bg-primary-900)) { background-color: #6fa887 !important; }
-:global(.dark .scheme3-console-page-frame :deep(.border-primary-50)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-100)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-200)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-300)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-400)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-500)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-600)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-700)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-800)),:global(.dark .scheme3-console-page-frame :deep(.border-primary-900)) { border-color: rgba(143,194,165,.34) !important; }
-:global(.dark .scheme3-console-page-frame :deep(.border-t-transparent)),:global(.dark .scheme3-console-page-frame :deep(.border-r-transparent)),:global(.dark .scheme3-console-page-frame :deep(.border-b-transparent)),:global(.dark .scheme3-console-page-frame :deep(.border-l-transparent)) { border-color: transparent !important; }
-:global(.dark .scheme3-console-page-frame :deep(.ring-primary-50)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-100)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-200)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-300)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-400)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-500)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-600)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-700)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-800)),:global(.dark .scheme3-console-page-frame :deep(.ring-primary-900)) { --tw-ring-color: rgba(143,194,165,.24) !important; }
+:global(.dark .scheme3-console-page-frame .card),:global(.dark .scheme3-console-page-frame .bg-white) { background-color: var(--scheme3-card); }
+:global(.dark .scheme3-console-page-frame .bg-dark-800),:global(.dark .scheme3-console-page-frame .bg-dark-900),:global(.dark .scheme3-console-page-frame .bg-dark-950) { background-color: var(--scheme3-card) !important; }
+:global(.dark .scheme3-console-page-frame .text-dark-100),:global(.dark .scheme3-console-page-frame .text-dark-200),:global(.dark .scheme3-console-page-frame .text-dark-300),:global(.dark .scheme3-console-page-frame .text-dark-400) { color: var(--scheme3-muted) !important; }
+:global(.dark .scheme3-console-page-frame .input-hint) { color: var(--scheme3-muted) !important; }
+:global(.dark .scheme3-console-page-frame .text-primary-900),:global(.dark .scheme3-console-page-frame .text-primary-800),:global(.dark .scheme3-console-page-frame .text-primary-700),:global(.dark .scheme3-console-page-frame .text-primary-600),:global(.dark .scheme3-console-page-frame .text-primary-500) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-console-page-frame .bg-primary-200),:global(.dark .scheme3-console-page-frame .bg-primary-300) { background-color: #2b2924 !important; }
+:global(.dark .scheme3-console-page-frame .bg-primary-400) { background-color: rgba(143,194,165,.18) !important; }
+:global(.dark .scheme3-console-page-frame .bg-primary-500),:global(.dark .scheme3-console-page-frame .bg-primary-600),:global(.dark .scheme3-console-page-frame .bg-primary-700) { background-color: #8fc2a5 !important; }
+:global(.dark .scheme3-console-page-frame .bg-primary-800),:global(.dark .scheme3-console-page-frame .bg-primary-900) { background-color: #6fa887 !important; }
+:global(.dark .scheme3-console-page-frame .border-primary-50),:global(.dark .scheme3-console-page-frame .border-primary-100),:global(.dark .scheme3-console-page-frame .border-primary-200),:global(.dark .scheme3-console-page-frame .border-primary-300),:global(.dark .scheme3-console-page-frame .border-primary-400),:global(.dark .scheme3-console-page-frame .border-primary-500),:global(.dark .scheme3-console-page-frame .border-primary-600),:global(.dark .scheme3-console-page-frame .border-primary-700),:global(.dark .scheme3-console-page-frame .border-primary-800),:global(.dark .scheme3-console-page-frame .border-primary-900) { border-color: rgba(143,194,165,.34) !important; }
+:global(.dark .scheme3-console-page-frame .border-t-transparent),:global(.dark .scheme3-console-page-frame .border-r-transparent),:global(.dark .scheme3-console-page-frame .border-b-transparent),:global(.dark .scheme3-console-page-frame .border-l-transparent) { border-color: transparent !important; }
+:global(.dark .scheme3-console-page-frame .ring-primary-50),:global(.dark .scheme3-console-page-frame .ring-primary-100),:global(.dark .scheme3-console-page-frame .ring-primary-200),:global(.dark .scheme3-console-page-frame .ring-primary-300),:global(.dark .scheme3-console-page-frame .ring-primary-400),:global(.dark .scheme3-console-page-frame .ring-primary-500),:global(.dark .scheme3-console-page-frame .ring-primary-600),:global(.dark .scheme3-console-page-frame .ring-primary-700),:global(.dark .scheme3-console-page-frame .ring-primary-800),:global(.dark .scheme3-console-page-frame .ring-primary-900) { --tw-ring-color: rgba(143,194,165,.24) !important; }
 
 /* Teleported user controls do not inherit the page-frame variables. Scope
    these overrides to the user console body marker so admin dialogs retain
@@ -1784,14 +1808,27 @@ onBeforeUnmount(() => {
   .scheme3-console-topbar { padding-right: 1rem; padding-left: 1rem; }
   .scheme3-console-status { display: none; }
   .scheme3-console-topbar-right .scheme3-console-locale-tool { flex-shrink: 0; }
-  .scheme3-console-version-control :deep(.scheme3-version-dropdown) { left: 0; right: auto; width: min(16rem, calc(100vw - 1.3rem)); max-width: calc(100vw - 1.3rem); }
+}
+/* Keep the dense topbar inside the viewport at tablet widths.  The desktop
+   set of documentation/model/subscription controls can otherwise force the
+   account button a few pixels past the right edge before the mobile rules
+   (<=767px) take effect. */
+@media (max-width: 1100px) {
+  .scheme3-console-topbar-right { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+  .scheme3-console-announcement-ticker { min-width: 0; }
+  .scheme3-console-doc-link,
+  .scheme3-console-subscription,
+  .scheme3-console-balance { display: none; }
+  .scheme3-console-user { max-width: 100%; }
 }
 @media (max-width: 767px) {
   .scheme3-console-doc-link,
   .scheme3-console-topbar-right .scheme3-console-subscription,
   .scheme3-console-balance { display: none; }
+  .scheme3-console-announcement-ticker { flex: 0 0 2.25rem; max-width: 2.25rem; }
 }
 @media (max-width: 640px) {
+  .scheme3-console-layout { --scheme3-console-topbar-height: 3.85rem; }
   .scheme3-console-content { padding: .7rem .65rem 1rem; }
   .scheme3-console-topbar { min-height: 3.85rem; padding: .65rem; }
   .scheme3-console-topbar-kicker { font-size: .49rem; }

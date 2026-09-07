@@ -389,7 +389,7 @@ function saveQRCode() {
 }
 
 async function tryRecoverPendingOrder(order: PaymentOrder): Promise<PaymentOrder> {
-  if (!isWxpay.value && !isMobileAlipayDeepLink.value) return order
+  if (!isWxpay.value && !isAlipay.value) return order
   const outTradeNo = String(order.out_trade_no || '').trim()
   if (!outTradeNo) return order
   const normalizedStatus = String(order.status || '').trim().toUpperCase()
@@ -514,12 +514,12 @@ onUnmounted(() => cleanup())
 .scheme3-payment-status :deep(.btn-secondary) { border-color: var(--scheme3-payment-status-line); border-radius: 7px; background: var(--scheme3-payment-status-card); color: var(--scheme3-payment-status-ink); }
 
 :global(.dark .scheme3-payment-status) { --scheme3-payment-status-card: #24231f; --scheme3-payment-status-line: #47443a; --scheme3-payment-status-ink: #f4f2ec; --scheme3-payment-status-muted: #aaa69a; }
-:global(.dark .scheme3-payment-status :deep(.bg-gray-50)), :global(.dark .scheme3-payment-status :deep(.bg-gray-100)) { background: #2b2924 !important; }
-:global(.dark .scheme3-payment-status :deep(.bg-green-100)), :global(.dark .scheme3-payment-status :deep(.bg-blue-50)) { background: rgba(143,194,165,.1) !important; }
-:global(.dark .scheme3-payment-status :deep(.bg-orange-100)) { background: rgba(214,166,93,.1) !important; }
-:global(.dark .scheme3-payment-status :deep(.text-green-500)), :global(.dark .scheme3-payment-status :deep(.text-green-600)) { color: #8fc2a5 !important; }
-:global(.dark .scheme3-payment-status :deep(.text-orange-500)) { color: #d6a65d !important; }
+:global(.dark .scheme3-payment-status .bg-gray-50), :global(.dark .scheme3-payment-status .bg-gray-100) { background: #2b2924 !important; }
+:global(.dark .scheme3-payment-status .bg-green-100), :global(.dark .scheme3-payment-status .bg-blue-50) { background: rgba(143,194,165,.1) !important; }
+:global(.dark .scheme3-payment-status .bg-orange-100) { background: rgba(214,166,93,.1) !important; }
+:global(.dark .scheme3-payment-status .text-green-500), :global(.dark .scheme3-payment-status .text-green-600) { color: #8fc2a5 !important; }
+:global(.dark .scheme3-payment-status .text-orange-500) { color: #d6a65d !important; }
 :global(.dark .scheme3-payment-qr) { border-color: rgba(143,194,165,.34) !important; background: #2b2924 !important; }
 :global(.dark .scheme3-payment-qr-logo) { background: #8fc2a5 !important; }
-:global(.dark .scheme3-payment-status :deep(.btn-primary)), :global(.dark .scheme3-payment-status :deep(.btn-alipay)), :global(.dark .scheme3-payment-status :deep(.btn-wxpay)), :global(.dark .scheme3-payment-status :deep(.btn-stripe)), :global(.dark .scheme3-payment-status :deep(.btn-airwallex)) { background: #8fc2a5 !important; color: #1b1b18 !important; }
+:global(.dark .scheme3-payment-status .btn-primary), :global(.dark .scheme3-payment-status .btn-alipay), :global(.dark .scheme3-payment-status .btn-wxpay), :global(.dark .scheme3-payment-status .btn-stripe), :global(.dark .scheme3-payment-status .btn-airwallex) { background: #8fc2a5 !important; color: #1b1b18 !important; }
 </style>

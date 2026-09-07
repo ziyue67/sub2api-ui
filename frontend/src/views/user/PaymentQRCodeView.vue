@@ -220,5 +220,5 @@ onUnmounted(() => cleanup())
 .scheme3-standalone-payment-qr :deep(.btn-secondary) { border-color: var(--scheme3-qr-line); border-radius: 7px; background: var(--scheme3-qr-card); color: var(--scheme3-qr-ink); }
 
 :global(.dark .scheme3-standalone-payment-qr) { --scheme3-qr-card: #24231f; --scheme3-qr-line: #47443a; --scheme3-qr-ink: #f4f2ec; --scheme3-qr-muted: #aaa69a; }
-:global(.dark .scheme3-standalone-payment-qr :deep(.btn-primary)) { background: #8fc2a5; color: #1b1b18; }
+:global(.dark .scheme3-standalone-payment-qr .btn-primary) { background: #8fc2a5; color: #1b1b18; }
 </style>

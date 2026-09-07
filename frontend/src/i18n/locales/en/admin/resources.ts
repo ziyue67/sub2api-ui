@@ -329,6 +329,8 @@ export default {
       customExpiry: 'Custom',
       customExpiryDays: 'Custom days',
       expiryDaysRequired: 'Please enter a valid expiry day count',
+      expiryDateRequired: 'Please enter a valid expiry date and time',
+      localTimeZoneHint: 'Custom time is interpreted in your browser time zone ({timezone}).',
       groupRequired: 'Please select a subscription group',
       days: ' days',
       status: {
@@ -375,6 +377,7 @@ export default {
     announcements: {
       title: 'Announcements',
       description: 'Create announcements and target by conditions',
+      createFirstAnnouncement: 'No announcements yet. Create your first one.',
       createAnnouncement: 'Create Announcement',
       editAnnouncement: 'Edit Announcement',
       deleteAnnouncement: 'Delete Announcement',
@@ -385,6 +388,7 @@ export default {
         title: 'Title',
         status: 'Status',
         notifyMode: 'Notify Mode',
+        ticker: 'Ticker',
         targeting: 'Targeting',
         timeRange: 'Schedule',
         createdAt: 'Created At',
@@ -398,6 +402,14 @@ export default {
       notifyModeLabels: {
         silent: 'Silent',
         popup: 'Popup'
+      },
+      ticker: {
+        title: 'Pinned ticker',
+        enabled: 'In ticker',
+        disabled: 'Hidden from ticker',
+        hint: 'Show this announcement in the user header ticker',
+        priority: 'Ticker priority',
+        priorityHint: '0-100; higher values appear first, then newest first'
       },
       form: {
         title: 'Title',
@@ -518,7 +530,9 @@ export default {
       account: 'Account',
       group: 'Group',
       requestId: 'Request ID',
+      upstreamRequestId: 'Upstream ID',
       requestIdCopied: 'Request ID copied',
+      upstreamRequestIdCopied: 'Upstream ID copied',
       allModels: 'All Models',
       allAccounts: 'All Accounts',
       allGroups: 'All Groups',

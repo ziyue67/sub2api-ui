@@ -22,8 +22,9 @@
           >
             {{ providerLabel(item.provider) }}
           </span>
+          <!-- Pure quota monitors use "quota" as a data-source placeholder. -->
           <span class="scheme3-monitor-model">
-            {{ item.primary_model }}
+            {{ formatMonitorModel(item.primary_model) }}
           </span>
           <span
             v-if="item.group_name"
@@ -53,6 +54,13 @@
       secondary-unit="ms"
     />
 
+    <!-- 配额模式：最新用量/余额快照（服务端已按系统开关剥离，此处 flag 为纵深防御） -->
+    <MonitorQuotaView
+      v-if="quotaVisible"
+      :snapshot="item.latest_quota"
+      class="scheme3-monitor-card-quota"
+    />
+
     <div class="scheme3-monitor-divider"></div>
 
     <MonitorAvailabilityRow
@@ -73,12 +81,23 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { UserMonitorView } from '@/api/channelMonitor'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
+import { isChannelMonitorQuotaVisible } from '@/utils/featureFlags'
 import ProviderIcon from './ProviderIcon.vue'
 import MonitorMetricPair from './MonitorMetricPair.vue'
 import MonitorAvailabilityRow from './MonitorAvailabilityRow.vue'
 import MonitorTimeline from './MonitorTimeline.vue'
+import MonitorQuotaView from '@/components/common/MonitorQuotaView.vue'
 
-const PROVIDER_TONES = new Set(['openai', 'anthropic', 'gemini', 'grok'])
+const PROVIDER_TONES = new Set([
+  'openai',
+  'anthropic',
+  'gemini',
+  'grok',
+  'antigravity',
+  'kimi',
+  'zhipu',
+  'deepseek',
+])
 const STATUS_TONES = new Set(['operational', 'degraded', 'failed', 'error'])
 
 const props = defineProps<{
@@ -97,6 +116,7 @@ const {
   statusLabel,
   providerLabel,
   formatLatency,
+  formatMonitorModel,
 } = useChannelMonitorFormat()
 
 const providerToneClass = computed(() => {
@@ -108,6 +128,10 @@ const statusToneClass = computed(() => {
   const status = String(props.item.primary_status || '').toLowerCase()
   return `is-${STATUS_TONES.has(status) ? status : 'unknown'}`
 })
+
+const quotaVisible = computed(
+  () => isChannelMonitorQuotaVisible() && !!props.item.latest_quota
+)
 
 const availabilityLabel = computed(() => {
   const win = t(`channelStatus.windowTab.${props.window}`)
@@ -151,6 +175,10 @@ const extraModelsCountLabel = computed(() => {
 .scheme3-monitor-provider-tile.is-anthropic { color: var(--monitor-danger, #9e4d3d); }
 .scheme3-monitor-provider-tile.is-gemini { color: var(--monitor-amber, #b7791f); }
 .scheme3-monitor-provider-tile.is-grok { color: var(--monitor-ink, #27251f); }
+.scheme3-monitor-provider-tile.is-antigravity { color: #586a8a; }
+.scheme3-monitor-provider-tile.is-kimi { color: #9e4d74; }
+.scheme3-monitor-provider-tile.is-zhipu { color: #4c5f8f; }
+.scheme3-monitor-provider-tile.is-deepseek { color: #24736c; }
 .scheme3-monitor-card-copy { min-width: 0; flex: 1 1 auto; }
 .scheme3-monitor-card-name { overflow: hidden; color: var(--monitor-ink, #27251f); font-size: 1rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .scheme3-monitor-card-meta { display: flex; min-width: 0; align-items: center; gap: .38rem; margin-top: .15rem; }
@@ -163,6 +191,10 @@ const extraModelsCountLabel = computed(() => {
 .scheme3-monitor-provider-badge.is-openai { border-color: rgba(30, 92, 66, .28); background: rgba(30, 92, 66, .08); color: var(--monitor-accent, #1e5c42); }
 .scheme3-monitor-provider-badge.is-anthropic { border-color: rgba(158, 77, 61, .28); background: rgba(158, 77, 61, .07); color: var(--monitor-danger, #9e4d3d); }
 .scheme3-monitor-provider-badge.is-gemini { border-color: rgba(183, 121, 31, .3); background: rgba(183, 121, 31, .08); color: #8b5d14; }
+.scheme3-monitor-provider-badge.is-antigravity { border-color: rgba(88, 106, 138, .3); background: rgba(88, 106, 138, .08); color: #485a7a; }
+.scheme3-monitor-provider-badge.is-kimi { border-color: rgba(158, 77, 116, .3); background: rgba(158, 77, 116, .08); color: #8b4165; }
+.scheme3-monitor-provider-badge.is-zhipu { border-color: rgba(76, 95, 143, .3); background: rgba(76, 95, 143, .08); color: #425584; }
+.scheme3-monitor-provider-badge.is-deepseek { border-color: rgba(36, 115, 108, .3); background: rgba(36, 115, 108, .08); color: #1e6862; }
 .scheme3-monitor-provider-badge.is-grok,
 .scheme3-monitor-provider-badge.is-unknown { border-color: var(--monitor-line, #d8d2c3); background: var(--monitor-subtle, #f1eee6); color: var(--monitor-muted, #777266); }
 .scheme3-monitor-status { border-radius: 999px; padding: .38rem .58rem; font-size: .65rem; }
@@ -171,6 +203,7 @@ const extraModelsCountLabel = computed(() => {
 .scheme3-monitor-status.is-failed,
 .scheme3-monitor-status.is-error { border-color: rgba(158, 77, 61, .34); background: rgba(158, 77, 61, .08); color: var(--monitor-danger, #9e4d3d); }
 .scheme3-monitor-status.is-unknown { border-color: var(--monitor-line, #d8d2c3); background: var(--monitor-subtle, #f1eee6); color: var(--monitor-muted, #777266); }
+.scheme3-monitor-card-quota { margin-top: .75rem; border: 1px solid var(--monitor-line, #d8d2c3); border-radius: 6px; padding: .65rem; background: var(--monitor-subtle, #f8f6ef); }
 .scheme3-monitor-divider { margin-top: 1rem; border-top: 1px solid var(--monitor-line, #d8d2c3); }
 
 :global(.dark .scheme3-monitor-card) {
@@ -191,6 +224,10 @@ const extraModelsCountLabel = computed(() => {
 :global(.dark .scheme3-monitor-provider-tile.is-anthropic) { color: #d38b79; }
 :global(.dark .scheme3-monitor-provider-tile.is-gemini) { color: #d3a55a; }
 :global(.dark .scheme3-monitor-provider-tile.is-grok) { color: #f4f2ec; }
+:global(.dark .scheme3-monitor-provider-tile.is-antigravity) { color: #aab7d2; }
+:global(.dark .scheme3-monitor-provider-tile.is-kimi) { color: #dba0bd; }
+:global(.dark .scheme3-monitor-provider-tile.is-zhipu) { color: #aebce1; }
+:global(.dark .scheme3-monitor-provider-tile.is-deepseek) { color: #83c5bf; }
 :global(.dark .scheme3-monitor-card-name) { color: #f4f2ec; }
 :global(.dark .scheme3-monitor-model) { color: #aaa69a; }
 :global(.dark .scheme3-monitor-group) { border-color: #47443a; background: #2b2924; color: #d4d0c6; }
@@ -201,9 +238,14 @@ const extraModelsCountLabel = computed(() => {
 :global(.dark .scheme3-monitor-status.is-error) { border-color: rgba(211, 139, 121, .34); background: rgba(211, 139, 121, .09); color: #d38b79; }
 :global(.dark .scheme3-monitor-provider-badge.is-gemini),
 :global(.dark .scheme3-monitor-status.is-degraded) { border-color: rgba(211, 165, 90, .34); background: rgba(211, 165, 90, .09); color: #d3a55a; }
+:global(.dark .scheme3-monitor-provider-badge.is-antigravity) { border-color: rgba(170, 183, 210, .32); background: rgba(170, 183, 210, .1); color: #aab7d2; }
+:global(.dark .scheme3-monitor-provider-badge.is-kimi) { border-color: rgba(219, 160, 189, .32); background: rgba(219, 160, 189, .1); color: #dba0bd; }
+:global(.dark .scheme3-monitor-provider-badge.is-zhipu) { border-color: rgba(174, 188, 225, .32); background: rgba(174, 188, 225, .1); color: #aebce1; }
+:global(.dark .scheme3-monitor-provider-badge.is-deepseek) { border-color: rgba(131, 197, 191, .32); background: rgba(131, 197, 191, .1); color: #83c5bf; }
 :global(.dark .scheme3-monitor-provider-badge.is-grok),
 :global(.dark .scheme3-monitor-provider-badge.is-unknown),
 :global(.dark .scheme3-monitor-status.is-unknown) { border-color: #47443a; background: #2b2924; color: #aaa69a; }
+:global(.dark .scheme3-monitor-card-quota) { border-color: #47443a; background: #2b2924; }
 :global(.dark .scheme3-monitor-divider) { border-color: #47443a; }
 
 @media (max-width: 560px) {

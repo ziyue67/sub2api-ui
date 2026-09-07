@@ -32,9 +32,18 @@
           <a v-if="docUrl" :href="docUrl" target="_blank" rel="noopener noreferrer" class="home-icon-button" :title="t('home.viewDocs')">
             <Icon name="book" size="sm" />
           </a>
+          <router-link
+            v-if="showModelPlazaEntry"
+            to="/model-plaza"
+            class="home-icon-button home-model-plaza-link"
+            :title="t('nav.modelPlaza')"
+          >
+            <Icon name="grid" size="sm" />
+            <span class="hidden sm:inline">{{ t('nav.modelPlaza') }}</span>
+          </router-link>
           <button
             type="button"
-            class="home-icon-button"
+            class="home-icon-button home-model-plaza-link"
             :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
             :aria-pressed="isDark"
             @click="toggleTheme"
@@ -116,6 +125,15 @@
           <a v-if="docUrl" :href="docUrl" target="_blank" rel="noopener noreferrer" class="home-icon-button" :title="t('home.viewDocs')">
             <Icon name="book" size="sm" />
           </a>
+          <router-link
+            v-if="showModelPlazaEntry"
+            to="/model-plaza"
+            class="home-icon-button"
+            :title="t('nav.modelPlaza')"
+          >
+            <Icon name="grid" size="sm" />
+            <span class="hidden sm:inline">{{ t('nav.modelPlaza') }}</span>
+          </router-link>
           <button
             type="button"
             class="home-icon-button"
@@ -259,6 +277,7 @@ import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { resolveDisplaySiteName } from '@/utils/branding'
+import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 
 const { t } = useI18n()
 
@@ -284,6 +303,13 @@ const isHomeContentUrl = computed(() => {
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const githubUrl = 'https://github.com/ShourGG/sub2api'
 const isAuthenticated = computed(() => authStore.isAuthenticated)
+const modelPlazaEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.modelPlaza))
+const modelPlazaRequiresAuth = computed(
+  () => appStore.cachedPublicSettings?.model_plaza_require_auth === true,
+)
+const showModelPlazaEntry = computed(
+  () => modelPlazaEnabled.value && (isAuthenticated.value || !modelPlazaRequiresAuth.value),
+)
 const isAdmin = computed(() => authStore.isAdmin)
 const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/dashboard')
 const userInitial = computed(() => {
@@ -623,6 +649,7 @@ onMounted(() => {
 }
 
 .home-icon-button { width: 2.25rem; }
+.home-model-plaza-link { width: auto; }
 
 .home-icon-button:hover,
 .home-nav-link:hover,

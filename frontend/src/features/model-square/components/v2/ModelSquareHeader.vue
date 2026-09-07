@@ -1,5 +1,5 @@
 <template>
-  <div class='mb-8 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between'>
+  <div class='scheme3-model-square-header-v2 mb-8 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between'>
     <div class='max-w-2xl'>
       <div class='mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-500/5 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300 dark:border-indigo-400/20 dark:bg-indigo-400/10 dark:text-indigo-200'>
         <span class='h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse'></span>
@@ -9,6 +9,20 @@
         模型广场
       </h1>
       <p class='mt-2 text-base text-gray-500 dark:text-dark-400 leading-relaxed'>汇聚所有可用模型、渠道与分组定价，一键对比并快速选择最优接入方案。</p>
+      <div class="mt-4 flex flex-wrap items-center gap-6 text-xs text-gray-500 dark:text-dark-400 font-medium">
+        <div class="flex items-center gap-2">
+          <span class="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>全部可用模型：<strong class="font-bold text-gray-800 dark:text-gray-200 font-mono">{{ totalModels }}</strong> 款</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <Icon name="cube" size="xs" class="text-indigo-500" />
+          <span>聚合渠道：<strong class="font-bold text-gray-800 dark:text-gray-200 font-mono">{{ totalChannels }}</strong> 个</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <Icon name="sparkles" size="xs" class="text-amber-500" />
+          <span>支持按 1M Token 及按次计费透传</span>
+        </div>
+      </div>
     </div>
     <div class='flex items-center gap-3'>
       <div class='relative group flex-1 lg:flex-none'>
@@ -55,6 +69,8 @@ interface Props {
   search: string
   loading: boolean
   isDark: boolean
+  totalModels?: number
+  totalChannels?: number
 }
 
 const props = defineProps<Props>()
@@ -67,3 +83,13 @@ defineEmits<{
 
 const iconClass = computed(() => (props.loading ? 'animate-spin' : ''))
 </script>
+
+<style scoped>
+.scheme3-model-square-header-v2 { color: var(--scheme3-ink, #16150f); }
+.scheme3-model-square-header-v2 :deep([class*='rounded-full']), .scheme3-model-square-header-v2 :deep([class*='rounded-2xl']) { border-radius: 6px !important; }
+.scheme3-model-square-header-v2 :deep([class*='bg-gradient-']) { background-image: none !important; }
+.scheme3-model-square-header-v2 :deep([class*='text-indigo-']) { color: #1e5c42 !important; }
+.scheme3-model-square-header-v2 :deep([class*='bg-indigo-']), .scheme3-model-square-header-v2 :deep([class*='bg-purple-']) { background-color: rgba(30,92,66,.08) !important; }
+:global(html.dark .scheme3-model-square-header-v2 [class*='text-indigo-']) { color: #a7d0b8 !important; }
+:global(html.dark .scheme3-model-square-header-v2 [class*='bg-indigo-']), :global(html.dark .scheme3-model-square-header-v2 [class*='bg-purple-']) { background-color: rgba(143,194,165,.12) !important; }
+</style>

@@ -300,8 +300,9 @@
           </nav>
         </div>
         <div class="scheme3-v2-table-scroll min-h-0 max-h-[min(52vh,520px)] overflow-auto p-4 sm:p-5">
-          <div v-if="activeTab === 'models'" class="scheme3-v2-table-wrap border-0">
-            <table class="scheme3-v2-table min-w-[720px]">
+          <template v-if="activeTab === 'models'">
+            <div class="scheme3-v2-table-wrap hidden border-0 sm:block">
+              <table class="scheme3-v2-table min-w-[720px]">
               <thead>
                 <tr>
                   <th>{{ t('channelMonitorV2.table.platformModel') }}</th>
@@ -343,8 +344,56 @@
                   <td v-if="showThroughput">{{ formatRate(row.metrics.rpm) }}</td>
                 </tr>
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+            <!-- Mobile model cards preserve every metric without forcing a wide table. -->
+            <div class="scheme3-v2-mobile-list space-y-2 sm:hidden">
+              <button
+                v-for="row in modelRows"
+                :key="`mobile:${row.platform}:${row.model}`"
+                type="button"
+                class="scheme3-v2-mobile-card w-full text-left"
+                @click="drillModel(row)"
+              >
+                <span class="flex min-w-0 items-start justify-between gap-3">
+                  <span class="flex min-w-0 items-start gap-2">
+                    <span :class="statusDot(row.health)" aria-hidden="true"></span>
+                    <span class="min-w-0">
+                      <span class="scheme3-v2-mobile-meta block truncate text-[11px]">{{ row.platform }}</span>
+                      <strong class="scheme3-v2-mobile-primary block truncate text-sm font-semibold">
+                        {{ row.model === '__other__' ? t('channelMonitorV2.otherModels') : row.model }}
+                      </strong>
+                    </span>
+                  </span>
+                  <Icon name="chevronRight" size="sm" class="mt-0.5 shrink-0" aria-hidden="true" />
+                </span>
+                <span class="scheme3-v2-mobile-metrics mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.successRate') }}</small>
+                    <strong>{{ formatPercent(1 - row.metrics.error_rate) }}</strong>
+                    <em>{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</em>
+                  </span>
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.ttftP50') }}</small>
+                    <strong>{{ formatMs(row.metrics.ttft.p50_ms) }}</strong>
+                    <em>{{ latencyDetail(row.metrics.ttft) }}</em>
+                  </span>
+                  <span v-if="showThroughput">
+                    <small>{{ t('channelMonitorV2.metrics.tps') }}</small>
+                    <strong :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</strong>
+                  </span>
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.cacheRate') }}</small>
+                    <strong>{{ formatPercent(row.metrics.cache_rate) }}</strong>
+                  </span>
+                  <span v-if="showThroughput">
+                    <small>{{ t('channelMonitorV2.metrics.rpm') }}</small>
+                    <strong>{{ formatRate(row.metrics.rpm) }}</strong>
+                  </span>
+                </span>
+              </button>
+            </div>
+          </template>
 
           <div v-else-if="activeTab === 'errors'" class="scheme3-v2-error-list space-y-3">
             <div
@@ -397,8 +446,9 @@
             </div>
           </div>
 
-          <div v-else class="scheme3-v2-table-wrap border-0">
-            <table class="scheme3-v2-table min-w-[640px]">
+          <template v-else>
+            <div class="scheme3-v2-table-wrap hidden border-0 sm:block">
+              <table class="scheme3-v2-table min-w-[640px]">
               <thead>
                 <tr>
                   <th class="w-16">{{ t('channelMonitorV2.table.rank') }}</th>
@@ -442,8 +492,57 @@
                   <td v-if="showThroughput">{{ formatRate(row.metrics.rpm) }}</td>
                 </tr>
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+            <!-- Mobile ranking cards keep rank, identity and all visible metrics readable. -->
+            <div class="scheme3-v2-mobile-list space-y-2 sm:hidden">
+              <article
+                v-for="row in userRows"
+                :key="`mobile:${row.user_id || row.display_label}`"
+                class="scheme3-v2-mobile-card"
+                :class="row.is_self ? 'scheme3-v2-mobile-card-self' : ''"
+              >
+                <div class="flex min-w-0 items-start justify-between gap-3">
+                  <div class="flex min-w-0 items-start gap-2">
+                    <MonitorRankBadge :rank="row.rank" />
+                    <div class="min-w-0">
+                      <strong
+                        class="scheme3-v2-mobile-primary block truncate text-sm font-semibold"
+                        :class="row.is_self ? 'scheme3-v2-mobile-self' : ''"
+                      >
+                        {{ row.display_label }}
+                      </strong>
+                      <span v-if="row.is_self" class="scheme3-v2-current-badge mt-1 inline-flex text-[10px]">{{ t('channelMonitorV2.currentUser') }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="scheme3-v2-mobile-metrics mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.successRate') }}</small>
+                    <strong>{{ formatPercent(1 - row.metrics.error_rate) }}</strong>
+                    <em>{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</em>
+                  </span>
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.ttftP50') }}</small>
+                    <strong>{{ formatMs(row.metrics.ttft.p50_ms) }}</strong>
+                    <em>{{ latencyDetail(row.metrics.ttft) }}</em>
+                  </span>
+                  <span v-if="showThroughput">
+                    <small>{{ t('channelMonitorV2.metrics.tps') }}</small>
+                    <strong :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</strong>
+                  </span>
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.cacheRate') }}</small>
+                    <strong>{{ formatPercent(row.metrics.cache_rate) }}</strong>
+                  </span>
+                  <span v-if="showThroughput">
+                    <small>{{ t('channelMonitorV2.metrics.rpm') }}</small>
+                    <strong>{{ formatRate(row.metrics.rpm) }}</strong>
+                  </span>
+                </div>
+              </article>
+            </div>
+          </template>
 
           <div v-if="tabLoading" class="scheme3-v2-empty py-10 text-sm">{{ t('common.loading') }}</div>
           <div v-else-if="activeRowsEmpty" class="scheme3-v2-empty py-10">
@@ -1142,6 +1241,64 @@ onBeforeUnmount(() => {
 .scheme3-channel-status-v2 :deep(.scheme3-v2-table th) { border-color: var(--v2-line) !important; color: var(--v2-muted) !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .57rem; letter-spacing: .05em; text-transform: uppercase; }
 .scheme3-channel-status-v2 :deep(.scheme3-v2-table td) { border-color: var(--v2-line) !important; color: var(--v2-ink) !important; font-size: .7rem; }
 .scheme3-channel-status-v2 :deep(.scheme3-v2-table tbody tr:hover) { background: var(--v2-subtle); }
+.scheme3-v2-mobile-list { min-width: 0; }
+.scheme3-v2-mobile-card {
+  display: block;
+  min-width: 0;
+  border: 1px solid var(--v2-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--v2-surface) 82%, var(--v2-subtle));
+  padding: .75rem;
+  color: var(--v2-ink);
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.scheme3-v2-mobile-card:hover,
+.scheme3-v2-mobile-card:focus-visible {
+  border-color: color-mix(in srgb, var(--v2-accent) 42%, var(--v2-line));
+  background: var(--v2-subtle);
+  outline: none;
+}
+.scheme3-v2-mobile-card-self {
+  border-color: color-mix(in srgb, var(--v2-accent) 48%, var(--v2-line));
+  background: color-mix(in srgb, var(--v2-accent) 8%, var(--v2-surface));
+}
+.scheme3-v2-mobile-meta { color: var(--v2-muted); }
+.scheme3-v2-mobile-primary { color: var(--v2-ink); }
+.scheme3-v2-mobile-self { color: var(--v2-accent); }
+.scheme3-v2-current-badge {
+  border: 1px solid color-mix(in srgb, var(--v2-accent) 28%, var(--v2-line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--v2-accent) 10%, var(--v2-surface));
+  color: var(--v2-accent);
+  padding: .12rem .38rem;
+  font-weight: 800;
+}
+.scheme3-v2-mobile-metrics > span {
+  display: grid;
+  min-width: 0;
+  gap: .1rem;
+}
+.scheme3-v2-mobile-metrics small,
+.scheme3-v2-mobile-metrics em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--v2-muted);
+  font-size: .61rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scheme3-v2-mobile-metrics strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--v2-ink);
+  font-size: .86rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scheme3-v2-mobile-metrics em { font-style: normal; color: var(--v2-soft); }
 .scheme3-v2-error-row { border-bottom: 1px solid var(--v2-line); background: transparent; }
 .scheme3-v2-error-row:last-child { border-bottom: 0; }
 .scheme3-v2-row-label { color: var(--v2-ink); }
@@ -1192,6 +1349,19 @@ onBeforeUnmount(() => {
   .scheme3-v2-control-header { grid-template-columns: minmax(0, 1fr) auto; }
   .scheme3-v2-subtitle { max-width: 19rem; }
   .scheme3-v2-data-tabs { padding-left: .55rem; padding-right: .55rem; }
+}
+@media (max-width: 640px) {
+  .scheme3-v2-control-header { grid-template-columns: minmax(0, 1fr) auto; }
+  .scheme3-v2-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; overflow: visible; }
+  .scheme3-v2-toolbar > .scheme3-v2-segmented:first-child { grid-column: 1 / -1; width: 100%; }
+  .scheme3-v2-toolbar > .scheme3-v2-segmented:first-child .scheme3-v2-segment { flex: 1 1 0; }
+  .scheme3-v2-toolbar > .filter-menu { width: 100%; min-width: 0; }
+  .scheme3-v2-toolbar > .filter-menu :deep(.select-trigger) { width: 100%; }
+  .scheme3-v2-toolbar > .scheme3-v2-clear,
+  .scheme3-v2-toolbar > .scheme3-v2-native-select,
+  .scheme3-v2-toolbar > .scheme3-v2-segmented:not(:first-child) { width: 100%; }
+  .scheme3-v2-toolbar > .scheme3-v2-native-select { min-width: 0; }
+  .scheme3-v2-toolbar > .scheme3-v2-divider { display: none; }
 }
 details > summary::-webkit-details-marker { display: none; }
 </style>
