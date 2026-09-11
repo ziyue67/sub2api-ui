@@ -1745,6 +1745,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "billing.minimum_balance_reserve",
 		},
 		{
+			name:    "billing balance recheck band",
+			mutate:  func(c *Config) { c.Billing.BalanceRecheckBand = -0.5 },
+			wantErr: "billing.balance_recheck_band",
+		},
+		{
 			name:    "database max open conns",
 			mutate:  func(c *Config) { c.Database.MaxOpenConns = 0 },
 			wantErr: "database.max_open_conns",

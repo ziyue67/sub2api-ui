@@ -1126,6 +1126,15 @@ billing:
   # 触及底线时还会触发“余额不足”邮件提醒。
   # 设为 0 则底线为 0（用户可花完全部余额，余额同样永不为负）。
   minimum_balance_reserve: 0.1
+  # Preflight DB-recheck band above the floor (USD): when the cached balance is
+  # <= minimum_balance_reserve + band (and at least 2*minimum_balance_reserve),
+  # the preflight re-verifies the wallet against the database before forwarding.
+  # This closes the stale-cache window where an outdated higher balance snapshot
+  # keeps admitting requests that can no longer be collected.
+  # 预检 DB 复核带宽（美元）：缓存余额 <= 底线 + 带宽 时，先用 DB 真值复核再转发，
+  # 堵住“旧余额缓存偏高 -> 持续放行注定扣不到钱的请求”这一免费窗口。
+  # 设为 0 时退回保守的 2*底线 复核带。
+  balance_recheck_band: 1.0
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口
   user_platform_quota_cache_ttl_seconds: 86400

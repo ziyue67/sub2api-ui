@@ -209,3 +209,86 @@ func TestClearBalanceExhaustedMarker_NoopForPlainCache(t *testing.T) {
 		ClearBalanceExhaustedMarker(context.Background(), cache, 1)
 	})
 }
+
+// TestCheckBillingEligibility_RechecksDBWhenCacheStaleHighWithoutMarker 复现“还是能
+// 免费调用”的最后一种形态：钱包已在底线（DB=0.10），余额缓存被旧回源值复活为 0.50，
+// 且此刻还没有任何一笔结算失败（没有“已耗尽”标记）。
+//
+// 旧行为：0.50 > 2*reserve(0.20) -> 不复核 -> 放行 -> 上游白给、usage_log.actual_cost=0。
+// 修复后：复核带 = max(2*reserve, reserve + balance_recheck_band) 覆盖 0.50 ->
+// 读 DB 真值 -> 403 并打标记。
+func TestCheckBillingEligibility_RechecksDBWhenCacheStaleHighWithoutMarker(t *testing.T) {
+	cache := &balanceExhaustionCacheStub{}
+	cache.balance = 0.50 // 被旧回源值污染的缓存余额，高于 2*reserve
+
+	userRepo := &balanceLoadUserRepoStub{balance: 0.10} // DB 真值：已在底线
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	cfg.Billing.BalanceRecheckBand = 1.0
+	svc := NewBillingCacheService(cache, userRepo, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "")
+	require.ErrorIs(t, err, ErrInsufficientBalance)
+	require.Equal(t, int64(1), userRepo.calls.Load())
+	require.Equal(t, int64(1), cache.markCalls.Load())
+}
+
+// TestCheckBillingEligibility_RecheckBandKeepsFastPathForHealthyUsers 确认复核带
+// 不会把正常用户拖进 DB 查询。
+func TestCheckBillingEligibility_RecheckBandKeepsFastPathForHealthyUsers(t *testing.T) {
+	cache := &balanceExhaustionCacheStub{}
+	cache.balance = 5
+
+	userRepo := &balanceLoadUserRepoStub{balance: 5}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	cfg.Billing.BalanceRecheckBand = 1.0
+	svc := NewBillingCacheService(cache, userRepo, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), userRepo.calls.Load())
+}
+
+// TestMarkBalanceExhaustedAfterSettlement_MarksWhenLandedExactlyOnFloor 验证“正好扣到
+// 底线、没有差额”（shortfall == 0，如成本恰好等于可花余额）也必须打标记：此时钱包
+// 已无可花额度，只失效缓存仍可能被旧回源值复活放行。
+func TestMarkBalanceExhaustedAfterSettlement_MarksWhenLandedExactlyOnFloor(t *testing.T) {
+	cache := &balanceExhaustionCacheStub{}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+
+	floor := 0.10
+	markBalanceExhaustedAfterSettlement(context.Background(), &postUsageBillingParams{
+		Cost: &CostBreakdown{ActualCost: 0.05},
+		User: &User{ID: 1},
+	}, &billingDeps{billingCacheService: svc}, &UsageBillingApplyResult{
+		NewBalance:       &floor,
+		BalanceCollected: 0.05,
+	})
+	require.Equal(t, int64(1), cache.markCalls.Load())
+}
+
+// TestMarkBalanceExhaustedAfterSettlement_KeepsAboveFloorUnmarked 对照：全额收取且
+// 余额仍高于底线时不得打标记。
+func TestMarkBalanceExhaustedAfterSettlement_KeepsAboveFloorUnmarked(t *testing.T) {
+	cache := &balanceExhaustionCacheStub{}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+
+	aboveFloor := 0.42
+	markBalanceExhaustedAfterSettlement(context.Background(), &postUsageBillingParams{
+		Cost: &CostBreakdown{ActualCost: 0.05},
+		User: &User{ID: 1},
+	}, &billingDeps{billingCacheService: svc}, &UsageBillingApplyResult{
+		NewBalance:       &aboveFloor,
+		BalanceCollected: 0.05,
+	})
+	require.Equal(t, int64(0), cache.markCalls.Load())
+}

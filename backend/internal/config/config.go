@@ -936,6 +936,14 @@ type BillingConfig struct {
 	//     the uncollected remainder is written off and logged, and the next
 	//     preflight is rejected. Set to 0 to make the floor 0.
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
+	// BalanceRecheckBand (USD) widens the preflight's DB-truth recheck: when the
+	// cached balance is <= MinimumBalanceReserve + band (and at least
+	// 2*MinimumBalanceReserve), the preflight re-verifies the real wallet against
+	// the database before admitting a balance-mode request. This closes the
+	// stale-cache window where an outdated higher balance snapshot keeps
+	// admitting requests that can no longer be collected. Set to 0 to keep only
+	// the legacy 2*reserve band.
+	BalanceRecheckBand float64 `mapstructure:"balance_recheck_band"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -2117,6 +2125,11 @@ func setDefaults() {
 	// Keep a small spendable floor so users cannot consume their final $0.10;
 	// the atomic billing transaction enforces the same reserve to close races.
 	viper.SetDefault("billing.minimum_balance_reserve", 0.1)
+	// DB-truth recheck band above the reserve floor (USD): cached balances
+	// within reserve+band are re-verified against the database before
+	// forwarding, so a stale-high balance cache cannot keep admitting
+	// requests that can no longer be collected.
+	viper.SetDefault("billing.balance_recheck_band", 1.0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 
@@ -3116,6 +3129,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
+	}
+	if c.Billing.BalanceRecheckBand < 0 {
+		return fmt.Errorf("billing.balance_recheck_band must be non-negative")
 	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")

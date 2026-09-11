@@ -200,6 +200,9 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 				// preflight 会从 DB 读到真实余额并返回 403（INSUFFICIENT_BALANCE），
 				// 而不是继续拿 Redis 里过期的余额放行。
 				if errors.Is(err, ErrInsufficientBalance) && deps.billingCacheService != nil {
+					// 与统一路径保持一致：扣费被拒时同时打“钱包已耗尽”标记并失效缓存，
+					// 双重保证下一次预检 fail-closed（标记不受回源写回竞态影响）。
+					deps.billingCacheService.MarkBalanceExhausted(billingCtx, p.User.ID)
 					if invalidateErr := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); invalidateErr != nil {
 						slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", invalidateErr)
 					}
@@ -553,12 +556,31 @@ func markBalanceExhaustedAfterSettlement(ctx context.Context, p *postUsageBillin
 	if p == nil || p.User == nil || p.IsSubscriptionBill || deps == nil || deps.billingCacheService == nil {
 		return
 	}
-	if result == nil || result.BalanceShortfall <= 0 {
+	if result == nil || !settlementReachedWalletFloor(deps, result) {
 		return
 	}
 	markCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 	deps.billingCacheService.MarkBalanceExhausted(markCtx, p.User.ID)
+}
+
+// settlementReachedWalletFloor 判断结算结果是否说明钱包已无可花额度：
+//   - BalanceShortfall > 0：本笔被扣到 reserve 底线为止（部分收取，差额记为 write-off）；
+//   - NewBalance != nil 且 <= 底线：本笔正好把余额扣到/落在底线（例如请求成本恰好
+//     等于可花余额，shortfall == 0）。此时钱包同样已经一分不能花，必须打标记，
+//     否则残留的旧余额缓存（回源异步写回的竞态）还会继续放行注定扣不到钱的请求。
+func settlementReachedWalletFloor(deps *billingDeps, result *UsageBillingApplyResult) bool {
+	if result.BalanceShortfall > 0 {
+		return true
+	}
+	if result.NewBalance == nil {
+		return false
+	}
+	reserve := 0.0
+	if deps != nil && deps.billingCacheService != nil {
+		reserve = deps.billingCacheService.minimumBalanceReserve()
+	}
+	return *result.NewBalance <= reserve+1e-9
 }
 
 func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {

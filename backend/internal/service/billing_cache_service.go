@@ -982,8 +982,20 @@ func (s *BillingCacheService) balanceNearEligibilityThreshold(balance float64) b
 	if minimumReserve <= 0 {
 		return false
 	}
-	// 可花余额（balance - reserve）不超过一个 reserve 时，视为贴近底线。
-	return balance <= 2*minimumReserve
+	threshold := minimumReserve + s.balanceRecheckBand()
+	if legacy := 2 * minimumReserve; threshold < legacy {
+		threshold = legacy
+	}
+	return balance <= threshold
+}
+
+// balanceRecheckBand 返回预检 DB 复核带宽（billing.balance_recheck_band，美元）。
+// 未配置或非法时为 0，此时退化为 2*reserve 的保守复核带。
+func (s *BillingCacheService) balanceRecheckBand() float64 {
+	if s == nil || s.cfg == nil || s.cfg.Billing.BalanceRecheckBand <= 0 {
+		return 0
+	}
+	return s.cfg.Billing.BalanceRecheckBand
 }
 
 func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) bool {
