@@ -927,10 +927,23 @@ func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error)
 
 type BillingConfig struct {
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-	// MinimumBalanceReserve is the conservative preflight floor for balance billing.
-	// Requests in balance mode are rejected when the cached balance is below this
-	// amount, even if it is still positive. Set to 0 to keep the legacy balance > 0 gate.
+	// MinimumBalanceReserve is the wallet floor for balance billing (a non-spendable
+	// minimum balance). Two guarantees hang off it:
+	//   - Preflight rejects balance-mode requests with 403 INSUFFICIENT_BALANCE once
+	//     the balance is <= this floor.
+	//   - Post-paid deduction is clamped at the floor: a request the wallet cannot
+	//     fully cover drains it exactly to the floor (never below, never negative),
+	//     the uncollected remainder is written off and logged, and the next
+	//     preflight is rejected. Set to 0 to make the floor 0.
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
+	// BalanceRecheckBand (USD) widens the preflight's DB-truth recheck: when the
+	// cached balance is <= MinimumBalanceReserve + band (and at least
+	// 2*MinimumBalanceReserve), the preflight re-verifies the real wallet against
+	// the database before admitting a balance-mode request. This closes the
+	// stale-cache window where an outdated higher balance snapshot keeps
+	// admitting requests that can no longer be collected. Set to 0 to keep only
+	// the legacy 2*reserve band.
+	BalanceRecheckBand float64 `mapstructure:"balance_recheck_band"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -1843,6 +1856,13 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
+	// Billing reserve 迁移：2026-09 前版本把 legacy 默认 0.000001 写进了老 config.yaml，
+	// Viper 默认值 0.1 无法覆盖显式文件值。仅当该值确实来自配置文件 (InConfig) 且精确等于
+	// legacy 默认时才提升到 0.1；显式环境变量或其它配置值一律保留。
+	if viper.InConfig("billing.minimum_balance_reserve") && cfg.Billing.MinimumBalanceReserve == 0.000001 {
+		cfg.Billing.MinimumBalanceReserve = 0.1
+		slog.Warn("billing.minimum_balance_reserve migrated from legacy default 0.000001 to 0.1; remove the key from config.yaml to stop this warning")
+	}
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
 	}
@@ -2102,7 +2122,14 @@ func setDefaults() {
 	viper.SetDefault("billing.circuit_breaker.failure_threshold", 5)
 	viper.SetDefault("billing.circuit_breaker.reset_timeout_seconds", 30)
 	viper.SetDefault("billing.circuit_breaker.half_open_requests", 3)
-	viper.SetDefault("billing.minimum_balance_reserve", 0.000001)
+	// Keep a small spendable floor so users cannot consume their final $0.10;
+	// the atomic billing transaction enforces the same reserve to close races.
+	viper.SetDefault("billing.minimum_balance_reserve", 0.1)
+	// DB-truth recheck band above the reserve floor (USD): cached balances
+	// within reserve+band are re-verified against the database before
+	// forwarding, so a stale-high balance cache cannot keep admitting
+	// requests that can no longer be collected.
+	viper.SetDefault("billing.balance_recheck_band", 1.0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 
@@ -3102,6 +3129,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
+	}
+	if c.Billing.BalanceRecheckBand < 0 {
+		return fmt.Errorf("billing.balance_recheck_band must be non-negative")
 	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")
