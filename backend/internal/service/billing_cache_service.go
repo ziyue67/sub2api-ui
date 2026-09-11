@@ -755,17 +755,45 @@ func (s *BillingCacheService) IncrementUserPlatformQuotaUsage(userID int64, plat
 // 统一检查方法
 // ============================================
 
+// BillingEligibilityOption 为 CheckBillingEligibility 增加可选的附加闸门。
+type BillingEligibilityOption func(*billingEligibilityOptions)
+
+// billingEligibilityOptions 预检附加参数的收口结构。
+type billingEligibilityOptions struct {
+	// maxRequestSpend 是本次请求的"最坏费用上界"（USD，由 EstimateRequestSpendUpperBound 给出）。
+	// >0 时余额模式预检要求余额能覆盖「封底线 + maxRequestSpend」，否则直接 403：
+	// 付不满最坏费用的请求绝不转发到上游（上游成本一旦发生就无法追回）。
+	maxRequestSpend float64
+}
+
+// WithMaxRequestSpend 声明本次请求的最坏费用上界（USD）。0 或负值不改变既有语义。
+func WithMaxRequestSpend(amount float64) BillingEligibilityOption {
+	return func(o *billingEligibilityOptions) {
+		if o != nil && amount > 0 {
+			o.maxRequestSpend = amount
+		}
+	}
+}
+
 // CheckBillingEligibility 检查用户是否有资格发起请求
 // 余额模式：检查缓存余额 > 0
 // 订阅模式：检查缓存用量未超过限额（Group限额从参数传入）
 // platform 为请求的目标平台（如 "anthropic"），传空串 "" 时跳过 user × platform quota 检查。
-func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string) error {
+// opts 为可选的附加闸门（如 WithMaxRequestSpend 的最坏费用要求）。
+func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string, opts ...BillingEligibilityOption) error {
 	// 简易模式：跳过所有计费检查
 	if s.cfg.RunMode == config.RunModeSimple {
 		return nil
 	}
 	if s.circuitBreaker != nil && !s.circuitBreaker.Allow() {
 		return ErrBillingServiceUnavailable
+	}
+
+	eligibility := billingEligibilityOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&eligibility)
+		}
 	}
 
 	// 判断计费模式
@@ -776,7 +804,7 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 			return err
 		}
 	} else {
-		if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
+		if err := s.checkBalanceEligibility(ctx, user.ID, eligibility.maxRequestSpend); err != nil {
 			return err
 		}
 	}
@@ -1010,7 +1038,14 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 }
 
 // checkBalanceEligibility 检查余额模式资格
-func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
+//
+// maxRequestSpend > 0 时在既有阈值之上追加"最坏费用闸门"：余额必须覆盖
+// 封底线 + 本次最坏费用，否则 403 —— 付不满的请求绝不转发到上游。判定优先
+// 使用 DB 真值（缓存值只用于筛选何时复核），因为缓存余额在并发扣费 + 异步
+// 写回之间可能偏高。命中"付不满最坏费用"时不写"钱包已耗尽"标记：小额请求
+// 仍可能付得起，标记会连带拦住它们；只有余额已掉到封底线（一切请求都付不起）
+// 或结算路径判定耗尽时才打标记。
+func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64, maxRequestSpend float64) error {
 	// 1) 先看"钱包已耗尽"标记。它是结算路径在"扣到底线 / 扣费被拒"时写下的权威信号，
 	//    与余额缓存的回源写回无关，因此不会被旧余额快照复活。命中即 fail-closed：
 	//    绝不再把注定扣费失败的请求转发到上游（后付费下上游成本无法追回）。
@@ -1038,11 +1073,25 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 		return ErrInsufficientBalance
 	}
 
+	// required 为本次放行要求的余额下限：封底线 + 最坏费用上界（未提供时为封底线
+	// 本身，退化为既有语义）。maxRequestSpend 由 handler 经 WithMaxRequestSpend 传入。
+	required := s.minimumBalanceReserve()
+	if maxRequestSpend > 0 {
+		required += maxRequestSpend
+	}
+
 	// 2) 余额贴近底线时，用 DB 真值复核一次。
 	//    缓存余额在并发扣费 + 异步回源之间可能偏高，而"贴近底线"正是放行后会立刻
 	//    扣不动钱的危险区间；这里多一次 PK 查询，换来"预检放行 ⇒ 结算必然可扣"。
 	//    只能读到 DB 时才复核：缺少 userRepo（部分降级/测试装配）时退回缓存判断。
-	if s.userRepo != nil && s.balanceNearEligibilityThreshold(balance) {
+	//    追加两种需要 DB 复核的情形：b) 缓存余额吃不下本次最坏费用（旧快照可能
+	//    偏高，需用真值判定）；c) 扣掉本次最坏费用后贴近底线（放行即进入下一笔
+	//    必然被拦的临界带）。
+	needsRecheck := s.balanceNearEligibilityThreshold(balance)
+	if maxRequestSpend > 0 && (balance < required || s.balanceNearEligibilityThreshold(balance-maxRequestSpend)) {
+		needsRecheck = true
+	}
+	if s.userRepo != nil && needsRecheck {
 		fresh, dbErr := s.getUserBalanceFromDB(ctx, userID)
 		if dbErr != nil {
 			// 无法确认真实余额时 fail-closed，避免继续白用上游。
@@ -1060,6 +1109,23 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 		if setErr := s.SetUserBalanceCache(ctx, userID, fresh); setErr != nil {
 			logger.LegacyPrintf("service.billing_cache", "Warning: refresh balance cache for user %d failed: %v", userID, setErr)
 		}
+		if maxRequestSpend > 0 && fresh < required {
+			// 真值吃不下本次最坏费用：转发前拦截，避免上游成本发生后的坏账。
+			// 不打"钱包已耗尽"标记——小额请求仍可能付得起，标记会连带拦住它们。
+			logger.LegacyPrintf("service.billing_cache",
+				"billing preflight rejected user=%d: balance=%.6f < reserve=%.6f + worst_request_spend=%.6f",
+				userID, fresh, s.minimumBalanceReserve(), maxRequestSpend)
+			return ErrInsufficientBalance
+		}
+		return nil
+	}
+
+	if maxRequestSpend > 0 && balance < required {
+		// 无 userRepo（降级/测试装配）时只能依据缓存值：付不满最坏费用直接拒绝。
+		logger.LegacyPrintf("service.billing_cache",
+			"billing preflight rejected user=%d (cache only): balance=%.6f < reserve=%.6f + worst_request_spend=%.6f",
+			userID, balance, s.minimumBalanceReserve(), maxRequestSpend)
+		return ErrInsufficientBalance
 	}
 
 	return nil

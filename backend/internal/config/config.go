@@ -944,6 +944,20 @@ type BillingConfig struct {
 	// admitting requests that can no longer be collected. Set to 0 to keep only
 	// the legacy 2*reserve band.
 	BalanceRecheckBand float64 `mapstructure:"balance_recheck_band"`
+	// RequestSpendPrecheckDisabled 关闭"放行前最坏费用预估"闸门（零超发防线）。
+	// 默认 false=启用：余额模式预检要求余额覆盖 MinimumBalanceReserve + 本次请求
+	// 最坏费用（输入按请求体字节数保守折算、输出按 max_tokens 类字段或
+	// RequestSpendDefaultMaxOutputTokens），付不满的请求在转发前直接 403，
+	// 不再出现"先服务、结算只能扣到封底"的微量超发。反向命名保证零值安全：
+	// 手工构造的 Config（测试/工具）不经 viper 加载时也默认启用。
+	RequestSpendPrecheckDisabled bool `mapstructure:"request_spend_precheck_disabled"`
+	// RequestSpendDefaultMaxOutputTokens 请求未声明 max_tokens /
+	// max_completion_tokens / max_output_tokens 时，预估输出费用上界使用的缺省
+	// 输出 token 数。默认 8192。
+	RequestSpendDefaultMaxOutputTokens int `mapstructure:"request_spend_default_max_output_tokens"`
+	// RequestSpendSafetyMultiplier 预检安全系数：把与结算同源算出的最坏费用再乘
+	// 该系数。>1 更保守（多拦、零坏账），<1 更激进（少拦、可能微量超发）。默认 1.0。
+	RequestSpendSafetyMultiplier float64 `mapstructure:"request_spend_safety_multiplier"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -2130,6 +2144,11 @@ func setDefaults() {
 	// forwarding, so a stale-high balance cache cannot keep admitting
 	// requests that can no longer be collected.
 	viper.SetDefault("billing.balance_recheck_band", 1.0)
+	// 放行前最坏费用预估（零超发）：默认启用，缺省输出上界 8192 token，安全系数 1.0。
+	// 见 BillingConfig.RequestSpendPrecheckDisabled 注释。
+	viper.SetDefault("billing.request_spend_precheck_disabled", false)
+	viper.SetDefault("billing.request_spend_default_max_output_tokens", 8192)
+	viper.SetDefault("billing.request_spend_safety_multiplier", 1.0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 
@@ -3132,6 +3151,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.BalanceRecheckBand < 0 {
 		return fmt.Errorf("billing.balance_recheck_band must be non-negative")
+	}
+	if c.Billing.RequestSpendDefaultMaxOutputTokens < 0 {
+		return fmt.Errorf("billing.request_spend_default_max_output_tokens must be non-negative")
+	}
+	if c.Billing.RequestSpendSafetyMultiplier < 0 {
+		return fmt.Errorf("billing.request_spend_safety_multiplier must be non-negative")
 	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")

@@ -1135,6 +1135,22 @@ billing:
   # 堵住“旧余额缓存偏高 -> 持续放行注定扣不到钱的请求”这一免费窗口。
   # 设为 0 时退回保守的 2*底线 复核带。
   balance_recheck_band: 1.0
+  # Preflight worst-case request-spend gate (zero-overshoot). When enabled, a
+  # balance-mode request is rejected with 403 before forwarding unless the wallet
+  # covers minimum_balance_reserve + the request's worst-case spend estimate.
+  # 放行前最坏费用预估（零超发闸门）：启用时余额预检要求余额覆盖
+  # 「最低余额底线 + 本次请求最坏费用上界」，付不满的请求转发前直接 403，
+  # 不再出现“先服务、结算只能扣到封底”的微量超发。
+  # 设为 true 可关闭（仅在明确接受最后一笔微量超发/坏账时使用）。
+  request_spend_precheck_disabled: false
+  # Default output-token upper bound used when the request declares none
+  # (max_tokens / max_completion_tokens / max_output_tokens all absent). Default 8192.
+  # 请求未声明输出上限时，预估输出费用上界使用的缺省输出 token 数（默认 8192）。
+  request_spend_default_max_output_tokens: 8192
+  # Safety multiplier applied on top of the same-source worst-case estimate.
+  # >1 = more conservative (blocks more, zero write-off), <1 = more permissive.
+  # 预检安全系数：>1 更保守（多拦、零坏账），<1 更激进（少拦、可能微量超发）。
+  request_spend_safety_multiplier: 1.0
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口
   user_platform_quota_cache_ttl_seconds: 86400
