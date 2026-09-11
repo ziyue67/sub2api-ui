@@ -45,6 +45,26 @@ type openAIRecordUsageAccountRepoStub struct {
 	calls   int
 }
 
+// openAIRecordUsageInvalidateCacheStub is a default-build-visible billing cache
+// stub used by balance-cache invalidation tests. It intentionally does not live
+// behind the `unit` build tag because this file is compiled by the default
+// (untagged) build too — golangci-lint typechecks the package without -tags.
+type openAIRecordUsageInvalidateCacheStub struct {
+	billingCacheWorkerStub
+
+	balance         float64
+	invalidateCalls int64
+}
+
+func (s *openAIRecordUsageInvalidateCacheStub) GetUserBalance(context.Context, int64) (float64, error) {
+	return s.balance, nil
+}
+
+func (s *openAIRecordUsageInvalidateCacheStub) InvalidateUserBalance(context.Context, int64) error {
+	s.invalidateCalls++
+	return nil
+}
+
 func (s *openAIRecordUsageAccountRepoStub) GetByID(_ context.Context, _ int64) (*Account, error) {
 	s.calls++
 	return s.account, nil
@@ -147,7 +167,7 @@ type openAIRecordUsageUserRepoStub struct {
 	lastCtxErr  error
 }
 
-func (s *openAIRecordUsageUserRepoStub) DeductBalance(ctx context.Context, id int64, amount float64) error {
+func (s *openAIRecordUsageUserRepoStub) DeductBalance(ctx context.Context, id int64, amount float64, _ ...float64) error {
 	s.deductCalls++
 	s.lastAmount = amount
 	s.lastCtxErr = ctx.Err()
@@ -1114,6 +1134,37 @@ func TestOpenAIGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *
 	require.Greater(t, usageRepo.lastLog.OutputCost, 0.0)
 	require.Greater(t, usageRepo.lastLog.TotalCost, 0.0)
 	require.Zero(t, usageRepo.lastLog.ActualCost)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_InsufficientBalanceInvalidatesBalanceCache(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	cache := &openAIRecordUsageInvalidateCacheStub{balance: 0.30}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	billingRepo := &openAIRecordUsageBillingRepoStub{err: ErrInsufficientBalance}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_billing_insufficient",
+			Usage: OpenAIUsage{
+				InputTokens:  8,
+				OutputTokens: 4,
+			},
+			Model:    "gpt-5.1",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 10049},
+		User:    &User{ID: 20049},
+		Account: &Account{ID: 30049},
+	})
+
+	require.ErrorIs(t, err, ErrInsufficientBalance)
+	require.Equal(t, int64(1), cache.invalidateCalls, "insufficient-balance billing error must invalidate the balance cache")
 }
 
 func TestOpenAIGatewayServiceRecordUsage_UpdatesAPIKeyQuotaWhenConfigured(t *testing.T) {

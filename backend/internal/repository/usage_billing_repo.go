@@ -7,16 +7,22 @@ import (
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type usageBillingRepository struct {
-	db *sql.DB
+	db                    *sql.DB
+	minimumBalanceReserve float64
 }
 
-func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
-	return &usageBillingRepository{db: sqlDB}
+func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfgs ...*config.Config) service.UsageBillingRepository {
+	var reserve float64
+	if len(cfgs) > 0 && cfgs[0] != nil {
+		reserve = cfgs[0].Billing.MinimumBalanceReserve
+	}
+	return &usageBillingRepository{db: sqlDB, minimumBalanceReserve: reserve}
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -110,7 +116,9 @@ func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, t
 }
 
 func (r *usageBillingRepository) ReserveBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
-	return r.applyBatchImageBalanceHold(ctx, cmd, reserveUsageBillingBatchImageBalance)
+	return r.applyBatchImageBalanceHold(ctx, cmd, func(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+		return reserveUsageBillingBatchImageBalance(ctx, tx, cmd, r.minimumBalanceReserve)
+	})
 }
 
 func (r *usageBillingRepository) CaptureBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
@@ -179,7 +187,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost, r.minimumBalanceReserve)
 		if err != nil {
 			return err
 		}
@@ -240,15 +248,37 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 	return service.ErrSubscriptionNotFound
 }
 
-func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, bool, error) {
+func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64, minimumReserves ...float64) (float64, bool, error) {
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
 	var newBalance float64
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
+	var err error
+	if minimumReserve > 0 {
+		// Keep a configurable reserve in the atomic UPDATE predicate. This closes
+		// the race between the preflight check and the actual deduction, so a user
+		// cannot spend the final reserve (production defaults to $0.10). Reserve is
+		// passed as a plain typed parameter ($3) — avoid GREATEST/untyped literals,
+		// which make PostgreSQL infer $3 as integer and reject float bindings.
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= ($1 + $3)
+			RETURNING balance
+		`, amount, userID, minimumReserve).Scan(&newBalance)
+	} else {
+		// reserve=0 keeps the original SQL so parameter type inference stays
+		// identical to the pre-reserve behavior.
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+			RETURNING balance
+		`, amount, userID).Scan(&newBalance)
+	}
 	if err == nil {
 		return newBalance, true, nil
 	}
@@ -256,35 +286,55 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 		return 0, false, err
 	}
 
-	err = tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, service.ErrUserNotFound
-	}
-	if err != nil {
+	// A failed guarded update means either insufficient spendable balance or a
+	// missing user. Distinguish the latter while preserving the service-level
+	// error contract for the former.
+	//
+	// No overdraft fallback exists anymore: even when the configured reserve is
+	// 0 the balance must cover the full amount (balance >= amount), so a user
+	// can never be driven to a negative balance. This closes the historical
+	// "debt still recorded" path that produced -$5 users.
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)`, userID).Scan(&exists); err != nil {
 		return 0, false, err
 	}
-	return newBalance, false, nil
+	if !exists {
+		return 0, false, service.ErrUserNotFound
+	}
+	return 0, false, service.ErrInsufficientBalance
 }
 
-func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand, minimumReserves ...float64) (*service.BatchImageBalanceHoldResult, error) {
 	if cmd.HoldAmount <= 0 {
 		return &service.BatchImageBalanceHoldResult{}, nil
 	}
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
 	var balance, frozen float64
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			frozen_balance = COALESCE(frozen_balance, 0) + $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
-		RETURNING balance, frozen_balance
-	`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
+	var err error
+	if minimumReserve > 0 {
+		// 冻结余额同样要遵守全局保留线：balance >= hold + reserve 才允许冻结，
+		// 避免用户通过 batch image hold 把最后 reserve（默认 $0.10）也花掉。
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				frozen_balance = COALESCE(frozen_balance, 0) + $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= ($1 + $3)
+			RETURNING balance, frozen_balance
+		`, cmd.HoldAmount, cmd.UserID, minimumReserve).Scan(&balance, &frozen)
+	} else {
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				frozen_balance = COALESCE(frozen_balance, 0) + $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+			RETURNING balance, frozen_balance
+		`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
+	}
 	if err == nil {
 		return &service.BatchImageBalanceHoldResult{NewBalance: &balance, FrozenBalance: &frozen}, nil
 	}
