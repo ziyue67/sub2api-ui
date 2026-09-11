@@ -216,6 +216,7 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 	fragment.Set("expires_in", fmt.Sprintf("%d", tokenPair.ExpiresIn))
 	fragment.Set("token_type", "Bearer")
 	fragment.Set("redirect", redirectTo)
+	clearAffiliateAttributionCookie(c)
 	redirectWithFragment(c, frontendCallback, fragment)
 }
 
@@ -251,6 +252,9 @@ func (h *AuthHandler) emailOAuthShouldCreatePendingRegistration(ctx context.Cont
 func (h *AuthHandler) emailOAuthAffiliateCode(c *gin.Context) string {
 	if c == nil {
 		return ""
+	}
+	if value := h.affiliateAttributionValue(c, ""); value != "" {
+		return value
 	}
 	if code, err := readCookieDecoded(c, emailOAuthAffiliateCookie); err == nil {
 		return strings.TrimSpace(code)
@@ -367,7 +371,7 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		return
 	}
 
-	affiliateCode := strings.TrimSpace(req.AffCode)
+	affiliateCode := h.affiliateAttributionValue(c, strings.TrimSpace(req.AffCode))
 	if affiliateCode == "" {
 		affiliateCode = pendingSessionStringValue(session.UpstreamIdentityClaims, "aff_code")
 	}

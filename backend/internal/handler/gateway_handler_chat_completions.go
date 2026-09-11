@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -75,6 +76,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	bindRequestedReasoningEffort(c, body, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !compositeTargetPlatformResolved(c, apiKey, reqModel) {
 		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by composite groups")
@@ -173,6 +175,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, groupPlatform)
+				cls = classifySelectionFailureError(err, cls)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
@@ -210,19 +213,57 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts")
 				return
 			}
-			accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+			// Reserve one entry in the same account/lane wait namespace used by
+			// the subsequent slot acquisition.  This mirrors the main gateway
+			// handler and prevents a burst of lane waiters from bypassing
+			// MaxWaiting while a lane is saturated.
+			accountWaitCounted := false
+			canWait, waitErr := h.concurrencyHelper.IncrementAccountOrLaneWaitCount(
+				c.Request.Context(), account.ID, selection.WaitPlan.LaneID, selection.WaitPlan.MaxWaiting,
+			)
+			if waitErr != nil {
+				reqLog.Warn("gateway.cc.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(waitErr))
+			} else if !canWait {
+				reqLog.Info("gateway.cc.account_wait_queue_full",
+					zap.Int64("account_id", account.ID),
+					zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
+				)
+				h.chatCompletionsErrorResponse(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later")
+				return
+			} else {
+				accountWaitCounted = true
+			}
+			releaseWait := func() {
+				if !accountWaitCounted {
+					return
+				}
+				h.concurrencyHelper.DecrementAccountOrLaneWaitCount(
+					c.Request.Context(), account.ID, selection.WaitPlan.LaneID,
+				)
+				accountWaitCounted = false
+			}
+			accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountOrLaneSlotWithWaitTimeout(
 				c,
 				account.ID,
+				selection.WaitPlan.LaneID,
 				selection.WaitPlan.MaxConcurrency,
 				selection.WaitPlan.Timeout,
 				reqStream,
 				&streamStarted,
+				waitPlanAggregateMaxArgs(selection.WaitPlan)...,
 			)
 			if err != nil {
 				reqLog.Warn("gateway.cc.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-				h.handleConcurrencyError(c, err, "account", streamStarted)
+				releaseWait()
+				slotType := "account"
+				if selection.WaitPlan.LaneID > 0 {
+					slotType = "lane"
+				}
+				h.handleConcurrencyError(c, err, slotType, streamStarted)
 				return
 			}
+			// Slot acquired: leave the wait queue before the profit gate/forward.
+			releaseWait()
 		}
 		// 终检与准入后绑定使用选号结果携带的门（见 responses 同名注释）。
 		admissionCtx := service.ContextWithSelectionProfitGate(c.Request.Context(), selection)
@@ -232,6 +273,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				accountReleaseFunc()
 			}
 			reqLog.Debug("gateway.cc.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
+			if service.IsProxyLaneUnavailableReason(reason) {
+				fs.RecordLaneUnavailable(account.ID)
+				continue
+			}
 			if fs.RecordProfitVeto(account.ID) == FailoverExhausted {
 				reqLog.Warn("gateway.cc.profit_veto_attempts_exhausted", zap.Int("profit_veto_count", fs.ProfitVetoCount()))
 				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage)
@@ -248,7 +293,14 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
-		if groupPlatform == service.PlatformGemini && account.Platform != service.PlatformGemini {
+		// Gemini 分组允许混合调度 Antigravity OAuth 账号（与 /v1/messages 及
+		// Gemini 原生路径一致）。此处只排除既非 Gemini、也无法走 Antigravity
+		// 兼容转发的账号；否则下方 shouldUseAntigravityCompat 分支对 Gemini
+		// 分组永远不可达，Antigravity 独占模型（gemini-3.6/3.7/3.8-flash 系列）
+		// 会因候选集被清空而返回「模型不受支持」。
+		if groupPlatform == service.PlatformGemini &&
+			account.Platform != service.PlatformGemini &&
+			!shouldUseAntigravityCompat(account) {
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
 			}
@@ -333,6 +385,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
+		stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,
@@ -382,6 +435,14 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(lastErr)
 		h.chatCompletionsErrorResponse(c, status, "server_error", message)
+		return
+	}
+	if lastErr != nil && lastErr.IsOpenAICapacityShed() && strings.TrimSpace(lastErr.ClientMessage) != "" {
+		status := lastErr.ClientStatusCode
+		if status <= 0 {
+			status = http.StatusServiceUnavailable
+		}
+		h.chatCompletionsErrorResponse(c, status, "server_error", lastErr.ClientMessage)
 		return
 	}
 	statusCode := http.StatusBadGateway

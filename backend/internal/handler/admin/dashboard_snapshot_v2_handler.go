@@ -44,6 +44,7 @@ type dashboardSnapshotV2Filters struct {
 	Model                 string
 	RequestType           *int16
 	Stream                *bool
+	NativeCompactionV2    *bool
 	BillingType           *int8
 	UpstreamModelMismatch *bool
 }
@@ -59,6 +60,7 @@ type dashboardSnapshotV2CacheKey struct {
 	Model                 string `json:"model"`
 	RequestType           *int16 `json:"request_type"`
 	Stream                *bool  `json:"stream"`
+	NativeCompactionV2    *bool  `json:"native_compaction_v2"`
 	BillingType           *int8  `json:"billing_type"`
 	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
 	IncludeStats          bool   `json:"include_stats"`
@@ -70,7 +72,7 @@ type dashboardSnapshotV2CacheKey struct {
 }
 
 func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
-	startTime, endTime := parseTimeRange(c)
+	timeRange := parseTimeRange(c)
 	granularity := strings.TrimSpace(c.DefaultQuery("granularity", "day"))
 	if granularity != "hour" {
 		granularity = "day"
@@ -95,8 +97,8 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 	}
 
 	keyRaw, _ := json.Marshal(dashboardSnapshotV2CacheKey{
-		StartTime:             startTime.UTC().Format(time.RFC3339),
-		EndTime:               endTime.UTC().Format(time.RFC3339),
+		StartTime:             timeRange.Start.UTC().Format(time.RFC3339),
+		EndTime:               timeRange.End.UTC().Format(time.RFC3339),
 		Granularity:           granularity,
 		UserID:                filters.UserID,
 		APIKeyID:              filters.APIKeyID,
@@ -105,6 +107,7 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 		Model:                 filters.Model,
 		RequestType:           filters.RequestType,
 		Stream:                filters.Stream,
+		NativeCompactionV2:    filters.NativeCompactionV2,
 		BillingType:           filters.BillingType,
 		UpstreamModelMismatch: filters.UpstreamModelMismatch,
 		IncludeStats:          includeStats,
@@ -119,8 +122,7 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 	cached, hit, err := dashboardSnapshotV2Cache.GetOrLoad(cacheKey, func() (any, error) {
 		return h.buildSnapshotV2Response(
 			c.Request.Context(),
-			startTime,
-			endTime,
+			timeRange,
 			granularity,
 			filters,
 			includeStats,
@@ -149,16 +151,17 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 
 func (h *DashboardHandler) buildSnapshotV2Response(
 	ctx context.Context,
-	startTime, endTime time.Time,
+	timeRange dashboardTimeRange,
 	granularity string,
 	filters *dashboardSnapshotV2Filters,
 	includeStats, includeTrend, includeModels, includeGroups, includeUsersTrend bool,
 	usersTrendLimit int,
 ) (*dashboardSnapshotV2Response, error) {
+	startTime, endTime := timeRange.Start, timeRange.End
 	resp := &dashboardSnapshotV2Response{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		StartDate:   startTime.Format("2006-01-02"),
-		EndDate:     endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		StartDate:   timeRange.StartLabel(),
+		EndDate:     timeRange.EndLabel(),
 		Granularity: granularity,
 	}
 
@@ -186,6 +189,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.Model,
 			filters.RequestType,
 			filters.Stream,
+			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
 		)
@@ -207,6 +211,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			usagestats.ModelSourceRequested,
 			filters.RequestType,
 			filters.Stream,
+			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
 		)
@@ -227,6 +232,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.GroupID,
 			filters.RequestType,
 			filters.Stream,
+			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
 		)
@@ -294,6 +300,14 @@ func parseDashboardSnapshotV2Filters(c *gin.Context) (*dashboardSnapshotV2Filter
 			return nil, err
 		}
 		filters.Stream = &streamVal
+	}
+
+	if nativeCompactionV2Str := strings.TrimSpace(c.Query("native_compaction_v2")); nativeCompactionV2Str != "" {
+		value, err := strconv.ParseBool(nativeCompactionV2Str)
+		if err != nil {
+			return nil, err
+		}
+		filters.NativeCompactionV2 = &value
 	}
 
 	if billingTypeStr := strings.TrimSpace(c.Query("billing_type")); billingTypeStr != "" {

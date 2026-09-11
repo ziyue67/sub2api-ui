@@ -80,10 +80,26 @@ const (
 	// "no available accounts" 的内部统计摘要里（与 quota_auto_pause 等同通道）。
 	openAIProfitFilterReasonThreshold          = "profit_threshold"
 	openAIProfitFilterReasonInvalidAccountRate = "profit_invalid_account_rate"
+	// openAIProfitFilterReasonLaneUnavailable is returned by the terminal
+	// admission refresh when a request-scoped proxy lane disappeared or became
+	// unschedulable while the request was waiting.  It deliberately is not
+	// counted as a profit veto; handlers use the veto signal only as a compact
+	// fail-closed/retry signal so a stale lane can never fall back to the
+	// account-level proxy (or direct egress).
+	openAIProfitFilterReasonLaneUnavailable = "proxy_lane_unavailable"
 
 	// profitControlActivityLogInterval 是按分组采样输出累计计数的最小间隔。
 	profitControlActivityLogInterval = 5 * time.Minute
 )
+
+// IsProxyLaneUnavailableReason reports whether a terminal admission rejection
+// was caused by the request-scoped proxy lane disappearing or becoming
+// unschedulable.  This is deliberately separate from the profit-control
+// reasons: callers must release/reselect the egress without charging the
+// event against the per-request profit-veto budget.
+func IsProxyLaneUnavailableReason(reason string) bool {
+	return reason == openAIProfitFilterReasonLaneUnavailable
+}
 
 type openAIProfitControlGateCtxKey struct{}
 
@@ -342,7 +358,7 @@ func (s *OpenAIGatewayService) ProfitControlVetoLatest(ctx context.Context, sele
 // only after the terminal post-slot check, so an account rejected after a rate
 // refresh cannot become the new sticky target.
 func (s *OpenAIGatewayService) bindOpenAIStickySessionDuringSelection(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
-	if gatewayProfitControlGateActive(ctx) {
+	if gatewayProfitControlGateActive(ctx) || preserveOpenAIGuardianParentBinding(ctx, sessionHash) {
 		return nil
 	}
 	return s.BindStickySession(ctx, groupID, sessionHash, accountID)
@@ -356,6 +372,9 @@ func (s *OpenAIGatewayService) bindOpenAIStickySessionDuringSelection(ctx contex
 // recovers.
 func (s *OpenAIGatewayService) BindStickySessionAfterProfitAdmission(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
 	if sessionHash == "" || accountID <= 0 {
+		return nil
+	}
+	if preserveOpenAIGuardianParentBinding(ctx, sessionHash) {
 		return nil
 	}
 	if !gatewayProfitControlGateActive(ctx) {

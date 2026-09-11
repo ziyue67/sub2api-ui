@@ -32,6 +32,10 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	// Keep lane selection deterministic even for legacy/non-load-aware callers
+	// (count-tokens and a few compatibility endpoints call this entry point
+	// directly rather than SelectAccountWithLoadAwareness).
+	ctx = WithAccountProxyLaneSession(ctx, sessionHash)
 	// 优先检查 context 中的强制平台（/antigravity 路由）
 	var platform string
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
@@ -82,7 +86,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		if err != nil {
 			return nil, err
 		}
-		return s.hydrateSelectedAccount(ctx, account)
+		return s.projectGatewayLaneSelection(ctx, groupID, requestedModel, sessionHash, account)
 	}
 
 	// antigravity 分组、强制平台模式或无分组使用单平台选择
@@ -91,13 +95,16 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	return s.hydrateSelectedAccount(ctx, account)
+	return s.projectGatewayLaneSelection(ctx, groupID, requestedModel, sessionHash, account)
 }
 
 // SelectAccountWithLoadAwareness selects account with load-awareness and wait plan.
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
+	// Carry the stable session identity into lane-aware slot acquisition without
+	// changing the long-standing scheduler method signature.
+	ctx = WithAccountProxyLaneSession(ctx, sessionHash)
 	// 调试日志：记录调度入口参数
 	excludedIDsList := make([]int64, 0, len(excludedIDs))
 	for id := range excludedIDs {
@@ -130,6 +137,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 	var stickyAccountID int64
 	var stickySource string
+	var stickyLaneBinding LaneStickyBinding
 	if prefetch := prefetchedStickyAccountIDFromContext(ctx, groupID); prefetch > 0 {
 		stickyAccountID = prefetch
 		stickySource = "prefetch"
@@ -137,6 +145,18 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash); err == nil {
 			stickyAccountID = accountID
 			stickySource = "cache"
+		}
+	}
+	// Lane affinity is an optional refinement of the legacy account sticky
+	// binding.  If the legacy key is absent (for example immediately after a
+	// rolling upgrade), the lane binding still identifies the owning account.
+	if sessionHash != "" && s.cache != nil {
+		if binding, err := s.getGatewayStickySessionLane(ctx, groupID, requestedModel, sessionHash); err == nil && binding.AccountID > 0 && binding.LaneID > 0 {
+			stickyLaneBinding = binding
+			if stickyAccountID <= 0 {
+				stickyAccountID = binding.AccountID
+				stickySource = "lane_cache"
+			}
 		}
 	}
 
@@ -173,8 +193,15 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			if err != nil {
 				return nil, err
 			}
+			if !s.prepareGatewayLaneHint(ctx, groupID, requestedModel, sessionHash, account, stickyLaneBinding) {
+				// A lane-enabled account with no healthy egress must not fall back
+				// to its legacy account proxy. Exclude it and let normal selection
+				// inspect another account.
+				localExcluded[account.ID] = struct{}{}
+				continue
+			}
 
-			result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+			result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency, account)
 			if err == nil && result.Acquired {
 				// 获取槽位后检查会话限制（使用 sessionHash 作为会话标识符）
 				if !s.checkAndRegisterSession(ctx, account, sessionHash) {
@@ -182,7 +209,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					localExcluded[account.ID] = struct{}{} // 排除此账号
 					continue                               // 重新选择
 				}
-				return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
+				if result.Lane != nil {
+					s.bindGatewayLaneStickyDuringSelection(ctx, groupID, requestedModel, sessionHash, account, result.Lane)
+				}
+				return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil, admissionMaxConcurrencyArgs(result)...)
 			}
 
 			// 对于等待计划的情况，也需要先检查会话限制
@@ -192,22 +222,20 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 
 			if stickyAccountID > 0 && stickyAccountID == account.ID && s.concurrencyService != nil {
-				waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, account.ID)
+				waitingCount := s.gatewayWaitingCountForAccount(ctx, account)
 				if waitingCount < cfg.StickySessionMaxWaiting {
-					return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-						AccountID:      account.ID,
-						MaxConcurrency: account.Concurrency,
-						Timeout:        cfg.StickySessionWaitTimeout,
-						MaxWaiting:     cfg.StickySessionMaxWaiting,
-					})
+					plan, waitable := s.gatewayWaitPlanForAccount(ctx, account, cfg.StickySessionWaitTimeout, cfg.StickySessionMaxWaiting)
+					if waitable {
+						return s.newSelectionResult(ctx, account, false, nil, plan)
+					}
 				}
 			}
-			return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-				AccountID:      account.ID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.FallbackWaitTimeout,
-				MaxWaiting:     cfg.FallbackMaxWaiting,
-			})
+			plan, waitable := s.gatewayWaitPlanForAccount(ctx, account, cfg.FallbackWaitTimeout, cfg.FallbackMaxWaiting)
+			if !waitable {
+				localExcluded[account.ID] = struct{}{}
+				continue
+			}
+			return s.newSelectionResult(ctx, account, false, nil, plan)
 		}
 	}
 
@@ -216,7 +244,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, err
 	}
 	preferOAuth := platform == PlatformGemini
-	if s.debugModelRoutingEnabled() && platform == PlatformAnthropic && requestedModel != "" {
+	if s.debugModelRoutingEnabled() && requestedModel != "" && modelRoutingAppliesToTargetPlatform(platform) {
 		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] load-aware enabled: group_id=%v model=%s session=%s platform=%s", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), platform)
 	}
 
@@ -243,10 +271,17 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return excluded
 	}
 
-	// 获取模型路由配置（anthropic 目标平台；composite 分组按目标平台判断）
+	// upstream 计费基准的渠道模型限制以账号映射后的上游模型为准，只能逐账号判定；
+	// 负载感知各层的候选过滤与粘性 gate 共用这一判定。
+	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
+	isChannelRestricted := func(account *Account) bool {
+		return needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel)
+	}
+
+	// 获取模型路由配置（anthropic / openai 目标平台；composite 分组按目标平台判断）
 	var routingAccountIDs []int64
-	if group != nil && requestedModel != "" && platform == PlatformAnthropic &&
-		(group.Platform == PlatformAnthropic || group.Platform == PlatformComposite) {
+	if group != nil && requestedModel != "" &&
+		modelRoutingAppliesToPlatform(platform, group.Platform) {
 		routingAccountIDs = group.GetRoutingAccountIDs(requestedModel)
 		if s.debugModelRoutingEnabled() {
 			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] context group routing: group_id=%d model=%s enabled=%v rules=%d matched_ids=%v session=%s sticky_account=%d",
@@ -270,7 +305,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	if len(routingAccountIDs) > 0 && s.concurrencyService != nil {
 		// 1. 过滤出路由列表中可调度的账号
 		var routingCandidates []*Account
-		var filteredExcluded, filteredMissing, filteredUnsched, filteredPlatform, filteredModelScope, filteredModelMapping, filteredWindowCost int
+		var filteredExcluded, filteredMissing, filteredUnsched, filteredPlatform, filteredModelScope, filteredModelMapping, filteredChannelRestricted, filteredWindowCost int
 		var modelScopeSkippedIDs []int64 // 记录因模型限流被跳过的账号 ID
 		for _, routingAccountID := range routingAccountIDs {
 			if isExcluded(routingAccountID) {
@@ -297,6 +332,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				filteredModelMapping++
 				continue
 			}
+			if isChannelRestricted(account) {
+				filteredChannelRestricted++
+				continue
+			}
 			if !s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) {
 				filteredModelScope++
 				modelScopeSkippedIDs = append(modelScopeSkippedIDs, account.ID)
@@ -319,9 +358,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		}
 
 		if s.debugModelRoutingEnabled() {
-			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed candidates: group_id=%v model=%s routed=%d candidates=%d filtered(excluded=%d missing=%d unsched=%d platform=%d model_scope=%d model_mapping=%d window_cost=%d)",
+			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed candidates: group_id=%v model=%s routed=%d candidates=%d filtered(excluded=%d missing=%d unsched=%d platform=%d model_scope=%d model_mapping=%d channel_restricted=%d window_cost=%d)",
 				derefGroupID(groupID), requestedModel, len(routingAccountIDs), len(routingCandidates),
-				filteredExcluded, filteredMissing, filteredUnsched, filteredPlatform, filteredModelScope, filteredModelMapping, filteredWindowCost)
+				filteredExcluded, filteredMissing, filteredUnsched, filteredPlatform, filteredModelScope, filteredModelMapping, filteredChannelRestricted, filteredWindowCost)
 			if len(modelScopeSkippedIDs) > 0 {
 				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] model_rate_limited accounts skipped: group_id=%v model=%s account_ids=%v",
 					derefGroupID(groupID), requestedModel, modelScopeSkippedIDs)
@@ -347,6 +386,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 							s.isGatewayAccountProfitEligible(ctx, stickyAccount) &&
 							s.isAccountAllowedForPlatform(stickyAccount, platform, useMixed) &&
 							(requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, stickyAccount, requestedModel)) &&
+							!isChannelRestricted(stickyAccount) &&
 							s.isAccountSchedulableForModelSelection(ctx, stickyAccount, requestedModel) &&
 							s.isAccountSchedulableForQuota(stickyAccount) &&
 							s.isAccountSchedulableForWindowCost(ctx, stickyAccount, true)
@@ -354,46 +394,54 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						rpmPass := gatePass && s.isAccountSchedulableForRPM(ctx, stickyAccount, true)
 
 						if rpmPass { // 粘性会话窗口费用+RPM 检查
-							result, err := s.tryAcquireAccountSlot(ctx, stickyAccountID, stickyAccount.Concurrency)
-							if err == nil && result.Acquired {
-								// 会话数量限制检查
-								if !s.checkAndRegisterSession(ctx, stickyAccount, sessionHash) {
-									result.ReleaseFunc() // 释放槽位
-									stickyCacheMissReason = "session_limit"
-									// 继续到负载感知选择
-								} else {
-									slog.Debug("sticky.layer1_5_hit",
-										"account_id", stickyAccountID,
-										"session", shortSessionHash(sessionHash),
-										"result", "slot_acquired",
-									)
-									if s.debugModelRoutingEnabled() {
-										logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), stickyAccountID)
-									}
-									return s.newSelectionResult(ctx, stickyAccount, true, result.ReleaseFunc, nil)
-								}
+							laneReady := s.prepareGatewayLaneHint(ctx, groupID, requestedModel, sessionHash, stickyAccount, stickyLaneBinding)
+							if !laneReady {
+								stickyCacheMissReason = "lane_unavailable"
 							}
-
-							if stickyCacheMissReason == "" {
-								waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, stickyAccountID)
-								if waitingCount < cfg.StickySessionMaxWaiting {
-									// 会话数量限制检查（等待计划也需要占用会话配额）
+							if laneReady {
+								result, err := s.tryAcquireAccountSlot(ctx, stickyAccountID, stickyAccount.Concurrency, stickyAccount)
+								if err == nil && result.Acquired {
+									// 会话数量限制检查
 									if !s.checkAndRegisterSession(ctx, stickyAccount, sessionHash) {
+										result.ReleaseFunc() // 释放槽位
 										stickyCacheMissReason = "session_limit"
-										// 会话限制已满，继续到负载感知选择
+										// 继续到负载感知选择
 									} else {
-										// 必须走 newSelectionResult 以 hydrate 账号凭证：
-										// 调度快照中的账号是精简版（OAuth token 等被剥离），
-										// 直接返回会导致后续转发缺少凭证而鉴权失败。
-										return s.newSelectionResult(ctx, stickyAccount, false, nil, &AccountWaitPlan{
-											AccountID:      stickyAccountID,
-											MaxConcurrency: stickyAccount.Concurrency,
-											Timeout:        cfg.StickySessionWaitTimeout,
-											MaxWaiting:     cfg.StickySessionMaxWaiting,
-										})
+										slog.Debug("sticky.layer1_5_hit",
+											"account_id", stickyAccountID,
+											"session", shortSessionHash(sessionHash),
+											"result", "slot_acquired",
+										)
+										if s.debugModelRoutingEnabled() {
+											logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), stickyAccountID)
+										}
+										if result.Lane != nil {
+											s.bindGatewayLaneStickyDuringSelection(ctx, groupID, requestedModel, sessionHash, stickyAccount, result.Lane)
+										}
+										return s.newSelectionResult(ctx, stickyAccount, true, result.ReleaseFunc, nil, admissionMaxConcurrencyArgs(result)...)
 									}
-								} else {
-									stickyCacheMissReason = "wait_queue_full"
+								}
+
+								if laneReady && stickyCacheMissReason == "" {
+									waitingCount := s.gatewayWaitingCountForAccount(ctx, stickyAccount)
+									if waitingCount < cfg.StickySessionMaxWaiting {
+										// 会话数量限制检查（等待计划也需要占用会话配额）
+										if !s.checkAndRegisterSession(ctx, stickyAccount, sessionHash) {
+											stickyCacheMissReason = "session_limit"
+											// 会话限制已满，继续到负载感知选择
+										} else {
+											// 必须走 newSelectionResult 以 hydrate 账号凭证：
+											// 调度快照中的账号是精简版（OAuth token 等被剥离），
+											// 直接返回会导致后续转发缺少凭证而鉴权失败。
+											plan, waitable := s.gatewayWaitPlanForAccount(ctx, stickyAccount, cfg.StickySessionWaitTimeout, cfg.StickySessionMaxWaiting)
+											if waitable {
+												return s.newSelectionResult(ctx, stickyAccount, false, nil, plan)
+											}
+											stickyCacheMissReason = "lane_unavailable"
+										}
+									} else {
+										stickyCacheMissReason = "wait_queue_full"
+									}
 								}
 							}
 							// 粘性账号槽位满且等待队列已满，继续使用负载感知选择
@@ -430,6 +478,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				})
 			}
 			routingLoadMap, _ := s.concurrencyService.GetAccountsLoadBatch(ctx, routingLoads)
+			refreshGatewayLaneLoadMap(ctx, s.concurrencyService, routingCandidates, routingLoadMap)
 
 			// 3. 按负载感知排序
 			var routingAvailable []accountWithLoad
@@ -468,7 +517,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 				// 4. 尝试获取槽位
 				for _, item := range routingAvailable {
-					result, err := s.tryAcquireAccountSlot(ctx, item.account.ID, item.account.Concurrency)
+					if !s.prepareGatewayLaneHint(ctx, groupID, requestedModel, sessionHash, item.account, stickyLaneBinding) {
+						continue
+					}
+					result, err := s.tryAcquireAccountSlot(ctx, item.account.ID, item.account.Concurrency, item.account)
 					if err == nil && result.Acquired {
 						// 会话数量限制检查
 						if !s.checkAndRegisterSession(ctx, item.account, sessionHash) {
@@ -478,10 +530,13 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						if sessionHash != "" && s.cache != nil {
 							_ = s.bindGatewayStickySessionDuringSelection(ctx, groupID, sessionHash, item.account.ID)
 						}
+						if result.Lane != nil {
+							s.bindGatewayLaneStickyDuringSelection(ctx, groupID, requestedModel, sessionHash, item.account, result.Lane)
+						}
 						if s.debugModelRoutingEnabled() {
 							logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed select: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), item.account.ID)
 						}
-						return s.newSelectionResult(ctx, item.account, true, result.ReleaseFunc, nil)
+						return s.newSelectionResult(ctx, item.account, true, result.ReleaseFunc, nil, admissionMaxConcurrencyArgs(result)...)
 					}
 				}
 
@@ -494,12 +549,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					if s.debugModelRoutingEnabled() {
 						logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed wait: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), item.account.ID)
 					}
-					return s.newSelectionResult(ctx, item.account, false, nil, &AccountWaitPlan{
-						AccountID:      item.account.ID,
-						MaxConcurrency: item.account.Concurrency,
-						Timeout:        cfg.StickySessionWaitTimeout,
-						MaxWaiting:     cfg.StickySessionMaxWaiting,
-					})
+					plan, waitable := s.gatewayWaitPlanForAccount(ctx, item.account, cfg.StickySessionWaitTimeout, cfg.StickySessionMaxWaiting)
+					if waitable {
+						return s.newSelectionResult(ctx, item.account, false, nil, plan)
+					}
 				}
 				// 所有路由账号会话限制都已满，继续到 Layer 2 回退
 			}
@@ -531,6 +584,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				platformOK := s.isAccountAllowedForPlatform(account, platform, useMixed)
 				profitOK := s.isGatewayAccountProfitEligible(ctx, account)
 				modelSupported := requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)
+				channelOK := !isChannelRestricted(account)
 				modelSchedulable := s.isAccountSchedulableForModelSelection(ctx, account, requestedModel)
 				quotaOK := s.isAccountSchedulableForQuota(account)
 				windowCostOK := s.isAccountSchedulableForWindowCost(ctx, account, true)
@@ -545,58 +599,69 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					"platform_ok", platformOK,
 					"profit_ok", profitOK,
 					"model_supported", modelSupported,
+					"channel_ok", channelOK,
 					"model_schedulable", modelSchedulable,
 					"quota_ok", quotaOK,
 					"window_cost_ok", windowCostOK,
 					"rpm_ok", rpmOK,
 				)
 
-				if !clearSticky && platformOK && profitOK && modelSupported && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
-					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
-					if err == nil && result.Acquired {
-						// 会话数量限制检查
-						if !s.checkAndRegisterSession(ctx, account, sessionHash) {
-							result.ReleaseFunc() // 释放槽位，继续到 Layer 2
-							slog.Debug("sticky.layer1_5_no_routing_miss",
-								"account_id", accountID,
-								"reason", "session_limit",
-								"session", shortSessionHash(sessionHash),
-							)
-						} else {
-							slog.Debug("sticky.layer1_5_no_routing_hit",
-								"account_id", accountID,
-								"session", shortSessionHash(sessionHash),
-								"result", "slot_acquired",
-							)
-							if s.cache != nil {
-								_ = s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL)
-							}
-							return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
-						}
+				// A sticky binding must satisfy the same channel-pricing restriction
+				// as load-aware candidates. Otherwise a session pinned to a
+				// disallowed account bypasses RestrictModels and returns the wrong
+				// upstream model.
+				if !clearSticky && platformOK && profitOK && modelSupported && channelOK && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
+					laneReady := s.prepareGatewayLaneHint(ctx, groupID, requestedModel, sessionHash, account, stickyLaneBinding)
+					if !laneReady {
+						slog.Debug("sticky.layer1_5_no_routing_lane_unavailable", "account_id", accountID)
 					} else {
-						slog.Debug("sticky.layer1_5_no_routing_slot_busy",
-							"account_id", accountID,
-							"session", shortSessionHash(sessionHash),
-						)
-					}
-
-					waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
-					if waitingCount < cfg.StickySessionMaxWaiting {
-						// 会话数量限制检查（等待计划也需要占用会话配额）
-						if !s.checkAndRegisterSession(ctx, account, sessionHash) {
-							// 会话限制已满，继续到 Layer 2
+						result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency, account)
+						if err == nil && result.Acquired {
+							// 会话数量限制检查
+							if !s.checkAndRegisterSession(ctx, account, sessionHash) {
+								result.ReleaseFunc() // 释放槽位，继续到 Layer 2
+								slog.Debug("sticky.layer1_5_no_routing_miss",
+									"account_id", accountID,
+									"reason", "session_limit",
+									"session", shortSessionHash(sessionHash),
+								)
+							} else {
+								slog.Debug("sticky.layer1_5_no_routing_hit",
+									"account_id", accountID,
+									"session", shortSessionHash(sessionHash),
+									"result", "slot_acquired",
+								)
+								if s.cache != nil {
+									_ = s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL)
+								}
+								if result.Lane != nil {
+									s.bindGatewayLaneStickyDuringSelection(ctx, groupID, requestedModel, sessionHash, account, result.Lane)
+								}
+								return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil, admissionMaxConcurrencyArgs(result)...)
+							}
 						} else {
-							slog.Debug("sticky.layer1_5_no_routing_hit",
+							slog.Debug("sticky.layer1_5_no_routing_slot_busy",
 								"account_id", accountID,
 								"session", shortSessionHash(sessionHash),
-								"result", "wait_plan",
 							)
-							return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-								AccountID:      accountID,
-								MaxConcurrency: account.Concurrency,
-								Timeout:        cfg.StickySessionWaitTimeout,
-								MaxWaiting:     cfg.StickySessionMaxWaiting,
-							})
+						}
+
+						waitingCount := s.gatewayWaitingCountForAccount(ctx, account)
+						if waitingCount < cfg.StickySessionMaxWaiting {
+							// 会话数量限制检查（等待计划也需要占用会话配额）
+							if !s.checkAndRegisterSession(ctx, account, sessionHash) {
+								// 会话限制已满，继续到 Layer 2
+							} else {
+								slog.Debug("sticky.layer1_5_no_routing_hit",
+									"account_id", accountID,
+									"session", shortSessionHash(sessionHash),
+									"result", "wait_plan",
+								)
+								plan, waitable := s.gatewayWaitPlanForAccount(ctx, account, cfg.StickySessionWaitTimeout, cfg.StickySessionMaxWaiting)
+								if waitable {
+									return s.newSelectionResult(ctx, account, false, nil, plan)
+								}
+							}
 						}
 					}
 				} else if !clearSticky {
@@ -636,6 +701,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		"total_accounts", len(accounts),
 	)
 	candidates := make([]*Account, 0, len(accounts))
+	channelRestrictedCount := 0
 	for i := range accounts {
 		acc := &accounts[i]
 		if isExcluded(acc.ID) {
@@ -654,6 +720,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			continue
 		}
 		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
+			continue
+		}
+		if isChannelRestricted(acc) {
+			channelRestrictedCount++
 			continue
 		}
 		if !s.isAccountSchedulableForModelSelection(ctx, acc, requestedModel) {
@@ -675,6 +745,14 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	if len(candidates) == 0 {
+		if channelRestrictedCount > 0 {
+			slog.Warn("channel pricing restriction blocked request",
+				"group_id", derefGroupID(groupID),
+				"model", requestedModel,
+				"restricted_accounts", channelRestrictedCount,
+				"total_accounts", len(accounts))
+			return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+		}
 		return nil, ErrNoAvailableAccounts
 	}
 
@@ -688,12 +766,13 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 	loadMap, err := s.concurrencyService.GetAccountsLoadBatch(ctx, accountLoads)
 	if err != nil {
-		if result, ok, legacyErr := s.tryAcquireByLegacyOrder(ctx, candidates, groupID, sessionHash, preferOAuth); legacyErr != nil {
+		if result, ok, legacyErr := s.tryAcquireByLegacyOrder(ctx, candidates, groupID, requestedModel, sessionHash, preferOAuth); legacyErr != nil {
 			return nil, legacyErr
 		} else if ok {
 			return result, nil
 		}
 	} else {
+		refreshGatewayLaneLoadMap(ctx, s.concurrencyService, candidates, loadMap)
 		var available []accountWithLoad
 		for _, acc := range candidates {
 			loadInfo := loadMap[acc.ID]
@@ -724,7 +803,15 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				break
 			}
 
-			result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
+			if !s.prepareGatewayLaneHint(ctx, groupID, requestedModel, sessionHash, selected.account, stickyLaneBinding) {
+				// The lane set may have changed after the snapshot was built.
+				// Remove this account from the pass rather than forwarding through
+				// its legacy proxy.
+				selectedID := selected.account.ID
+				available = removeAccountWithLoadID(available, selectedID)
+				continue
+			}
+			result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency, selected.account)
 			if err == nil && result.Acquired {
 				// 会话数量限制检查
 				if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
@@ -733,7 +820,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					if sessionHash != "" && s.cache != nil {
 						_ = s.bindGatewayStickySessionDuringSelection(ctx, groupID, sessionHash, selected.account.ID)
 					}
-					return s.newSelectionResult(ctx, selected.account, true, result.ReleaseFunc, nil)
+					if result.Lane != nil {
+						s.bindGatewayLaneStickyDuringSelection(ctx, groupID, requestedModel, sessionHash, selected.account, result.Lane)
+					}
+					return s.newSelectionResult(ctx, selected.account, true, result.ReleaseFunc, nil, admissionMaxConcurrencyArgs(result)...)
 				}
 			}
 
@@ -752,26 +842,31 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	// ============ Layer 3: 兜底排队 ============
 	s.sortCandidatesForFallback(candidates, preferOAuth, cfg.FallbackSelectionMode)
 	for _, acc := range candidates {
+		if !s.prepareGatewayLaneHint(ctx, groupID, requestedModel, sessionHash, acc, stickyLaneBinding) {
+			continue
+		}
 		// 会话数量限制检查（等待计划也需要占用会话配额）
 		if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
 			continue // 会话限制已满，尝试下一个账号
 		}
-		return s.newSelectionResult(ctx, acc, false, nil, &AccountWaitPlan{
-			AccountID:      acc.ID,
-			MaxConcurrency: acc.Concurrency,
-			Timeout:        cfg.FallbackWaitTimeout,
-			MaxWaiting:     cfg.FallbackMaxWaiting,
-		})
+		plan, waitable := s.gatewayWaitPlanForAccount(ctx, acc, cfg.FallbackWaitTimeout, cfg.FallbackMaxWaiting)
+		if !waitable {
+			continue
+		}
+		return s.newSelectionResult(ctx, acc, false, nil, plan)
 	}
 	return nil, ErrNoAvailableAccounts
 }
 
-func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates []*Account, groupID *int64, sessionHash string, preferOAuth bool) (*AccountSelectionResult, bool, error) {
+func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates []*Account, groupID *int64, requestedModel, sessionHash string, preferOAuth bool) (*AccountSelectionResult, bool, error) {
 	ordered := append([]*Account(nil), candidates...)
 	sortAccountsByPriorityAndLastUsed(ordered, preferOAuth)
 
 	for _, acc := range ordered {
-		result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency)
+		if !s.prepareGatewayLaneHint(ctx, groupID, requestedModel, sessionHash, acc, LaneStickyBinding{}) {
+			continue
+		}
+		result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency, acc)
 		if err == nil && result.Acquired {
 			// 会话数量限制检查
 			if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
@@ -781,7 +876,10 @@ func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates
 			if sessionHash != "" && s.cache != nil {
 				_ = s.bindGatewayStickySessionDuringSelection(ctx, groupID, sessionHash, acc.ID)
 			}
-			selection, err := s.newSelectionResult(ctx, acc, true, result.ReleaseFunc, nil)
+			if result.Lane != nil {
+				s.bindGatewayLaneStickyDuringSelection(ctx, groupID, requestedModel, sessionHash, acc, result.Lane)
+			}
+			selection, err := s.newSelectionResult(ctx, acc, true, result.ReleaseFunc, nil, admissionMaxConcurrencyArgs(result)...)
 			if err != nil {
 				return nil, false, err
 			}
@@ -838,8 +936,35 @@ func (s *GatewayService) ResolveGroupByID(ctx context.Context, groupID int64) (*
 	return s.resolveGroupByID(ctx, groupID)
 }
 
+// modelRoutingAppliesToPlatform 判定模型路由规则是否适用于本次请求。
+//
+// 路由规则的存储与查表（Group.ModelRouting / GetRoutingAccountIDs）本身与平台无关，
+// 早期只有 Anthropic 目标平台会读取它。OpenAI 分组同样存在“同一个公开别名由不同账号
+// 映射到不同上游模型”的故障转移写法，需要显式路由来指定谁是主、谁是备，因此这里把
+// Anthropic 与 OpenAI 一并放行。
+//
+// targetPlatform 是请求解析后的目标平台；groupPlatform 是分组自身的平台。composite
+// 分组不限定自身平台，只要目标平台落在放行集合内即可复用其规则。
+func modelRoutingAppliesToPlatform(targetPlatform, groupPlatform string) bool {
+	if !modelRoutingAppliesToTargetPlatform(targetPlatform) {
+		return false
+	}
+	return groupPlatform == targetPlatform || groupPlatform == PlatformComposite
+}
+
+// modelRoutingAppliesToTargetPlatform 是放行平台集合的唯一定义处：新增平台只改这里。
+// 在只知道目标平台、还没取到分组的位置（调试日志、取分组前的短路）单独判定用。
+func modelRoutingAppliesToTargetPlatform(targetPlatform string) bool {
+	switch targetPlatform {
+	case PlatformAnthropic, PlatformOpenAI:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *GatewayService) routingAccountIDsForRequest(ctx context.Context, groupID *int64, requestedModel string, platform string) []int64 {
-	if groupID == nil || requestedModel == "" || platform != PlatformAnthropic {
+	if groupID == nil || requestedModel == "" || !modelRoutingAppliesToTargetPlatform(platform) {
 		return nil
 	}
 	group, err := s.resolveGroupByID(ctx, *groupID)
@@ -849,11 +974,11 @@ func (s *GatewayService) routingAccountIDsForRequest(ctx context.Context, groupI
 		}
 		return nil
 	}
-	// Model routing applies only to requests resolved to Anthropic. Composite
-	// groups may still use those rules once their model resolved to Anthropic.
-	if group.Platform != PlatformAnthropic && group.Platform != PlatformComposite {
+	// 路由规则适用于解析到 Anthropic 或 OpenAI 的请求；composite 分组在其模型解析到
+	// 上述平台后同样可以复用这些规则。
+	if !modelRoutingAppliesToPlatform(platform, group.Platform) {
 		if s.debugModelRoutingEnabled() {
-			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] skip: non-anthropic group platform: group_id=%d group_platform=%s model=%s", group.ID, group.Platform, requestedModel)
+			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] skip: group platform not eligible: group_id=%d group_platform=%s target_platform=%s model=%s", group.ID, group.Platform, platform, requestedModel)
 		}
 		return nil
 	}
@@ -1124,9 +1249,15 @@ func (s *GatewayService) isAccountInGroup(account *Account, groupID *int64) bool
 	return false
 }
 
-func (s *GatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
+func (s *GatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, accountOpt ...*Account) (*AcquireResult, error) {
+	if len(accountOpt) > 0 && accountOpt[0] != nil && accountOpt[0].ID == accountID {
+		// Lane projection must happen even when this lightweight service has no
+		// concurrency backend.  Otherwise a direct/proxy lane-enabled account
+		// silently falls back to its legacy account proxy.
+		return acquireAccountProxyLaneSlot(ctx, s.concurrencyService, accountOpt[0], AccountProxyLaneSessionFromContext(ctx), maxConcurrency)
+	}
 	if s.concurrencyService == nil {
-		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}, MaxConcurrency: maxConcurrency, MaxConcurrencySet: true}, nil
 	}
 	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
 }
@@ -1435,6 +1566,28 @@ func (s *GatewayService) checkAndRegisterSession(ctx context.Context, account *A
 	return allowed
 }
 
+// ReleaseAccountSession 立即释放会话槽（不等待空闲超时）
+// 供 handler 在请求最终失败（选号成功但转发失败/客户端中断）时调用：
+// 上游从未真正服务该会话，若继续占槽，max_sessions 受限的账号会被失败请求的
+// session hash 卡满整个空闲窗口，后续新会话全部被拒。
+// 适用条件与 checkAndRegisterSession 对齐；不适用账号为 no-op，幂等可安全重复调用。
+func (s *GatewayService) ReleaseAccountSession(ctx context.Context, account *Account, sessionID string) {
+	if s == nil || s.sessionLimitCache == nil || account == nil || sessionID == "" {
+		return
+	}
+	if !account.IsAnthropicOAuthOrSetupToken() {
+		return
+	}
+	if account.GetMaxSessions() <= 0 {
+		return
+	}
+	if err := s.sessionLimitCache.UnregisterSession(ctx, account.ID, sessionID); err != nil {
+		slog.Debug("session_limit.release_failed",
+			"account_id", account.ID,
+			"error", err)
+	}
+}
+
 func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
 	var (
 		account *Account
@@ -1496,16 +1649,90 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 	return hydrated, nil
 }
 
-func (s *GatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {
+func (s *GatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan, explicitAdmissionMax ...int) (*AccountSelectionResult, error) {
+	admissionMax, admissionMaxSet := selectionAdmissionMaxConcurrency(account, waitPlan, explicitAdmissionMax...)
+	// Project a deterministic lane before hydration for every lane-enabled
+	// account.  This also prevents a direct lane from inheriting the account's
+	// legacy proxy when the scheduler snapshot is briefly stale.
+	if account != nil && account.HasProxyLanes() && account.SelectedProxyLane == nil {
+		if lane := selectAccountProxyLaneForWait(account, AccountProxyLaneSessionFromContext(ctx)); lane == nil {
+			if acquired && release != nil {
+				release()
+			}
+			return nil, ErrNoSchedulableAccountProxyLane
+		}
+	}
 	hydrated, err := s.hydrateSelectedAccount(ctx, account)
 	if err != nil {
+		if acquired && release != nil {
+			release()
+		}
 		return nil, err
 	}
+	// A failed immediate acquire still needs a deterministic lane for the wait
+	// path.  For an acquired result the caller has already projected the exact
+	// lane chosen by Redis; hydration must preserve that choice.
+	if hydrated != nil {
+		// Validate the concrete lane before constructing a selection result. The
+		// scheduler metadata cache intentionally strips Proxy objects, so this
+		// helper may perform one authoritative account-repository read rather than
+		// allowing AccountProxyURL to interpret ProxyID-only metadata as direct.
+		validateHydrated := func(candidate *Account) (*Account, error) {
+			repo := s.accountRepo
+			if repo == nil && s.schedulerSnapshot != nil {
+				repo = s.schedulerSnapshot.accountRepo
+			}
+			return ensureSelectedAccountProxyLaneHydratedAuthoritative(ctx, account, candidate, repo)
+		}
+
+		if hydrated.HasProxyLanes() && hydrated.SelectedProxyLane == nil {
+			lane := selectAccountProxyLaneForWait(hydrated, AccountProxyLaneSessionFromContext(ctx))
+			if lane == nil {
+				if acquired && release != nil {
+					release()
+				}
+				return nil, ErrNoSchedulableAccountProxyLane
+			}
+			if waitPlan != nil {
+				waitPlan.LaneID = lane.ID
+				waitPlan.MaxConcurrency = lane.Concurrency
+			}
+		}
+
+		if (account != nil && account.SelectedProxyLane != nil) || hydrated.SelectedProxyLane != nil {
+			selectedLaneID := int64(0)
+			if account != nil && account.SelectedProxyLane != nil {
+				selectedLaneID = account.SelectedProxyLane.ID
+			} else {
+				selectedLaneID = hydrated.SelectedProxyLane.ID
+			}
+			validated, validateErr := validateHydrated(hydrated)
+			if validateErr != nil {
+				if acquired && release != nil {
+					release()
+				}
+				return nil, validateErr
+			}
+			hydrated = validated
+			if hydrated == nil || hydrated.SelectedProxyLane == nil || hydrated.SelectedProxyLane.ID != selectedLaneID {
+				if acquired && release != nil {
+					release()
+				}
+				return nil, ErrNoSchedulableAccountProxyLane
+			}
+		}
+		if waitPlan != nil && hydrated.SelectedProxyLane != nil && laneConcurrencySupported(s.concurrencyService) {
+			waitPlan.LaneID = hydrated.SelectedProxyLane.ID
+			waitPlan.MaxConcurrency = hydrated.SelectedProxyLane.Concurrency
+		}
+	}
 	return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-		Account:     hydrated,
-		Acquired:    acquired,
-		ReleaseFunc: release,
-		WaitPlan:    waitPlan,
+		Account:                    hydrated,
+		Acquired:                   acquired,
+		ReleaseFunc:                release,
+		WaitPlan:                   waitPlan,
+		AdmissionMaxConcurrency:    admissionMax,
+		AdmissionMaxConcurrencySet: admissionMaxSet,
 	}), nil
 }
 
@@ -1547,6 +1774,16 @@ func filterByMinLoadRate(accounts []accountWithLoad) []accountWithLoad {
 		}
 	}
 	return result
+}
+
+func removeAccountWithLoadID(accounts []accountWithLoad, accountID int64) []accountWithLoad {
+	filtered := make([]accountWithLoad, 0, len(accounts))
+	for _, item := range accounts {
+		if item.account == nil || item.account.ID != accountID {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 // filterBySoonestReset 过滤出「会话窗口最早重置」的账号集合（use-it-or-lose-it）。
@@ -2532,6 +2769,11 @@ func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 // isModelSupportedByAccountWithContext 根据账户平台检查模型支持（带 context）
 // 对于 Antigravity 平台，会先获取映射后的最终模型名（包括 thinking 后缀）再检查支持
 func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Context, account *Account, requestedModel string) bool {
+	if source, ok := CompositeRouteSourceFromContext(ctx); ok && source == CompositeRouteSourceAccount {
+		if publicModel, modelOK := RequestedPublicModelFromContext(ctx); modelOK && !explicitModelMappingClaims(*account, publicModel) {
+			return false
+		}
+	}
 	if account.Platform == PlatformAntigravity {
 		if strings.TrimSpace(requestedModel) == "" {
 			return true

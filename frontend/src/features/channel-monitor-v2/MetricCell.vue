@@ -4,7 +4,7 @@
     :title="title || undefined"
   >
     <div
-      v-if="state"
+      v-if="resolvedState"
       class="scheme3-v2-metric-dot"
       :class="dotClass"
       aria-hidden="true"
@@ -56,18 +56,25 @@ const detailParts = computed(() => {
     .filter(Boolean)
 })
 
+const missingValue = computed(() => {
+  const value = (props.value || '').trim()
+  return value === '' || value === '-' || value === '—'
+})
+
+const resolvedState = computed(() => (missingValue.value ? undefined : props.state))
+
 const stateClass = computed(() => {
-  if (!props.state) return 'is-default'
-  if (props.state === 'healthy') return 'is-healthy'
-  if (props.state === 'warning') return 'is-warning'
-  if (props.state === 'critical') return 'is-critical'
+  if (!resolvedState.value) return missingValue.value ? 'is-muted text-gray-500 dark:text-dark-400' : 'is-unknown'
+  if (resolvedState.value === 'healthy') return 'is-healthy'
+  if (resolvedState.value === 'warning') return 'is-warning'
+  if (resolvedState.value === 'critical') return 'is-critical'
   return 'is-unknown'
 })
 
 const dotClass = computed(() => {
-  if (props.state === 'healthy') return 'is-healthy'
-  if (props.state === 'warning') return 'is-warning'
-  if (props.state === 'critical') return 'is-critical'
+  if (resolvedState.value === 'healthy') return 'is-healthy'
+  if (resolvedState.value === 'warning') return 'is-warning'
+  if (resolvedState.value === 'critical') return 'is-critical'
   return 'is-unknown'
 })
 </script>
@@ -122,6 +129,7 @@ const dotClass = computed(() => {
 .scheme3-v2-metric-value.is-healthy { color: #1e5c42 !important; }
 .scheme3-v2-metric-value.is-warning { color: #b7791f !important; }
 .scheme3-v2-metric-value.is-critical { color: #9e4d3d !important; }
+.scheme3-v2-metric-value.is-muted { color: #a49e90 !important; }
 .scheme3-v2-metric-detail { color: #a49e90 !important; font-size: .62rem; line-height: 1.35; }
 :global(.dark .scheme3-v2-metric-cell) { border-color: #47443a; background: #24231f; box-shadow: 0 12px 24px rgba(0, 0, 0, .2); }
 :global(.dark .scheme3-v2-metric-cell::after) { background: #8fc2a5; }
@@ -130,4 +138,5 @@ const dotClass = computed(() => {
 :global(.dark .scheme3-v2-metric-value.is-healthy) { color: #8fc2a5 !important; }
 :global(.dark .scheme3-v2-metric-value.is-warning) { color: #d3a55a !important; }
 :global(.dark .scheme3-v2-metric-value.is-critical) { color: #d38b79 !important; }
+:global(.dark .scheme3-v2-metric-value.is-muted) { color: #aaa69a !important; }
 </style>

@@ -35,6 +35,12 @@ type EmailBroadcastService struct {
 	running map[int64]struct{}
 }
 
+const (
+	emailBroadcastTimeout      = 30 * time.Minute
+	emailBroadcastSendAttempts = 3
+	emailBroadcastWorkerCount  = 4
+)
+
 // EmailBroadcastSendInput 发送一次广播邮件所需的参数集合 (供 handler 调用)。
 type EmailBroadcastSendInput struct {
 	Subject          string
@@ -65,7 +71,7 @@ func NewEmailBroadcastService(
 		emailService:         emailService,
 		settingRepo:          settingRepo,
 		htmlSanitizer:        policy,
-		sendIntervalPerEmail: 200 * time.Millisecond,
+		sendIntervalPerEmail: 500 * time.Millisecond,
 		running:              make(map[int64]struct{}),
 	}
 }
@@ -196,7 +202,7 @@ func (s *EmailBroadcastService) runBroadcast(id int64) {
 	}
 	defer s.unmarkRunning(id)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), emailBroadcastTimeout)
 	defer cancel()
 
 	defer func() {
@@ -268,36 +274,69 @@ func (s *EmailBroadcastService) runBroadcast(id int64) {
 		StartedAt:    &started,
 	})
 
-	success, failed := 0, 0
-	for idx, addr := range emails {
-		if err := s.emailService.SendEmailWithConfigAndContentType(
-			smtpConfig,
-			addr,
-			broadcast.Subject,
-			htmlBody,
-			"text/html; charset=UTF-8",
-		); err != nil {
-			failed++
-			logger.L().Warn("email_broadcast.send_failed",
-				zap.Int64("broadcast_id", id),
-				zap.String("recipient", addr),
-				zap.Error(err))
-		} else {
-			success++
-		}
+	type deliveryResult struct {
+		recipient string
+		err       error
+	}
+	workerCount := min(emailBroadcastWorkerCount, total)
+	jobs := make(chan string)
+	results := make(chan deliveryResult, total)
+	var workers sync.WaitGroup
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for addr := range jobs {
+				results <- deliveryResult{
+					recipient: addr,
+					err:       s.sendBroadcastEmail(ctx, smtpConfig, addr, broadcast.Subject, htmlBody),
+				}
+			}
+		}()
+	}
 
-		// Throttle to avoid SMTP rate limits; skip after last message.
-		if idx < total-1 && s.sendIntervalPerEmail > 0 {
+	queued := 0
+	var interval <-chan time.Time
+	var ticker *time.Ticker
+	if s.sendIntervalPerEmail > 0 {
+		ticker = time.NewTicker(s.sendIntervalPerEmail)
+		defer ticker.Stop()
+		interval = ticker.C
+	}
+	for _, addr := range emails {
+		if queued > 0 && interval != nil {
 			select {
 			case <-ctx.Done():
-				failed += total - idx - 1
-				goto done
-			case <-time.After(s.sendIntervalPerEmail):
+				goto dispatchDone
+			case <-interval:
 			}
+		}
+		select {
+		case <-ctx.Done():
+			goto dispatchDone
+		case jobs <- addr:
+			queued++
 		}
 	}
 
-done:
+dispatchDone:
+	close(jobs)
+	workers.Wait()
+	close(results)
+
+	success, failed := 0, total-queued
+	for result := range results {
+		if result.err != nil {
+			failed++
+			logger.L().Warn("email_broadcast.send_failed",
+				zap.Int64("broadcast_id", id),
+				zap.String("recipient", result.recipient),
+				zap.Error(result.err))
+			continue
+		}
+		success++
+	}
+
 	finished := time.Now()
 	finalStatus := EmailBroadcastStatusCompleted
 	if success == 0 && failed > 0 {
@@ -316,6 +355,36 @@ done:
 		zap.Int("success", success),
 		zap.Int("failed", failed),
 		zap.String("status", finalStatus))
+}
+
+// sendBroadcastEmail retries transient SMTP and transport failures. Each retry
+// opens a fresh SMTP session because a failed DATA transaction leaves the prior
+// session state undefined on a number of providers.
+func (s *EmailBroadcastService) sendBroadcastEmail(ctx context.Context, smtpConfig *SMTPConfig, to, subject, htmlBody string) error {
+	var lastErr error
+	for attempt := 1; attempt <= emailBroadcastSendAttempts; attempt++ {
+		lastErr = s.emailService.SendEmailWithConfigAndContentType(
+			smtpConfig,
+			to,
+			subject,
+			htmlBody,
+			"text/html; charset=UTF-8",
+		)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == emailBroadcastSendAttempts {
+			break
+		}
+
+		backoff := time.Duration(attempt) * time.Second
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	return lastErr
 }
 
 // resolveRecipientEmails 把 broadcast 描述的"全部用户 / 指定 IDs"展开为收件人邮箱列表。

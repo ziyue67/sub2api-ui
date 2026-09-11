@@ -153,6 +153,7 @@ type modelDef struct {
 
 // Antigravity 支持的 Claude 模型
 var claudeModels = []modelDef{
+	{ID: "claude-fable-5-1", DisplayName: "Claude Fable 5.1", CreatedAt: "2026-09-01T00:00:00Z"},
 	{ID: "claude-fable-5", DisplayName: "Claude Fable 5", CreatedAt: "2026-06-09T00:00:00Z"},
 	{ID: "claude-opus-4-5-thinking", DisplayName: "Claude Opus 4.5 Thinking", CreatedAt: "2025-11-01T00:00:00Z"},
 	{ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5", CreatedAt: "2025-09-29T00:00:00Z"},
@@ -183,6 +184,16 @@ var geminiModels = []modelDef{
 	{ID: "gemini-3.6-flash-low", DisplayName: "Gemini 3.6 Flash Low", CreatedAt: "2026-07-21T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.6-flash-medium", DisplayName: "Gemini 3.6 Flash Medium", CreatedAt: "2026-07-21T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.6-flash-tiered", DisplayName: "Gemini 3.6 Flash", CreatedAt: "2026-07-21T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.7-flash", DisplayName: "Gemini 3.7 Flash", CreatedAt: "2026-08-13T00:00:00Z"},
+	{ID: "gemini-3.7-flash-high", DisplayName: "Gemini 3.7 Flash High", CreatedAt: "2026-08-13T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.7-flash-low", DisplayName: "Gemini 3.7 Flash Low", CreatedAt: "2026-08-13T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.7-flash-medium", DisplayName: "Gemini 3.7 Flash Medium", CreatedAt: "2026-08-13T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.7-flash-tiered", DisplayName: "Gemini 3.7 Flash", CreatedAt: "2026-08-13T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.8-flash", DisplayName: "Gemini 3.8 Flash", CreatedAt: "2026-09-02T00:00:00Z"},
+	{ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash High", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.8-flash-low", DisplayName: "Gemini 3.8 Flash Low", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.8-flash-medium", DisplayName: "Gemini 3.8 Flash Medium", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.8-flash-tiered", DisplayName: "Gemini 3.8 Flash", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3-pro-preview", DisplayName: "Gemini 3 Pro Preview", CreatedAt: "2025-06-01T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3-pro-image", DisplayName: "Gemini 3 Pro Image", CreatedAt: "2025-06-01T00:00:00Z"},
 }
@@ -247,6 +258,52 @@ func FallbackGeminiModel(model string) GeminiModel {
 		name = "models/" + model
 	}
 	return GeminiModel{Name: name, SupportedGenerationMethods: defaultGeminiMethods}
+}
+
+// geminiFlashTierBaseModels 列出仅由 Antigravity 提供、公共 Gemini API
+// （AI Studio / Gemini CLI / Code Assist）并不存在的 Flash 分档系列基座。
+//
+// 这些 ID 只在 Antigravity 上游可用，因此不能按 "gemini-" 前缀归类到 gemini
+// 平台：composite 分组一旦把它们解析成 gemini，调度阶段就会跳过所有
+// antigravity 账号，客户端只能拿到 400/404「不支持该模型」。
+var geminiFlashTierBaseModels = []string{
+	"gemini-3.6-flash",
+	"gemini-3.7-flash",
+	"gemini-3.8-flash",
+}
+
+// geminiFlashTierSuffixes 是上述基座模型的推理分档后缀（空串表示基座本身）。
+var geminiFlashTierSuffixes = []string{"", "-high", "-low", "-medium", "-tiered"}
+
+// IsAntigravityOnlyGeminiModel 判断模型是否为「仅 Antigravity 提供」的 Gemini 模型。
+// 采用精确白名单而非前缀匹配：gemini-2.5-*/gemini-3-flash 等同时存在于公共
+// Gemini 通道的模型必须保持原有平台归属，避免改动既有部署的路由语义。
+func IsAntigravityOnlyGeminiModel(modelID string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(modelID))
+	normalized = strings.TrimPrefix(normalized, "models/")
+	if normalized == "" {
+		return false
+	}
+	for _, base := range geminiFlashTierBaseModels {
+		for _, suffix := range geminiFlashTierSuffixes {
+			if normalized == base+suffix {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AntigravityOnlyGeminiModels 返回全部「仅 Antigravity 提供」的 Gemini 模型 ID，
+// 供后端注册表与测试共享同一份清单。
+func AntigravityOnlyGeminiModels() []string {
+	out := make([]string, 0, len(geminiFlashTierBaseModels)*len(geminiFlashTierSuffixes))
+	for _, base := range geminiFlashTierBaseModels {
+		for _, suffix := range geminiFlashTierSuffixes {
+			out = append(out, base+suffix)
+		}
+	}
+	return out
 }
 
 // IsGeminiReasoningModel 判断是否为不支持参数和强制 ToolConfig 的 Gemini 推理模型

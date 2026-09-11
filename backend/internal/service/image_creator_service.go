@@ -14,6 +14,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -1732,6 +1733,43 @@ func validateImageCreatorSize(size string) error {
 		return infraerrors.BadRequest("INVALID_IMAGE_SIZE", "width and height must be multiples of 16, no side may exceed 3840px, the aspect ratio must not exceed 3:1, and the maximum is 8294400 pixels")
 	}
 	return nil
+}
+
+// imageCreatorSizeForResolutionAndAspectRatio converts canvas presets to the
+// explicit WIDTHxHEIGHT format accepted by the image gateway.
+func imageCreatorSizeForResolutionAndAspectRatio(resolution, aspectRatio string) string {
+	base := 1536
+	switch strings.ToUpper(strings.TrimSpace(resolution)) {
+	case "2K":
+		base = 2048
+	case "4K":
+		base = 3840
+	}
+	parts := strings.Split(strings.TrimSpace(aspectRatio), ":")
+	ratioWidth, ratioHeight := 1, 1
+	if len(parts) == 2 {
+		if value, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil && value > 0 {
+			ratioWidth = value
+		}
+		if value, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && value > 0 {
+			ratioHeight = value
+		}
+	}
+	if ratioWidth == ratioHeight && strings.EqualFold(strings.TrimSpace(resolution), "1K") {
+		base = 1024
+	}
+	const maxPixels = 8_294_400
+	scale := math.Min(float64(base)/float64(maxInt(ratioWidth, ratioHeight)), math.Sqrt(float64(maxPixels)/float64(ratioWidth*ratioHeight)))
+	width := maxInt(16, int(math.Round(float64(ratioWidth)*scale/16))*16)
+	height := maxInt(16, int(math.Round(float64(ratioHeight)*scale/16))*16)
+	for width*height > maxPixels {
+		if width >= height {
+			width -= 16
+		} else {
+			height -= 16
+		}
+	}
+	return fmt.Sprintf("%dx%d", width, height)
 }
 
 func normalizeImageCreatorStoredOutputFormat(format string) string {

@@ -64,6 +64,34 @@ func (_c *AnnouncementCreate) SetNillableNotifyMode(v *string) *AnnouncementCrea
 	return _c
 }
 
+// SetTickerEnabled sets the "ticker_enabled" field.
+func (_c *AnnouncementCreate) SetTickerEnabled(v bool) *AnnouncementCreate {
+	_c.mutation.SetTickerEnabled(v)
+	return _c
+}
+
+// SetNillableTickerEnabled sets the "ticker_enabled" field if the given value is not nil.
+func (_c *AnnouncementCreate) SetNillableTickerEnabled(v *bool) *AnnouncementCreate {
+	if v != nil {
+		_c.SetTickerEnabled(*v)
+	}
+	return _c
+}
+
+// SetPriority sets the "priority" field.
+func (_c *AnnouncementCreate) SetPriority(v int) *AnnouncementCreate {
+	_c.mutation.SetPriority(v)
+	return _c
+}
+
+// SetNillablePriority sets the "priority" field if the given value is not nil.
+func (_c *AnnouncementCreate) SetNillablePriority(v *int) *AnnouncementCreate {
+	if v != nil {
+		_c.SetPriority(*v)
+	}
+	return _c
+}
+
 // SetTargeting sets the "targeting" field.
 func (_c *AnnouncementCreate) SetTargeting(v domain.AnnouncementTargeting) *AnnouncementCreate {
 	_c.mutation.SetTargeting(v)
@@ -220,6 +248,14 @@ func (_c *AnnouncementCreate) defaults() {
 		v := announcement.DefaultNotifyMode
 		_c.mutation.SetNotifyMode(v)
 	}
+	if _, ok := _c.mutation.TickerEnabled(); !ok {
+		v := announcement.DefaultTickerEnabled
+		_c.mutation.SetTickerEnabled(v)
+	}
+	if _, ok := _c.mutation.Priority(); !ok {
+		v := announcement.DefaultPriority
+		_c.mutation.SetPriority(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := announcement.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -263,6 +299,12 @@ func (_c *AnnouncementCreate) check() error {
 		if err := announcement.NotifyModeValidator(v); err != nil {
 			return &ValidationError{Name: "notify_mode", err: fmt.Errorf(`ent: validator failed for field "Announcement.notify_mode": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.TickerEnabled(); !ok {
+		return &ValidationError{Name: "ticker_enabled", err: errors.New(`ent: missing required field "Announcement.ticker_enabled"`)}
+	}
+	if _, ok := _c.mutation.Priority(); !ok {
+		return &ValidationError{Name: "priority", err: errors.New(`ent: missing required field "Announcement.priority"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "Announcement.created_at"`)}
@@ -312,6 +354,14 @@ func (_c *AnnouncementCreate) createSpec() (*Announcement, *sqlgraph.CreateSpec)
 	if value, ok := _c.mutation.NotifyMode(); ok {
 		_spec.SetField(announcement.FieldNotifyMode, field.TypeString, value)
 		_node.NotifyMode = value
+	}
+	if value, ok := _c.mutation.TickerEnabled(); ok {
+		_spec.SetField(announcement.FieldTickerEnabled, field.TypeBool, value)
+		_node.TickerEnabled = value
+	}
+	if value, ok := _c.mutation.Priority(); ok {
+		_spec.SetField(announcement.FieldPriority, field.TypeInt, value)
+		_node.Priority = value
 	}
 	if value, ok := _c.mutation.Targeting(); ok {
 		_spec.SetField(announcement.FieldTargeting, field.TypeJSON, value)
@@ -454,6 +504,36 @@ func (u *AnnouncementUpsert) SetNotifyMode(v string) *AnnouncementUpsert {
 // UpdateNotifyMode sets the "notify_mode" field to the value that was provided on create.
 func (u *AnnouncementUpsert) UpdateNotifyMode() *AnnouncementUpsert {
 	u.SetExcluded(announcement.FieldNotifyMode)
+	return u
+}
+
+// SetTickerEnabled sets the "ticker_enabled" field.
+func (u *AnnouncementUpsert) SetTickerEnabled(v bool) *AnnouncementUpsert {
+	u.Set(announcement.FieldTickerEnabled, v)
+	return u
+}
+
+// UpdateTickerEnabled sets the "ticker_enabled" field to the value that was provided on create.
+func (u *AnnouncementUpsert) UpdateTickerEnabled() *AnnouncementUpsert {
+	u.SetExcluded(announcement.FieldTickerEnabled)
+	return u
+}
+
+// SetPriority sets the "priority" field.
+func (u *AnnouncementUpsert) SetPriority(v int) *AnnouncementUpsert {
+	u.Set(announcement.FieldPriority, v)
+	return u
+}
+
+// UpdatePriority sets the "priority" field to the value that was provided on create.
+func (u *AnnouncementUpsert) UpdatePriority() *AnnouncementUpsert {
+	u.SetExcluded(announcement.FieldPriority)
+	return u
+}
+
+// AddPriority adds v to the "priority" field.
+func (u *AnnouncementUpsert) AddPriority(v int) *AnnouncementUpsert {
+	u.Add(announcement.FieldPriority, v)
 	return u
 }
 
@@ -669,6 +749,41 @@ func (u *AnnouncementUpsertOne) SetNotifyMode(v string) *AnnouncementUpsertOne {
 func (u *AnnouncementUpsertOne) UpdateNotifyMode() *AnnouncementUpsertOne {
 	return u.Update(func(s *AnnouncementUpsert) {
 		s.UpdateNotifyMode()
+	})
+}
+
+// SetTickerEnabled sets the "ticker_enabled" field.
+func (u *AnnouncementUpsertOne) SetTickerEnabled(v bool) *AnnouncementUpsertOne {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.SetTickerEnabled(v)
+	})
+}
+
+// UpdateTickerEnabled sets the "ticker_enabled" field to the value that was provided on create.
+func (u *AnnouncementUpsertOne) UpdateTickerEnabled() *AnnouncementUpsertOne {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.UpdateTickerEnabled()
+	})
+}
+
+// SetPriority sets the "priority" field.
+func (u *AnnouncementUpsertOne) SetPriority(v int) *AnnouncementUpsertOne {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.SetPriority(v)
+	})
+}
+
+// AddPriority adds v to the "priority" field.
+func (u *AnnouncementUpsertOne) AddPriority(v int) *AnnouncementUpsertOne {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.AddPriority(v)
+	})
+}
+
+// UpdatePriority sets the "priority" field to the value that was provided on create.
+func (u *AnnouncementUpsertOne) UpdatePriority() *AnnouncementUpsertOne {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.UpdatePriority()
 	})
 }
 
@@ -1069,6 +1184,41 @@ func (u *AnnouncementUpsertBulk) SetNotifyMode(v string) *AnnouncementUpsertBulk
 func (u *AnnouncementUpsertBulk) UpdateNotifyMode() *AnnouncementUpsertBulk {
 	return u.Update(func(s *AnnouncementUpsert) {
 		s.UpdateNotifyMode()
+	})
+}
+
+// SetTickerEnabled sets the "ticker_enabled" field.
+func (u *AnnouncementUpsertBulk) SetTickerEnabled(v bool) *AnnouncementUpsertBulk {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.SetTickerEnabled(v)
+	})
+}
+
+// UpdateTickerEnabled sets the "ticker_enabled" field to the value that was provided on create.
+func (u *AnnouncementUpsertBulk) UpdateTickerEnabled() *AnnouncementUpsertBulk {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.UpdateTickerEnabled()
+	})
+}
+
+// SetPriority sets the "priority" field.
+func (u *AnnouncementUpsertBulk) SetPriority(v int) *AnnouncementUpsertBulk {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.SetPriority(v)
+	})
+}
+
+// AddPriority adds v to the "priority" field.
+func (u *AnnouncementUpsertBulk) AddPriority(v int) *AnnouncementUpsertBulk {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.AddPriority(v)
+	})
+}
+
+// UpdatePriority sets the "priority" field to the value that was provided on create.
+func (u *AnnouncementUpsertBulk) UpdatePriority() *AnnouncementUpsertBulk {
+	return u.Update(func(s *AnnouncementUpsert) {
+		s.UpdatePriority()
 	})
 }
 

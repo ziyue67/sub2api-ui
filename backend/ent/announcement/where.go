@@ -75,6 +75,16 @@ func NotifyMode(v string) predicate.Announcement {
 	return predicate.Announcement(sql.FieldEQ(FieldNotifyMode, v))
 }
 
+// TickerEnabled applies equality check predicate on the "ticker_enabled" field. It's identical to TickerEnabledEQ.
+func TickerEnabled(v bool) predicate.Announcement {
+	return predicate.Announcement(sql.FieldEQ(FieldTickerEnabled, v))
+}
+
+// Priority applies equality check predicate on the "priority" field. It's identical to PriorityEQ.
+func Priority(v int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldEQ(FieldPriority, v))
+}
+
 // StartsAt applies equality check predicate on the "starts_at" field. It's identical to StartsAtEQ.
 func StartsAt(v time.Time) predicate.Announcement {
 	return predicate.Announcement(sql.FieldEQ(FieldStartsAt, v))
@@ -363,6 +373,56 @@ func NotifyModeEqualFold(v string) predicate.Announcement {
 // NotifyModeContainsFold applies the ContainsFold predicate on the "notify_mode" field.
 func NotifyModeContainsFold(v string) predicate.Announcement {
 	return predicate.Announcement(sql.FieldContainsFold(FieldNotifyMode, v))
+}
+
+// TickerEnabledEQ applies the EQ predicate on the "ticker_enabled" field.
+func TickerEnabledEQ(v bool) predicate.Announcement {
+	return predicate.Announcement(sql.FieldEQ(FieldTickerEnabled, v))
+}
+
+// TickerEnabledNEQ applies the NEQ predicate on the "ticker_enabled" field.
+func TickerEnabledNEQ(v bool) predicate.Announcement {
+	return predicate.Announcement(sql.FieldNEQ(FieldTickerEnabled, v))
+}
+
+// PriorityEQ applies the EQ predicate on the "priority" field.
+func PriorityEQ(v int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldEQ(FieldPriority, v))
+}
+
+// PriorityNEQ applies the NEQ predicate on the "priority" field.
+func PriorityNEQ(v int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldNEQ(FieldPriority, v))
+}
+
+// PriorityIn applies the In predicate on the "priority" field.
+func PriorityIn(vs ...int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldIn(FieldPriority, vs...))
+}
+
+// PriorityNotIn applies the NotIn predicate on the "priority" field.
+func PriorityNotIn(vs ...int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldNotIn(FieldPriority, vs...))
+}
+
+// PriorityGT applies the GT predicate on the "priority" field.
+func PriorityGT(v int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldGT(FieldPriority, v))
+}
+
+// PriorityGTE applies the GTE predicate on the "priority" field.
+func PriorityGTE(v int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldGTE(FieldPriority, v))
+}
+
+// PriorityLT applies the LT predicate on the "priority" field.
+func PriorityLT(v int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldLT(FieldPriority, v))
+}
+
+// PriorityLTE applies the LTE predicate on the "priority" field.
+func PriorityLTE(v int) predicate.Announcement {
+	return predicate.Announcement(sql.FieldLTE(FieldPriority, v))
 }
 
 // TargetingIsNil applies the IsNil predicate on the "targeting" field.

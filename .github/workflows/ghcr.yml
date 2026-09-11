@@ -20,8 +20,9 @@ jobs:
         id: tags
         shell: bash
         run: |
-          IMAGE="ghcr.io/ziyue67/sub2api-ui"
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
           VERSION="$(tr -d '[:space:]' < backend/cmd/server/VERSION)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           {
             echo "value<<EOF"
             echo "${IMAGE}:latest"
@@ -51,6 +52,7 @@ jobs:
           file: deploy/Dockerfile
           push: true
           build-args: |
+            VERSION=${{ steps.tags.outputs.version }}
             COMMIT=${{ github.sha }}
             NODE_MAX_OLD_SPACE_SIZE=4096
           tags: ${{ steps.tags.outputs.value }}

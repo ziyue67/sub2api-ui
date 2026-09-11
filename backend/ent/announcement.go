@@ -27,6 +27,10 @@ type Announcement struct {
 	Status string `json:"status,omitempty"`
 	// 通知模式: silent(仅铃铛), popup(弹窗提醒)
 	NotifyMode string `json:"notify_mode,omitempty"`
+	// 是否显示在用户端置顶轮播
+	TickerEnabled bool `json:"ticker_enabled,omitempty"`
+	// 轮播优先级，数值越大越靠前
+	Priority int `json:"priority,omitempty"`
 	// 展示条件（JSON 规则）
 	Targeting domain.AnnouncementTargeting `json:"targeting,omitempty"`
 	// 开始展示时间（为空表示立即生效）
@@ -72,7 +76,9 @@ func (*Announcement) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case announcement.FieldTargeting:
 			values[i] = new([]byte)
-		case announcement.FieldID, announcement.FieldCreatedBy, announcement.FieldUpdatedBy:
+		case announcement.FieldTickerEnabled:
+			values[i] = new(sql.NullBool)
+		case announcement.FieldID, announcement.FieldPriority, announcement.FieldCreatedBy, announcement.FieldUpdatedBy:
 			values[i] = new(sql.NullInt64)
 		case announcement.FieldTitle, announcement.FieldContent, announcement.FieldStatus, announcement.FieldNotifyMode:
 			values[i] = new(sql.NullString)
@@ -122,6 +128,18 @@ func (_m *Announcement) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field notify_mode", values[i])
 			} else if value.Valid {
 				_m.NotifyMode = value.String
+			}
+		case announcement.FieldTickerEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field ticker_enabled", values[i])
+			} else if value.Valid {
+				_m.TickerEnabled = value.Bool
+			}
+		case announcement.FieldPriority:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field priority", values[i])
+			} else if value.Valid {
+				_m.Priority = int(value.Int64)
 			}
 		case announcement.FieldTargeting:
 			if value, ok := values[i].(*[]byte); !ok {
@@ -223,6 +241,12 @@ func (_m *Announcement) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("notify_mode=")
 	builder.WriteString(_m.NotifyMode)
+	builder.WriteString(", ")
+	builder.WriteString("ticker_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.TickerEnabled))
+	builder.WriteString(", ")
+	builder.WriteString("priority=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Priority))
 	builder.WriteString(", ")
 	builder.WriteString("targeting=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Targeting))

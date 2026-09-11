@@ -86,6 +86,41 @@ func (_u *AnnouncementUpdate) SetNillableNotifyMode(v *string) *AnnouncementUpda
 	return _u
 }
 
+// SetTickerEnabled sets the "ticker_enabled" field.
+func (_u *AnnouncementUpdate) SetTickerEnabled(v bool) *AnnouncementUpdate {
+	_u.mutation.SetTickerEnabled(v)
+	return _u
+}
+
+// SetNillableTickerEnabled sets the "ticker_enabled" field if the given value is not nil.
+func (_u *AnnouncementUpdate) SetNillableTickerEnabled(v *bool) *AnnouncementUpdate {
+	if v != nil {
+		_u.SetTickerEnabled(*v)
+	}
+	return _u
+}
+
+// SetPriority sets the "priority" field.
+func (_u *AnnouncementUpdate) SetPriority(v int) *AnnouncementUpdate {
+	_u.mutation.ResetPriority()
+	_u.mutation.SetPriority(v)
+	return _u
+}
+
+// SetNillablePriority sets the "priority" field if the given value is not nil.
+func (_u *AnnouncementUpdate) SetNillablePriority(v *int) *AnnouncementUpdate {
+	if v != nil {
+		_u.SetPriority(*v)
+	}
+	return _u
+}
+
+// AddPriority adds value to the "priority" field.
+func (_u *AnnouncementUpdate) AddPriority(v int) *AnnouncementUpdate {
+	_u.mutation.AddPriority(v)
+	return _u
+}
+
 // SetTargeting sets the "targeting" field.
 func (_u *AnnouncementUpdate) SetTargeting(v domain.AnnouncementTargeting) *AnnouncementUpdate {
 	_u.mutation.SetTargeting(v)
@@ -332,6 +367,15 @@ func (_u *AnnouncementUpdate) sqlSave(ctx context.Context) (_node int, err error
 	if value, ok := _u.mutation.NotifyMode(); ok {
 		_spec.SetField(announcement.FieldNotifyMode, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.TickerEnabled(); ok {
+		_spec.SetField(announcement.FieldTickerEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Priority(); ok {
+		_spec.SetField(announcement.FieldPriority, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedPriority(); ok {
+		_spec.AddField(announcement.FieldPriority, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.Targeting(); ok {
 		_spec.SetField(announcement.FieldTargeting, field.TypeJSON, value)
 	}
@@ -489,6 +533,41 @@ func (_u *AnnouncementUpdateOne) SetNillableNotifyMode(v *string) *AnnouncementU
 	if v != nil {
 		_u.SetNotifyMode(*v)
 	}
+	return _u
+}
+
+// SetTickerEnabled sets the "ticker_enabled" field.
+func (_u *AnnouncementUpdateOne) SetTickerEnabled(v bool) *AnnouncementUpdateOne {
+	_u.mutation.SetTickerEnabled(v)
+	return _u
+}
+
+// SetNillableTickerEnabled sets the "ticker_enabled" field if the given value is not nil.
+func (_u *AnnouncementUpdateOne) SetNillableTickerEnabled(v *bool) *AnnouncementUpdateOne {
+	if v != nil {
+		_u.SetTickerEnabled(*v)
+	}
+	return _u
+}
+
+// SetPriority sets the "priority" field.
+func (_u *AnnouncementUpdateOne) SetPriority(v int) *AnnouncementUpdateOne {
+	_u.mutation.ResetPriority()
+	_u.mutation.SetPriority(v)
+	return _u
+}
+
+// SetNillablePriority sets the "priority" field if the given value is not nil.
+func (_u *AnnouncementUpdateOne) SetNillablePriority(v *int) *AnnouncementUpdateOne {
+	if v != nil {
+		_u.SetPriority(*v)
+	}
+	return _u
+}
+
+// AddPriority adds value to the "priority" field.
+func (_u *AnnouncementUpdateOne) AddPriority(v int) *AnnouncementUpdateOne {
+	_u.mutation.AddPriority(v)
 	return _u
 }
 
@@ -767,6 +846,15 @@ func (_u *AnnouncementUpdateOne) sqlSave(ctx context.Context) (_node *Announceme
 	}
 	if value, ok := _u.mutation.NotifyMode(); ok {
 		_spec.SetField(announcement.FieldNotifyMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.TickerEnabled(); ok {
+		_spec.SetField(announcement.FieldTickerEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Priority(); ok {
+		_spec.SetField(announcement.FieldPriority, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedPriority(); ok {
+		_spec.AddField(announcement.FieldPriority, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.Targeting(); ok {
 		_spec.SetField(announcement.FieldTargeting, field.TypeJSON, value)

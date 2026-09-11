@@ -424,6 +424,10 @@ func (s *CanvasService) canvasNodeImageTaskInput(ctx context.Context, userID int
 		OutputFormat: canvasString(config, "outputFormat"),
 		Background:   canvasString(config, "background"),
 	}
+	dimensionMode := strings.ToLower(strings.TrimSpace(canvasString(config, "dimensionMode")))
+	if strings.TrimSpace(input.Size) == "" && (dimensionMode == "ratio" || canvasString(config, "resolution") != "" || canvasString(config, "aspectRatio") != "") {
+		input.Size = imageCreatorSizeForResolutionAndAspectRatio(canvasString(config, "resolution"), canvasString(config, "aspectRatio"))
+	}
 	if input.OutputFormat == "" {
 		input.OutputFormat = canvasString(config, "output_format")
 	}
@@ -748,10 +752,10 @@ func (s *CanvasService) canvasModelsForAPIKey(ctx context.Context, key *APIKey) 
 		models = append(models, model)
 	}
 	for _, group := range groups {
-		if !group.ModelsListConfig.Enabled {
+		if !group.ModelAllowlist.Enabled {
 			continue
 		}
-		for _, model := range group.ModelsListConfig.Models {
+		for _, model := range group.ModelAllowlist.Models {
 			addModel(model)
 		}
 	}

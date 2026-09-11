@@ -28,6 +28,8 @@ func (r *announcementRepository) Create(ctx context.Context, a *service.Announce
 		SetContent(a.Content).
 		SetStatus(a.Status).
 		SetNotifyMode(a.NotifyMode).
+		SetTickerEnabled(a.TickerEnabled).
+		SetPriority(a.Priority).
 		SetTargeting(a.Targeting)
 
 	if a.StartsAt != nil {
@@ -69,6 +71,8 @@ func (r *announcementRepository) Update(ctx context.Context, a *service.Announce
 		SetContent(a.Content).
 		SetStatus(a.Status).
 		SetNotifyMode(a.NotifyMode).
+		SetTickerEnabled(a.TickerEnabled).
+		SetPriority(a.Priority).
 		SetTargeting(a.Targeting)
 
 	if a.StartsAt != nil {
@@ -204,6 +208,7 @@ func (r *announcementRepository) ListActive(ctx context.Context, now time.Time) 
 			announcement.Or(announcement.StartsAtIsNil(), announcement.StartsAtLTE(now)),
 			announcement.Or(announcement.EndsAtIsNil(), announcement.EndsAtGT(now)),
 		).
+		Order(dbent.Desc(announcement.FieldPriority)).
 		Order(dbent.Desc(announcement.FieldID)).
 		Limit(200)
 
@@ -228,18 +233,20 @@ func announcementEntityToService(m *dbent.Announcement) *service.Announcement {
 		return nil
 	}
 	return &service.Announcement{
-		ID:         m.ID,
-		Title:      m.Title,
-		Content:    m.Content,
-		Status:     m.Status,
-		NotifyMode: m.NotifyMode,
-		Targeting:  m.Targeting,
-		StartsAt:   m.StartsAt,
-		EndsAt:     m.EndsAt,
-		CreatedBy:  m.CreatedBy,
-		UpdatedBy:  m.UpdatedBy,
-		CreatedAt:  m.CreatedAt,
-		UpdatedAt:  m.UpdatedAt,
+		ID:            m.ID,
+		Title:         m.Title,
+		Content:       m.Content,
+		Status:        m.Status,
+		NotifyMode:    m.NotifyMode,
+		TickerEnabled: m.TickerEnabled,
+		Priority:      m.Priority,
+		Targeting:     m.Targeting,
+		StartsAt:      m.StartsAt,
+		EndsAt:        m.EndsAt,
+		CreatedBy:     m.CreatedBy,
+		UpdatedBy:     m.UpdatedBy,
+		CreatedAt:     m.CreatedAt,
+		UpdatedAt:     m.UpdatedAt,
 	}
 }
 

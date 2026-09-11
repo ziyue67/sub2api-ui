@@ -1,6 +1,6 @@
 <template>
   <div class="scheme3-plaza-pricing-table overflow-x-auto" :style="accentStyle">
-    <table class="w-full min-w-[860px] table-fixed border-collapse text-sm tabular-nums">
+    <table class="w-full min-w-[860px] table-auto border-collapse text-sm tabular-nums">
       <colgroup>
         <col class="w-[22%]" />
         <col class="w-[10%]" />
@@ -320,7 +320,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { formatScaled } from '@/utils/pricing'
+import { formatScaled, resolveIntervalPrices } from '@/utils/pricing'
 import { platformAccentColor, platformLabel } from '@/utils/platformColors'
 import {
   BILLING_MODE_TOKEN,
@@ -489,7 +489,7 @@ function sortByContext(intervals: UserPricingInterval[]): UserPricingInterval[] 
 }
 
 function tokenIntervals(m: PlazaModel): UserPricingInterval[] {
-  return sortByContext(m.pricing?.intervals ?? [])
+  return sortByContext(m.pricing?.intervals ?? []).map(iv => resolveIntervalPrices(iv, m.pricing!))
 }
 
 function officialIntervals(m: PlazaModel): UserPricingInterval[] {
@@ -497,7 +497,10 @@ function officialIntervals(m: PlazaModel): UserPricingInterval[] {
 }
 
 function hasTierCachePricing(intervals: UserPricingInterval[]): boolean {
-  return intervals.some((iv) => iv.cache_write_price != null || iv.cache_write_1h_price != null || iv.cache_read_price != null)
+  return intervals.some((iv) =>
+    iv.cache_write_price != null || iv.cache_write_1h_price != null || iv.cache_read_price != null ||
+    iv.cache_write_multiplier != null || iv.cache_read_multiplier != null
+  )
 }
 
 function tierHint(m: PlazaModel): string {

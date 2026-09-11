@@ -339,7 +339,7 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 			email,
 			username,
 			"",
-			"",
+			h.affiliateAttributionValue(c, ""),
 			readOAuthPromoCode(c),
 			"linuxdo",
 		)
@@ -592,7 +592,7 @@ func (h *AuthHandler) CompleteLinuxDoOAuthRegistration(c *gin.Context) {
 		email,
 		username,
 		req.InvitationCode,
-		req.AffCode,
+		h.affiliateAttributionValue(c, req.AffCode),
 		pendingOAuthPromoCode(session),
 		"linuxdo",
 	)
@@ -820,6 +820,7 @@ func redirectOAuthError(c *gin.Context, frontendCallback string, code string, me
 }
 
 func redirectOAuthTokenPair(c *gin.Context, frontendCallback string, tokenPair *service.TokenPair, redirectTo string) {
+	clearAffiliateAttributionCookie(c)
 	fragment := url.Values{}
 	if tokenPair != nil {
 		fragment.Set("access_token", truncateFragmentValue(tokenPair.AccessToken))

@@ -33,25 +33,29 @@ func NewAnnouncementService(
 }
 
 type CreateAnnouncementInput struct {
-	Title      string
-	Content    string
-	Status     string
-	NotifyMode string
-	Targeting  AnnouncementTargeting
-	StartsAt   *time.Time
-	EndsAt     *time.Time
-	ActorID    *int64 // 管理员用户ID
+	Title         string
+	Content       string
+	Status        string
+	NotifyMode    string
+	TickerEnabled *bool
+	Priority      int
+	Targeting     AnnouncementTargeting
+	StartsAt      *time.Time
+	EndsAt        *time.Time
+	ActorID       *int64 // 管理员用户ID
 }
 
 type UpdateAnnouncementInput struct {
-	Title      *string
-	Content    *string
-	Status     *string
-	NotifyMode *string
-	Targeting  *AnnouncementTargeting
-	StartsAt   **time.Time
-	EndsAt     **time.Time
-	ActorID    *int64 // 管理员用户ID
+	Title         *string
+	Content       *string
+	Status        *string
+	NotifyMode    *string
+	TickerEnabled *bool
+	Priority      *int
+	Targeting     *AnnouncementTargeting
+	StartsAt      **time.Time
+	EndsAt        **time.Time
+	ActorID       *int64 // 管理员用户ID
 }
 
 type UserAnnouncement struct {
@@ -71,6 +75,10 @@ type AnnouncementUserReadStatus struct {
 func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncementInput) (*Announcement, error) {
 	if input == nil {
 		return nil, ErrAnnouncementNilInput
+	}
+
+	if !isJSONTimeInRange(input.StartsAt) || !isJSONTimeInRange(input.EndsAt) {
+		return nil, ErrAnnouncementInvalidSchedule
 	}
 
 	title := strings.TrimSpace(input.Title)
@@ -102,6 +110,13 @@ func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncem
 	if !isValidAnnouncementNotifyMode(notifyMode) {
 		return nil, ErrAnnouncementInvalidNotifyMode
 	}
+	tickerEnabled := true
+	if input.TickerEnabled != nil {
+		tickerEnabled = *input.TickerEnabled
+	}
+	if input.Priority < 0 || input.Priority > 100 {
+		return nil, fmt.Errorf("priority must be between 0 and 100")
+	}
 
 	if input.StartsAt != nil && input.EndsAt != nil {
 		if !input.StartsAt.Before(*input.EndsAt) {
@@ -110,13 +125,15 @@ func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncem
 	}
 
 	a := &Announcement{
-		Title:      title,
-		Content:    content,
-		Status:     status,
-		NotifyMode: notifyMode,
-		Targeting:  targeting,
-		StartsAt:   input.StartsAt,
-		EndsAt:     input.EndsAt,
+		Title:         title,
+		Content:       content,
+		Status:        status,
+		NotifyMode:    notifyMode,
+		TickerEnabled: tickerEnabled,
+		Priority:      input.Priority,
+		Targeting:     targeting,
+		StartsAt:      input.StartsAt,
+		EndsAt:        input.EndsAt,
 	}
 	if input.ActorID != nil && *input.ActorID > 0 {
 		a.CreatedBy = input.ActorID
@@ -132,6 +149,11 @@ func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncem
 func (s *AnnouncementService) Update(ctx context.Context, id int64, input *UpdateAnnouncementInput) (*Announcement, error) {
 	if input == nil {
 		return nil, ErrAnnouncementNilInput
+	}
+
+	if (input.StartsAt != nil && !isJSONTimeInRange(*input.StartsAt)) ||
+		(input.EndsAt != nil && !isJSONTimeInRange(*input.EndsAt)) {
+		return nil, ErrAnnouncementInvalidSchedule
 	}
 
 	a, err := s.announcementRepo.GetByID(ctx, id)
@@ -167,6 +189,15 @@ func (s *AnnouncementService) Update(ctx context.Context, id int64, input *Updat
 			return nil, ErrAnnouncementInvalidNotifyMode
 		}
 		a.NotifyMode = notifyMode
+	}
+	if input.TickerEnabled != nil {
+		a.TickerEnabled = *input.TickerEnabled
+	}
+	if input.Priority != nil {
+		if *input.Priority < 0 || *input.Priority > 100 {
+			return nil, fmt.Errorf("priority must be between 0 and 100")
+		}
+		a.Priority = *input.Priority
 	}
 
 	if input.Targeting != nil {
@@ -277,11 +308,14 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 		})
 	}
 
-	// 未读优先、同状态按创建时间倒序
+	// 未读优先；同状态按轮播优先级、创建时间倒序
 	sort.Slice(out, func(i, j int) bool {
 		ai, aj := out[i], out[j]
 		if (ai.ReadAt == nil) != (aj.ReadAt == nil) {
 			return ai.ReadAt == nil
+		}
+		if ai.Announcement.Priority != aj.Announcement.Priority {
+			return ai.Announcement.Priority > aj.Announcement.Priority
 		}
 		return ai.Announcement.ID > aj.Announcement.ID
 	})

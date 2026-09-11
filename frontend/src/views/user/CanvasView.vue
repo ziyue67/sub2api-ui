@@ -288,7 +288,7 @@
       <aside class="canvas-panel canvas-inspector-panel">
         <div class="canvas-section">
           <div class="canvas-section-title">
-            <span>{{ t('canvas.nodeTypesTitle') }}</span>
+            <span>{{ t('canvas.nodeTypesLabel') }}</span>
           </div>
           <div class="canvas-node-type-grid">
             <button

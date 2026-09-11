@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -99,6 +100,11 @@ type AuthResponse struct {
 	User         *dto.User `json:"user"`
 }
 
+const (
+	affiliateAttributionCookieName = "sub2api_aff_attribution"
+	affiliateAttributionMaxAgeSec  = 30 * 24 * 60 * 60
+)
+
 func ensureLoginUserActive(user *service.User) error {
 	if user == nil {
 		return infraerrors.Unauthorized("INVALID_USER", "user not found")
@@ -190,6 +196,21 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	attributionToken, _ := c.Cookie(affiliateAttributionCookieName)
+	attributionToken = strings.TrimSpace(attributionToken)
+	if attributionToken != "" {
+		if h.authService == nil {
+			attributionToken = ""
+		} else if _, err := h.authService.ValidateAffiliateAttributionToken(attributionToken); err != nil {
+			attributionToken = ""
+		}
+	}
+	// A click-time token takes precedence over a client-supplied code. The
+	// inviter is already fixed in the signed HttpOnly cookie.
+	affiliateCode := req.AffCode
+	if strings.TrimSpace(attributionToken) != "" {
+		affiliateCode = ""
+	}
 	_, user, err := h.authService.RegisterWithVerification(
 		c.Request.Context(),
 		req.Email,
@@ -197,14 +218,89 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		req.VerifyCode,
 		req.PromoCode,
 		req.InvitationCode,
-		req.AffCode,
+		affiliateCode,
 	)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
+	if strings.TrimSpace(attributionToken) != "" {
+		if bindErr := h.authService.BindAffiliateAttribution(c.Request.Context(), user.ID, attributionToken); bindErr != nil {
+			slog.Warn("failed to bind affiliate click attribution", "user_id", user.ID, "error", bindErr)
+		}
+	}
+	clearAffiliateAttributionCookie(c)
 
 	h.respondWithTokenPair(c, user)
+}
+
+// CaptureAffiliateAttribution resolves an aff link before registration and
+// stores the inviter identity in a signed, HttpOnly first-party cookie.
+func (h *AuthHandler) CaptureAffiliateAttribution(c *gin.Context) {
+	code := strings.TrimSpace(c.Query("aff_code"))
+	if code == "" {
+		code = strings.TrimSpace(c.Query("aff"))
+	}
+	if code == "" {
+		response.BadRequest(c, "missing affiliate code")
+		return
+	}
+	if existing, cookieErr := c.Cookie(affiliateAttributionCookieName); cookieErr == nil && strings.TrimSpace(existing) != "" && h != nil && h.authService != nil {
+		if _, validateErr := h.authService.ValidateAffiliateAttributionToken(existing); validateErr == nil {
+			response.Success(c, gin.H{"captured": true, "locked": true})
+			return
+		}
+	}
+	token, err := h.authService.CreateAffiliateAttributionToken(c.Request.Context(), code)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if token == "" {
+		response.Success(c, gin.H{"captured": false})
+		return
+	}
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     affiliateAttributionCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   affiliateAttributionMaxAgeSec,
+		HttpOnly: true,
+		Secure:   c.Request.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+	})
+	response.Success(c, gin.H{"captured": true})
+}
+
+// affiliateAttributionValue returns the validated click-time token when the
+// browser has one; otherwise it preserves the legacy client-supplied code.
+func (h *AuthHandler) affiliateAttributionValue(c *gin.Context, fallback string) string {
+	if h != nil && h.authService != nil && c != nil {
+		if token, err := c.Cookie(affiliateAttributionCookieName); err == nil {
+			token = strings.TrimSpace(token)
+			if token != "" {
+				if _, validateErr := h.authService.ValidateAffiliateAttributionToken(token); validateErr == nil {
+					return token
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func clearAffiliateAttributionCookie(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     affiliateAttributionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   c.Request.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // SendVerifyCode 发送邮箱验证码
