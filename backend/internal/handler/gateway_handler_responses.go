@@ -143,7 +143,13 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 2. Re-check billing
-	if err := h.billingCacheService.CheckBillingEligibility(requestCtx, apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(requestCtx, apiKey)); err != nil {
+	// 最坏费用预检：余额必须覆盖「封底线 + 本次最坏费用」，付不满的请求在转发前
+	// 直接 403，不再出现"先服务、结算只能扣到封底"的微量超发。
+	var billingEligibilityOpts []service.BillingEligibilityOption
+	if worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(requestCtx, apiKey.User, apiKey, reqModel, body); worstSpend > 0 {
+		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
+	}
+	if err := h.billingCacheService.CheckBillingEligibility(requestCtx, apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(requestCtx, apiKey), billingEligibilityOpts...); err != nil {
 		reqLog.Info("gateway.responses.billing_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
