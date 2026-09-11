@@ -958,6 +958,12 @@ type BillingConfig struct {
 	// RequestSpendSafetyMultiplier 预检安全系数：把与结算同源算出的最坏费用再乘
 	// 该系数。>1 更保守（多拦、零坏账），<1 更激进（少拦、可能微量超发）。默认 1.0。
 	RequestSpendSafetyMultiplier float64 `mapstructure:"request_spend_safety_multiplier"`
+	// RequestSpendMinOutputTokens 预检输出上界下限（token）。部分上游桥不执行
+	// 请求声明的 max_tokens / max_output_tokens（实测 /v1/responses 桥声明 64 或
+	// 190 仍产出 999 token）：预检若信任声明的小上限就会低估最坏费用，钱包贴底
+	// 时结算仍会封顶产生坏账。>0 时输出上界取 max(声明值, 本下限)；0（默认）
+	// 保持“信任声明值”的既有行为。
+	RequestSpendMinOutputTokens int `mapstructure:"request_spend_min_output_tokens"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -2149,6 +2155,7 @@ func setDefaults() {
 	viper.SetDefault("billing.request_spend_precheck_disabled", false)
 	viper.SetDefault("billing.request_spend_default_max_output_tokens", 8192)
 	viper.SetDefault("billing.request_spend_safety_multiplier", 1.0)
+	viper.SetDefault("billing.request_spend_min_output_tokens", 0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 
@@ -3157,6 +3164,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.RequestSpendSafetyMultiplier < 0 {
 		return fmt.Errorf("billing.request_spend_safety_multiplier must be non-negative")
+	}
+	if c.Billing.RequestSpendMinOutputTokens < 0 {
+		return fmt.Errorf("billing.request_spend_min_output_tokens must be non-negative")
 	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")

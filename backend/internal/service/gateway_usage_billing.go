@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -502,8 +503,9 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 // lowered to the collected amount so the ledger stays consistent
 // (sum(actual_cost) == total deducted), while TotalCost keeps recording the real
 // upstream cost of the request. The written-off remainder is logged at ALERT
-// level for reconciliation; it is bounded to a single request per in-flight slot
-// because the next preflight now sees balance <= floor and returns 403.
+// level and counted in GatewayBillingShortfallStats() for reconciliation; it is
+// bounded to a single request per in-flight slot because the next preflight now
+// sees balance <= floor and returns 403.
 func settleUsageLogBalance(requestID string, usageLog *UsageLog, p *postUsageBillingParams, result *UsageBillingApplyResult) {
 	if result == nil || result.BalanceShortfall <= 0 || p == nil || p.IsSubscriptionBill {
 		return
@@ -530,6 +532,7 @@ func settleUsageLogBalance(requestID string, usageLog *UsageLog, p *postUsageBil
 	logger.LegacyPrintf("service.gateway",
 		"ALERT: balance drained to reserve floor, request cost partially uncollected: user=%d request=%s cost=%.8f collected=%.8f shortfall=%.8f new_balance=%.8f",
 		userID, requestID, requested, collected, result.BalanceShortfall, newBalance)
+	recordBillingSettlementShortfall(result.BalanceShortfall)
 }
 
 // collectedBalanceCost returns the amount actually taken from the wallet for
@@ -543,6 +546,22 @@ func collectedBalanceCost(p *postUsageBillingParams, result *UsageBillingApplyRe
 		return p.Cost.ActualCost
 	}
 	return 0
+}
+
+// recordBillingSettlementShortfall 记录一次结算封顶（write-off）：笔数 +1、无法
+// 收回的金额累加到微美元、刷新最近事件时间。指标由 GatewayBillingShortfallStats()
+// 暴露给 ops 面板：只要斜率 > 0，就说明“放行前最坏费用预检”仍有漏网（例如上游
+// 桥不执行请求声明的 max_tokens），应收紧 billing.request_spend_min_output_tokens
+// / billing.request_spend_default_max_output_tokens。
+func recordBillingSettlementShortfall(shortfall float64) {
+	if shortfall <= 0 || math.IsNaN(shortfall) {
+		return
+	}
+	billingSettlementShortfallTotal.Add(1)
+	if micros := math.Round(shortfall * 1e6); micros > 0 {
+		billingSettlementShortfallMicros.Add(int64(micros))
+	}
+	billingSettlementShortfallLastUnix.Store(time.Now().Unix())
 }
 
 // markBalanceExhaustedAfterSettlement 在结算把钱包扣到 reserve 底线（存在无法收回的

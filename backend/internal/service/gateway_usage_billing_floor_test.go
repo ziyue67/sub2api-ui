@@ -110,3 +110,30 @@ func TestBalanceLowNotifyDecision_FiresWhenDrainedExactlyToReserve(t *testing.T)
 	_, send = balanceLowNotifyDecision(false, 0, 0.10, 0.10, 0.10)
 	require.False(t, send)
 }
+
+// 结算封顶（write-off）必须被计数：笔数 +1、未收回金额累加到微美元、刷新最近
+// 事件时间，供 GatewayBillingShortfallStats() 在 ops 面板做斜率告警。
+func TestSettleUsageLogBalance_CountsShortfallMetrics(t *testing.T) {
+	beforeCount, beforeMicros, _ := GatewayBillingShortfallStats()
+	floor := 0.10
+	settleUsageLogBalance("req-metrics-shortfall",
+		&UsageLog{ActualCost: 0.75},
+		&postUsageBillingParams{Cost: &CostBreakdown{ActualCost: 0.75}, User: &User{ID: 7}},
+		&UsageBillingApplyResult{Applied: true, NewBalance: &floor, BalanceCollected: 0.20, BalanceShortfall: 0.55},
+	)
+
+	count, micros, lastUnix := GatewayBillingShortfallStats()
+	require.Equal(t, beforeCount+1, count, "一次封顶结算记一笔")
+	require.Equal(t, beforeMicros+550000, micros, "0.55 美元 = 550000 微美元")
+	require.Greater(t, lastUnix, int64(0), "最近事件时间必须被刷新")
+
+	// 全额收取（无差额）不计数。
+	settleUsageLogBalance("req-metrics-full",
+		&UsageLog{ActualCost: 0.75},
+		&postUsageBillingParams{Cost: &CostBreakdown{ActualCost: 0.75}, User: &User{ID: 7}},
+		&UsageBillingApplyResult{Applied: true, NewBalance: &floor, BalanceCollected: 0.75},
+	)
+	countFull, microsFull, _ := GatewayBillingShortfallStats()
+	require.Equal(t, count, countFull)
+	require.Equal(t, micros, microsFull)
+}

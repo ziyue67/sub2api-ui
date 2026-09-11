@@ -119,6 +119,14 @@ var (
 	// userPlatformQuotaSentinelSetCacheErrorTotal 统计 checkUserPlatformQuotaEligibility
 	// 在 DB 无行时回填 sentinel cache entry 写 Redis 失败的次数（phase A）。
 	userPlatformQuotaSentinelSetCacheErrorTotal atomic.Int64
+	// billingSettlementShortfallTotal / Micros / LastUnix 统计结算封顶
+	// （write-off）：钱包被扣到 billing.minimum_balance_reserve 底线为止、只能
+	// 部分收取的请求。健康值恒为 0 不增长；增长说明“放行前最坏费用预检”仍未
+	// 覆盖某些请求（典型：上游桥不执行声明的 max_tokens），由
+	// GatewayBillingShortfallStats() 暴露给 ops 面板按斜率告警。
+	billingSettlementShortfallTotal    atomic.Int64
+	billingSettlementShortfallMicros   atomic.Int64
+	billingSettlementShortfallLastUnix atomic.Int64
 )
 
 func GatewayWindowCostPrefetchStats() (cacheHit, cacheMiss, batchSQL, fallback, errCount int64) {
@@ -150,6 +158,18 @@ func GatewayUserPlatformQuotaIncrStats() (mainPathErr, legacyPathErr, sentinelSe
 	return userPlatformQuotaDBIncrErrorTotal.Load(),
 		userPlatformQuotaDBIncrLegacyErrorTotal.Load(),
 		userPlatformQuotaSentinelSetCacheErrorTotal.Load()
+}
+
+// GatewayBillingShortfallStats 返回结算封顶（write-off）累计指标：
+// count = 被扣到 reserve 底线为止、部分收取的请求笔数；micros = 累计无法收回的
+// 金额（微美元，整数原子量避免浮点竞态）；lastUnix = 最近一次事件时间（Unix 秒）。
+// 理想值恒为 0；斜率 > 0 说明预检仍有漏网（例如上游桥不执行声明的 max_tokens），
+// 应收紧 billing.request_spend_min_output_tokens /
+// billing.request_spend_default_max_output_tokens。
+func GatewayBillingShortfallStats() (count, micros, lastUnix int64) {
+	return billingSettlementShortfallTotal.Load(),
+		billingSettlementShortfallMicros.Load(),
+		billingSettlementShortfallLastUnix.Load()
 }
 
 // GatewayUserPlatformQuotaFlusherStats 暴露 flusher 运行指标供 ops/health 面板查询。
