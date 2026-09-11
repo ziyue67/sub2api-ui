@@ -21,6 +21,8 @@ import (
 //   - 输入 token 上界：按请求体字节数保守折算（EstimateRequestInputTokensUpperBound）；
 //   - 输出 token 上界：请求声明的 max_tokens 类字段，缺省用
 //     billing.request_spend_default_max_output_tokens（默认 8192）；
+//     配置了 billing.request_spend_min_output_tokens 时取 max(声明值, 下限)，
+//     兜住不执行声明上限的上游桥（实测声明 64/190 仍产出 999 token）；
 //   - 费用与倍率：与结算完全同源（Resolver.Resolve + CalculateTokenCostForRequest
 //     + 结算倍率链，含用户专属/分组倍率与高峰因子），再乘
 //     billing.request_spend_safety_multiplier（默认 1.0）放大保守程度。
@@ -67,6 +69,15 @@ func requestSpendSafetyMultiplier(cfg *config.Config) float64 {
 		return requestSpendFallbackSafetyMultiplier
 	}
 	return cfg.Billing.RequestSpendSafetyMultiplier
+}
+
+// requestSpendMinOutputTokens 返回预检输出上界下限（token）；未配置（0）或非法时
+// 返回 0 = 不启用钳制。0 值安全：手工装配的 Config 保持“信任声明值”的既有行为。
+func requestSpendMinOutputTokens(cfg *config.Config) int {
+	if cfg == nil || cfg.Billing.RequestSpendMinOutputTokens <= 0 {
+		return 0
+	}
+	return cfg.Billing.RequestSpendMinOutputTokens
 }
 
 // ExtractRequestMaxOutputTokens 提取请求体声明的输出 token 上限：
@@ -131,6 +142,11 @@ func estimateRequestSpendUpperBound(
 	outputUpper, declared := ExtractRequestMaxOutputTokens(body)
 	if !declared {
 		outputUpper = requestSpendDefaultMaxOutputTokens(cfg)
+	}
+	// 声明上限不可信时的下限钳制：上游桥不执行 max_tokens 时（声明 64 实际
+	// 999），只按声明值预检会低估最坏费用，钱包贴底时仍会产生 write-off。
+	if floor := requestSpendMinOutputTokens(cfg); floor > outputUpper {
+		outputUpper = floor
 	}
 	if inputUpper <= 0 && outputUpper <= 0 {
 		return 0

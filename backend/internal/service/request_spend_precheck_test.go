@@ -207,3 +207,37 @@ func TestCheckBillingEligibility_WorstSpendGateCacheOnly(t *testing.T) {
 	require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "", WithMaxRequestSpend(0)))
 	require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, ""))
 }
+
+// TestEstimateRequestSpendUpperBound_MinOutputTokensFloor 锁死“输出上界下限钳制”：
+// 上游桥不执行请求声明的小上限（实测声明 64/190 仍产出 999 token）时，配置
+// billing.request_spend_min_output_tokens 后预检必须按 max(声明值, 下限) 估计，
+// 否则贴底时结算仍会封顶产生坏账；0/负数 = 关闭钳制（保持信任声明值）。
+func TestEstimateRequestSpendUpperBound_MinOutputTokensFloor(t *testing.T) {
+	svc := newRequestSpendTestEnv(t)
+	user, apiKey := newRequestSpendTestKey()
+	ctx, _ := WithGatewayTokenRequestPricing(context.Background())
+	declaredBody := []byte(`{"model":"spend-test-model","max_tokens":64}`)
+
+	trusted := svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", declaredBody)
+	require.Greater(t, trusted, 0.0)
+	require.Less(t, trusted, 100*1e-5, "只按 64 token 估：必须明显低于 100 token 的输出成本")
+
+	// 下限 5000 → 即使声明 64，也按 5000 × $10/M = $0.05 的输出成本预检。
+	svc.cfg.Billing.RequestSpendMinOutputTokens = 5000
+	floored := svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", declaredBody)
+	require.GreaterOrEqual(t, floored, 5000*1e-5)
+	require.Greater(t, floored, trusted)
+
+	// 声明值高于下限 → 仍以声明值为准（10000 × $10/M = $0.1）。
+	large := svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", []byte(`{"model":"spend-test-model","max_tokens":10000}`))
+	require.GreaterOrEqual(t, large, 10000*1e-5)
+
+	// 未声明 → 取 max(缺省 8192, 下限 9000) = 9000。
+	svc.cfg.Billing.RequestSpendMinOutputTokens = 9000
+	undeclared := svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", []byte(`{"model":"spend-test-model"}`))
+	require.GreaterOrEqual(t, undeclared, 9000*1e-5)
+
+	// 负数（配置校验会拦截，但手工装配也必须安全）= 关闭钳制。
+	svc.cfg.Billing.RequestSpendMinOutputTokens = -1
+	require.InDelta(t, trusted, svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", declaredBody), 1e-12)
+}
