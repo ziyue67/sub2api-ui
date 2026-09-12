@@ -78,6 +78,7 @@ const (
 	cacheWriteTimeout         = 2 * time.Second // 单个写入操作超时
 	cacheWriteDropLogInterval = 5 * time.Second // 丢弃日志节流间隔
 	balanceLoadTimeout        = 3 * time.Second
+	balanceRecheckTimeout     = 3 * time.Second // 预检 DB 复核超时（singleflight 共享）
 )
 
 // cacheWriteTask 缓存写入任务
@@ -276,6 +277,7 @@ type BillingCacheService struct {
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
 	quotaLoadSF        singleflight.Group
+	balanceRecheckSF   singleflight.Group
 	// 丢弃日志节流计数器（减少高负载下日志噪音）
 	cacheWriteDropFullCount     uint64
 	cacheWriteDropFullLastLog   int64
@@ -510,6 +512,29 @@ func (s *BillingCacheService) getUserBalanceFromDB(ctx context.Context, userID i
 		return 0, fmt.Errorf("get user balance: %w", err)
 	}
 	return user.Balance, nil
+}
+
+// recheckUserBalanceFromDB 读取 DB 真值用于"贴近底线"的预检复核。
+//
+// 余额贴近底线时每笔请求都要复核，并发突发（同一用户的 N 笔请求同时到达）
+// 会让 N 次等价的 PK 查询同时涌向连接池：连接池被瞬时打满后，后续复核拿不
+// 到 DB 连接（pq: sorry, too many clients already），fail-closed 变成大范围 503。
+// 这里用 singleflight 把同一用户的并发复核合并为一次回源，等待者共享同一结果；
+// 复核跑在独立超时的后台上下文上，不受单个请求取消影响（等待上限即该超时）。
+func (s *BillingCacheService) recheckUserBalanceFromDB(userID int64) (float64, error) {
+	value, err, _ := s.balanceRecheckSF.Do(strconv.FormatInt(userID, 10), func() (any, error) {
+		recheckCtx, cancel := context.WithTimeout(context.Background(), balanceRecheckTimeout)
+		defer cancel()
+		return s.getUserBalanceFromDB(recheckCtx, userID)
+	})
+	if err != nil {
+		return 0, err
+	}
+	balance, ok := value.(float64)
+	if !ok {
+		return 0, fmt.Errorf("get user balance: unexpected recheck result type %T", value)
+	}
+	return balance, nil
 }
 
 // setBalanceCache 设置余额缓存
@@ -1249,6 +1274,8 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 	// 2) 余额贴近底线时，用 DB 真值复核一次。
 	//    缓存余额在并发扣费 + 异步回源之间可能偏高，而"贴近底线"正是放行后会立刻
 	//    扣不动钱的危险区间；这里多一次 PK 查询，换来"预检放行 ⇒ 结算必然可扣"。
+	//    并发突发时同一用户的复核由 singleflight 合并为一次回源（见
+	//    recheckUserBalanceFromDB），避免连接池被瞬时打满后 fail-closed 成大范围 503。
 	//    只能读到 DB 时才复核：缺少 userRepo（部分降级/测试装配）时退回缓存判断。
 	//    追加两种需要 DB 复核的情形：b) 缓存余额吃不下本次最坏费用（旧快照可能
 	//    偏高，需用真值判定）；c) 扣掉本次最坏费用后贴近底线（放行即进入下一笔
@@ -1258,7 +1285,7 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 		needsRecheck = true
 	}
 	if s.userRepo != nil && needsRecheck {
-		fresh, dbErr := s.getUserBalanceFromDB(ctx, userID)
+		fresh, dbErr := s.recheckUserBalanceFromDB(userID)
 		if dbErr != nil {
 			// 无法确认真实余额时 fail-closed，避免继续白用上游。
 			if s.circuitBreaker != nil {
