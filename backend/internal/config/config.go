@@ -2240,8 +2240,12 @@ func setDefaults() {
 	viper.SetDefault("database.password", "postgres")
 	viper.SetDefault("database.dbname", "sub2api")
 	viper.SetDefault("database.sslmode", "prefer")
-	viper.SetDefault("database.max_open_conns", 256)
-	viper.SetDefault("database.max_idle_conns", 128)
+	// 默认连接池必须显著低于 PostgreSQL max_connections（默认 100）：过高的默认值
+	// 会在并发突发时把 PG 的连接槽打满（pq: sorry, too many clients already），
+	// 连带让贴近底线的余额复核拿不到连接而 fail-closed（503）。多实例部署需按
+	// 实例数再均摊；需要更高吞吐时显式调大并同步调大 PG max_connections。
+	viper.SetDefault("database.max_open_conns", 32)
+	viper.SetDefault("database.max_idle_conns", 8)
 	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
 	viper.SetDefault("database.conn_max_idle_time_minutes", 5)
 	viper.SetDefault("database.user_platform_quota_flusher_enabled", false)
