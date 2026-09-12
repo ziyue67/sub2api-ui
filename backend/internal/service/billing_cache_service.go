@@ -114,6 +114,143 @@ type balanceExhaustionStore interface {
 	IsUserBalanceExhausted(ctx context.Context, userID int64) (bool, error)
 }
 
+// billingReservationStore 是 BillingCache 的可选扩展能力：在转发上游之前，把本次请求的
+// "最坏费用上界"原子地记入该用户的**在途预留**，请求结算完成后再归还。
+//
+// 为什么需要它：余额预检读到的余额是一个静态快照，它不包含"已经放行、但尚未结算"的请求
+// 未来要花掉的钱。并发突发时 N 个请求读到同一份余额（即使刚刚用 DB 真值复核过），每个都
+// 判定"余额够付自己这一笔"而全部放行；结算时只有前几笔扣得动，其余全部 actual_cost=0 ——
+// 上游成本已经发生、钱却收不回来（"token 照统计、余额扣不动、请求不中断"的坏账来源）。
+//
+// 在途预留把这份"已承诺出去的额度"从可花余额里显式扣除，使准入判定变成原子操作：
+// balance - 预留总额 >= reserve 的请求才放行，其余在预检即 403。该不变量在"结算扣钱"与
+// "归还预留"以任意先后顺序发生时都保持成立。
+//
+// 未实现该能力的缓存（如测试用的轻量 stub）自动降级为 no-op，行为与修复前一致。
+type billingReservationStore interface {
+	ReserveUserBalance(ctx context.Context, userID int64, amount float64, ttl time.Duration) (float64, error)
+	ReleaseUserBalanceReservation(ctx context.Context, userID int64, amount float64, ttl time.Duration) error
+}
+
+// billingReservationTTL 是在途预留的自愈 TTL：结算任务被丢弃 / 进程崩溃导致归还丢失时，
+// 预留最多存活这么久，不会把余额永久钉死。
+const billingReservationTTL = 10 * time.Minute
+
+// billingReservationReleaseTimeout 是归还预留的超时。请求收尾时请求 ctx 往往已经取消，
+// 归还一律走脱离取消的独立 ctx（见 BillingReservationSlot.release）。
+const billingReservationReleaseTimeout = 3 * time.Second
+
+// BillingReservationSlot 是一次请求持有的"在途预留"句柄。
+//
+// 生命周期：
+//  1. CheckBillingEligibility 通过 WithBalanceReservation 收到槽位，放行时 bind 预留金额；
+//  2. 请求收尾时按路径二选一：
+//     - 提交了结算（usage 记录）任务：先 HandOff()，由结算任务在扣费完成后调用 Release()；
+//     - 没有结算（错误提前返回等）：handler 的 defer 调 ReleaseOnExit() 立即归还。
+//
+// 为什么结算路径必须等扣费完成再归还：在扣费落地之前归还预留，等于把这份额度提前放给下一个
+// 请求；等扣费真正发生时，那个请求的余额覆盖已经不成立——坏账窗口原样复现。结算任务被丢弃
+// （显式 drop 策略 / 进程崩溃）时由 billingReservationTTL 兜底自愈。
+//
+// 所有方法对 nil 接收者安全；Release / ReleaseOnExit 幂等，重复调用只归还一次。
+type BillingReservationSlot struct {
+	mu     sync.Mutex
+	store  billingReservationStore
+	userID int64
+	amount float64
+	state  billingReservationState
+}
+
+// billingReservationState 描述槽位的归还状态机：idle → held →(settling)→ released。
+type billingReservationState int
+
+const (
+	// billingReservationIdle：未绑定（本次请求没有产生预留，或预留能力不可用）。
+	billingReservationIdle billingReservationState = iota
+	// billingReservationHeld：已绑定预留金额，等待归还。
+	billingReservationHeld
+	// billingReservationSettling：归还责任已移交结算任务，handler 收尾不再归还。
+	billingReservationSettling
+	// billingReservationReleased：已归还（终态，幂等保护）。
+	billingReservationReleased
+)
+
+// bind 绑定本次预留（service 内部使用）。只允许从 idle 迁移，防止重复绑定覆盖金额。
+func (s *BillingReservationSlot) bind(store billingReservationStore, userID int64, amount float64) {
+	if s == nil || store == nil || amount <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != billingReservationIdle {
+		return
+	}
+	s.store = store
+	s.userID = userID
+	s.amount = amount
+	s.state = billingReservationHeld
+}
+
+// HandOff 声明"本请求的归还责任移交给结算任务"：handler 收尾的 ReleaseOnExit 不再归还，
+// 由结算任务在 RecordUsage（扣费）完成后调用 Release。
+func (s *BillingReservationSlot) HandOff() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == billingReservationHeld {
+		s.state = billingReservationSettling
+	}
+}
+
+// Release 立即归还预留（幂等；未绑定 / 已归还时 no-op）。结算任务在扣费完成后调用。
+func (s *BillingReservationSlot) Release(ctx context.Context) {
+	s.release(ctx, false)
+}
+
+// ReleaseOnExit 请求收尾兜底：只有当预留没有移交给结算任务时才立即归还，
+// 避免"结算还没扣钱、预留先还回去"的超额放行窗口。
+func (s *BillingReservationSlot) ReleaseOnExit(ctx context.Context) {
+	s.release(ctx, true)
+}
+
+func (s *BillingReservationSlot) release(ctx context.Context, exitOnly bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	switch s.state {
+	case billingReservationHeld:
+	case billingReservationSettling:
+		if exitOnly {
+			s.mu.Unlock()
+			return // 已移交结算任务：收尾兜底不再归还，等结算完成
+		}
+	default:
+		s.mu.Unlock()
+		return // idle / released：无事可做
+	}
+	store, userID, amount := s.store, s.userID, s.amount
+	s.store, s.userID, s.amount = nil, 0, 0
+	s.state = billingReservationReleased
+	s.mu.Unlock()
+
+	if store == nil || amount <= 0 {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// 请求收尾时请求 ctx 通常已随连接取消；归还必须走脱离取消的独立 ctx，否则
+	// Redis 写入会静默失败，把余额一直钉到 TTL 到期。
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), billingReservationReleaseTimeout)
+	defer cancel()
+	if err := store.ReleaseUserBalanceReservation(releaseCtx, userID, amount, billingReservationTTL); err != nil {
+		logger.LegacyPrintf("service.billing_cache", "ALERT: release in-flight balance reservation failed for user %d: %v", userID, err)
+	}
+}
+
 type subscriptionCacheInvalidationPubSub interface {
 	PublishSubscriptionCacheInvalidation(ctx context.Context, cacheKey string) error
 	SubscribeSubscriptionCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error
@@ -764,6 +901,9 @@ type billingEligibilityOptions struct {
 	// >0 时余额模式预检要求余额能覆盖「封底线 + maxRequestSpend」，否则直接 403：
 	// 付不满最坏费用的请求绝不转发到上游（上游成本一旦发生就无法追回）。
 	maxRequestSpend float64
+	// reservationSlot 非 nil 时，预检放行前会把本次最坏费用原子地记入用户的"在途预留"，
+	// 使并发请求不能再用同一份余额快照同时放行（结算才发现的坏账来源）。
+	reservationSlot *BillingReservationSlot
 }
 
 // WithMaxRequestSpend 声明本次请求的最坏费用上界（USD）。0 或负值不改变既有语义。
@@ -771,6 +911,16 @@ func WithMaxRequestSpend(amount float64) BillingEligibilityOption {
 	return func(o *billingEligibilityOptions) {
 		if o != nil && amount > 0 {
 			o.maxRequestSpend = amount
+		}
+	}
+}
+
+// WithBalanceReservation 声明本次请求持有的"在途预留"槽位：预检放行时会绑定预留金额，
+// 调用方需要在请求收尾时按路径归还（结算任务 Release / handler defer ReleaseOnExit）。
+func WithBalanceReservation(slot *BillingReservationSlot) BillingEligibilityOption {
+	return func(o *billingEligibilityOptions) {
+		if o != nil && slot != nil {
+			o.reservationSlot = slot
 		}
 	}
 }
@@ -799,14 +949,19 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	// 判断计费模式
 	isSubscriptionMode := group != nil && group.IsSubscriptionType() && subscription != nil
 
+	// 余额模式的权威余额（预检结论）：所有闸门通过后用于在途预留的封底护栏。
+	var decisionBalance float64
+
 	if isSubscriptionMode {
 		if err := s.checkSubscriptionEligibility(ctx, user.ID, group, subscription); err != nil {
 			return err
 		}
 	} else {
-		if err := s.checkBalanceEligibility(ctx, user.ID, eligibility.maxRequestSpend); err != nil {
+		balance, err := s.checkBalanceEligibility(ctx, user.ID, eligibility.maxRequestSpend)
+		if err != nil {
 			return err
 		}
+		decisionBalance = balance
 	}
 
 	// user × platform quota 仅在 standard（余额）模式生效；订阅模式豁免
@@ -826,6 +981,15 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	// RPM 限流：级联回落（Override → Group → User），放在最后以避免为注定失败的请求增加计数。
 	if err := s.checkRPM(ctx, user, group); err != nil {
 		return err
+	}
+
+	// 在途预留（只对余额模式生效）：所有闸门都通过后，把本次请求的最坏费用原子地记入
+	// 用户的在途预留总额，并校验"余额 - 预留总额 >= 封底"仍然成立。
+	// 放在最后一步：前面任何一步拒绝都无需回滚预留。
+	if !isSubscriptionMode {
+		if err := s.reserveRequestSpend(ctx, user.ID, decisionBalance, eligibility.maxRequestSpend, eligibility.reservationSlot); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1045,7 +1209,9 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 // 写回之间可能偏高。命中"付不满最坏费用"时不写"钱包已耗尽"标记：小额请求
 // 仍可能付得起，标记会连带拦住它们；只有余额已掉到封底线（一切请求都付不起）
 // 或结算路径判定耗尽时才打标记。
-func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64, maxRequestSpend float64) error {
+// 返回值是本次放行判定所依据的**权威余额**（必要时已用 DB 真值修正），供
+// CheckBillingEligibility 汇合所有闸门后做在途预留的封底护栏；err != nil 时返回值无意义。
+func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64, maxRequestSpend float64) (float64, error) {
 	// 1) 先看"钱包已耗尽"标记。它是结算路径在"扣到底线 / 扣费被拒"时写下的权威信号，
 	//    与余额缓存的回源写回无关，因此不会被旧余额快照复活。命中即 fail-closed：
 	//    绝不再把注定扣费失败的请求转发到上游（后付费下上游成本无法追回）。
@@ -1054,7 +1220,7 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 		if err := s.InvalidateUserBalance(ctx, userID); err != nil {
 			logger.LegacyPrintf("service.billing_cache", "Warning: invalidate balance cache for exhausted user %d failed: %v", userID, err)
 		}
-		return ErrInsufficientBalance
+		return 0, ErrInsufficientBalance
 	}
 
 	balance, err := s.GetUserBalance(ctx, userID)
@@ -1063,14 +1229,14 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 			s.circuitBreaker.OnFailure(err)
 		}
 		logger.LegacyPrintf("service.billing_cache", "ALERT: billing balance check failed for user %d: %v", userID, err)
-		return ErrBillingServiceUnavailable.WithCause(err)
+		return 0, ErrBillingServiceUnavailable.WithCause(err)
 	}
 	if s.circuitBreaker != nil {
 		s.circuitBreaker.OnSuccess()
 	}
 
 	if s.balanceBelowEligibilityThreshold(balance) {
-		return ErrInsufficientBalance
+		return 0, ErrInsufficientBalance
 	}
 
 	// required 为本次放行要求的余额下限：封底线 + 最坏费用上界（未提供时为封底线
@@ -1099,11 +1265,11 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 				s.circuitBreaker.OnFailure(dbErr)
 			}
 			logger.LegacyPrintf("service.billing_cache", "ALERT: billing balance recheck failed for user %d: %v", userID, dbErr)
-			return ErrBillingServiceUnavailable.WithCause(dbErr)
+			return 0, ErrBillingServiceUnavailable.WithCause(dbErr)
 		}
 		if s.balanceBelowEligibilityThreshold(fresh) {
 			s.MarkBalanceExhausted(ctx, userID)
-			return ErrInsufficientBalance
+			return 0, ErrInsufficientBalance
 		}
 		// DB 真值仍可花：把缓存纠正为真值，消除旧快照带来的偏差。
 		if setErr := s.SetUserBalanceCache(ctx, userID, fresh); setErr != nil {
@@ -1115,9 +1281,9 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 			logger.LegacyPrintf("service.billing_cache",
 				"billing preflight rejected user=%d: balance=%.6f < reserve=%.6f + worst_request_spend=%.6f",
 				userID, fresh, s.minimumBalanceReserve(), maxRequestSpend)
-			return ErrInsufficientBalance
+			return 0, ErrInsufficientBalance
 		}
-		return nil
+		return fresh, nil
 	}
 
 	if maxRequestSpend > 0 && balance < required {
@@ -1125,10 +1291,70 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 		logger.LegacyPrintf("service.billing_cache",
 			"billing preflight rejected user=%d (cache only): balance=%.6f < reserve=%.6f + worst_request_spend=%.6f",
 			userID, balance, s.minimumBalanceReserve(), maxRequestSpend)
-		return ErrInsufficientBalance
+		return 0, ErrInsufficientBalance
 	}
 
-	return nil
+	return balance, nil
+}
+
+// balanceReservation 返回底层缓存实现提供的"在途预留"读写能力。
+// 未实现（例如测试用的轻量 stub）时返回 false，预留功能静默降级为 no-op，
+// 预检仍然依靠余额阈值 + DB 真值复核 + "钱包已耗尽"标记把关。
+func (s *BillingCacheService) balanceReservation() (billingReservationStore, bool) {
+	if s == nil || s.cache == nil {
+		return nil, false
+	}
+	store, ok := s.cache.(billingReservationStore)
+	if !ok {
+		return nil, false
+	}
+	return store, true
+}
+
+// reserveRequestSpend 在转发上游前，将本次请求的最坏费用上界原子地记入用户的
+// "在途预留"，并校验"余额 - 预留总额 >= 封底"仍然成立。
+//
+// 该护栏把并发准入变成原子操作，使"预检放行 ⇒ 结算必然可扣"跨请求成立：
+// 余额快照是静态的，而每个已放行请求未来都要从同一份余额里扣钱；在途预留把这份
+// "已承诺但尚未结算"的额度从可花余额中扣除，只有拿得到额度的那一笔（或几笔）能
+// 通过，其余在预检即 403。
+//
+// 失败语义：
+//   - slot == nil（调用方未挂预留槽位）或 maxRequestSpend <= 0（没有可用上界）：no-op；
+//   - 底层缓存不支持该能力 / Redis 故障：fail-open（打 ALERT），退回修复前行为，
+//     不让一次缓存抖动把全体用户拦在门外；
+//   - 预留后封底护栏不成立：立即回滚预留并返回 ErrInsufficientBalance（403）。
+func (s *BillingCacheService) reserveRequestSpend(ctx context.Context, userID int64, balance float64, maxRequestSpend float64, slot *BillingReservationSlot) error {
+	if s == nil || slot == nil || maxRequestSpend <= 0 {
+		return nil
+	}
+	store, ok := s.balanceReservation()
+	if !ok {
+		return nil
+	}
+	reservedAfter, err := store.ReserveUserBalance(ctx, userID, maxRequestSpend, billingReservationTTL)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight balance for user %d failed: %v", userID, err)
+		return nil // fail-open
+	}
+	if balance-reservedAfter >= s.minimumBalanceReserve() {
+		slot.bind(store, userID, maxRequestSpend)
+		return nil
+	}
+	// 护栏不成立：本次放行会击穿封底，立即回滚预留并拒绝。
+	// 回滚走脱离取消的独立 ctx：请求 ctx 可能已经结束，直接用它会让 Redis 写入静默失败。
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), billingReservationReleaseTimeout)
+	defer cancel()
+	if relErr := store.ReleaseUserBalanceReservation(rollbackCtx, userID, maxRequestSpend, billingReservationTTL); relErr != nil {
+		logger.LegacyPrintf("service.billing_cache", "ALERT: rollback in-flight balance reservation for user %d failed: %v", userID, relErr)
+	}
+	logger.LegacyPrintf("service.billing_cache",
+		"billing preflight rejected user=%d (inflight reservation): balance=%.6f - reserved=%.6f < reserve=%.6f",
+		userID, balance, reservedAfter, s.minimumBalanceReserve())
+	return ErrInsufficientBalance
 }
 
 // checkSubscriptionEligibility 检查订阅模式资格
