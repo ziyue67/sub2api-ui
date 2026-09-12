@@ -23,9 +23,14 @@ const (
 	// "余额增加"两条路径会写它，余额未命中回源的异步写回永远不会写它，
 	// 因此它不会被扣费前的旧余额快照"复活"。
 	billingBalanceExhaustedKeyPrefix = "billing:balance_exhausted:"
-	subCacheInvalidateChannel        = "subscription:cache:invalidate"
-	billingCacheTTL                  = 5 * time.Minute
-	billingCacheJitter               = 30 * time.Second
+	// billingReservedKeyPrefix 是"在途预留"键前缀：该用户当前全部"已放行、尚未结算"请求的
+	// 最坏费用上界之和（USD）。预检放行前用 INCRBYFLOAT 原子累加、结算完成后归还，
+	// 使"余额 - 在途预留 >= 封底"成为跨请求的原子准入护栏，堵住并发突发时用同一份
+	// 余额快照全部放行、结算时却扣不动钱的坏账（键带 TTL 自愈，崩溃/丢任务不会永久钉住余额）。
+	billingReservedKeyPrefix  = "billing:reserved:"
+	subCacheInvalidateChannel = "subscription:cache:invalidate"
+	billingCacheTTL           = 5 * time.Minute
+	billingCacheJitter        = 30 * time.Second
 	// balanceExhaustedMarkerTTL 必须 >= 余额缓存的最长存活时间（billingCacheTTL），
 	// 否则标记先过期、而余额缓存里仍留着偏高的旧值，预检又会被放行。
 	balanceExhaustedMarkerTTL = billingCacheTTL + time.Minute
@@ -55,6 +60,11 @@ func billingBalanceKey(userID int64) string {
 // billingBalanceExhaustedKey generates the Redis key for the "wallet exhausted" marker.
 func billingBalanceExhaustedKey(userID int64) string {
 	return fmt.Sprintf("%s%d", billingBalanceExhaustedKeyPrefix, userID)
+}
+
+// billingReservedKey generates the Redis key for a user's in-flight spend reservations.
+func billingReservedKey(userID int64) string {
+	return fmt.Sprintf("%s%d", billingReservedKeyPrefix, userID)
 }
 
 // billingSubKey generates the Redis key for subscription cache.
@@ -95,6 +105,45 @@ var (
 		redis.call('SET', KEYS[1], newVal)
 		redis.call('EXPIRE', KEYS[1], ARGV[2])
 		return 1
+	`)
+
+	// reserveBalanceScript 原子地把本次请求的"最坏费用上界"累加进用户的在途预留总额，
+	// 并把累加后的总额以十进制文本原样返回。
+	//
+	// 用 INCRBYFLOAT 而不是 GET+SET：单命令原子、天然支持"键不存在即从 0 开始"，
+	// 且返回值是十进制字符串（不像 Lua number 会被 RESP 整数截断掉小数）。
+	//
+	// KEYS[1] = billing:reserved:<userID>
+	// ARGV[1] = 预留金额（USD，>0），ARGV[2] = 预留键 TTL（毫秒）
+	reserveBalanceScript = redis.NewScript(`
+		local newVal = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
+		redis.call('PEXPIRE', KEYS[1], ARGV[2])
+		return newVal
+	`)
+
+	// releaseBalanceScript 原子地归还一笔在途预留：递减总额，降到 ~0 时删除键。
+	//
+	// 键不存在（预留已随 TTL 过期 / 从未建立）时是 no-op：绝不能把总额减成负数，
+	// 否则会凭空多放行一份额度。INCRBYFLOAT 不改动键的 TTL，只有当键没有 TTL
+	// （异常情形）时才用 ARGV[2] 兜底补一个。
+	//
+	// KEYS[1] = billing:reserved:<userID>
+	// ARGV[1] = 归还金额的相反数（USD，<0），ARGV[2] = 兜底 TTL（毫秒）
+	releaseBalanceScript = redis.NewScript(`
+		local exists = redis.call('EXISTS', KEYS[1])
+		if exists == 0 then
+			return '0'
+		end
+		local newVal = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
+		if tonumber(newVal) <= 1e-07 then
+			redis.call('DEL', KEYS[1])
+			return '0'
+		end
+		local pttl = redis.call('PTTL', KEYS[1])
+		if pttl < 0 then
+			redis.call('PEXPIRE', KEYS[1], ARGV[2])
+		end
+		return newVal
 	`)
 
 	updateSubUsageScript = redis.NewScript(`
@@ -214,6 +263,67 @@ func (c *billingCache) IsUserBalanceExhausted(ctx context.Context, userID int64)
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// ReserveUserBalance 原子地把本次请求的"最坏费用上界"累加进该用户的在途预留总额，
+// 返回累加后的总额（USD）。
+//
+// 调用方（BillingCacheService 的余额预检）用它的返回值判断
+// "balance - 在途预留总额 >= reserve 封底"是否仍然成立：只要成立，即使全部在途请求
+// 都以最坏费用结算，钱包也不会被击穿封底，不存在收不满的坏账。
+func (c *billingCache) ReserveUserBalance(ctx context.Context, userID int64, amount float64, ttl time.Duration) (float64, error) {
+	if amount < 0 {
+		return 0, fmt.Errorf("reserve amount must be nonnegative, got %v", amount)
+	}
+	key := billingReservedKey(userID)
+	reply, err := reserveBalanceScript.Run(ctx, c.rdb, []string{key}, amount, reservationTTLMillis(ttl)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, err
+	}
+	return parseReservedBalanceReply(reply)
+}
+
+// ReleaseUserBalanceReservation 原子地归还一笔在途预留（结算完成后由请求生命周期调用）。
+// 预留键不存在（已随 TTL 过期）时是 no-op，避免把总额减成负数。
+func (c *billingCache) ReleaseUserBalanceReservation(ctx context.Context, userID int64, amount float64, ttl time.Duration) error {
+	if amount <= 0 {
+		return nil
+	}
+	key := billingReservedKey(userID)
+	_, err := releaseBalanceScript.Run(ctx, c.rdb, []string{key}, -amount, reservationTTLMillis(ttl)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		log.Printf("Warning: release balance reservation failed for user %d: %v", userID, err)
+		return err
+	}
+	return nil
+}
+
+// reservationTTLMillis 把预留 TTL 规范化为毫秒；缺省/非法值退化为余额缓存 TTL。
+func reservationTTLMillis(ttl time.Duration) int64 {
+	millis := ttl.Milliseconds()
+	if millis <= 0 {
+		millis = billingCacheTTL.Milliseconds()
+	}
+	return millis
+}
+
+// parseReservedBalanceReply 解析预留脚本的十进制文本返回值，兼容 RESP2/RESP3 以及
+// 集群客户端可能出现的多种返回形态（数字必须以文本往返，避免被整数截断）。
+func parseReservedBalanceReply(reply any) (float64, error) {
+	switch v := reply.(type) {
+	case nil:
+		return 0, nil
+	case string:
+		return strconv.ParseFloat(v, 64)
+	case []byte:
+		return strconv.ParseFloat(string(v), 64)
+	case float64:
+		return v, nil
+	case int64:
+		return float64(v), nil
+	default:
+		return 0, fmt.Errorf("unexpected balance reservation reply type %T", reply)
+	}
 }
 
 func (c *billingCache) GetSubscriptionCache(ctx context.Context, userID, groupID int64) (*service.SubscriptionCacheData, error) {

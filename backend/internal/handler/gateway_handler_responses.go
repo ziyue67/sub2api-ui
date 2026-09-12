@@ -149,6 +149,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	if worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(requestCtx, apiKey.User, apiKey, reqModel, body); worstSpend > 0 {
 		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
 	}
+	// 在途预留：并发请求不能再用同一份余额快照同时放行（结算才发现的坏账来源）。
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts = append(billingEligibilityOpts, service.WithBalanceReservation(&balanceReservation))
 	if err := h.billingCacheService.CheckBillingEligibility(requestCtx, apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(requestCtx, apiKey), billingEligibilityOpts...); err != nil {
 		reqLog.Info("gateway.responses.billing_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
@@ -158,6 +161,8 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		h.responsesErrorResponse(c, status, code, message)
 		return
 	}
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	// Parse request for session hash
 	bodyRef := service.NewRequestBodyRef(body)
@@ -376,7 +381,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
+		balanceReservation.HandOff()
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,
 				QuotaPlatform:      quotaPlatform,

@@ -602,6 +602,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body); worstSpend > 0 {
 		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
 	}
+	// 在途预留：并发请求不能再用同一份余额快照同时放行（结算才发现的坏账来源）。
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts = append(billingEligibilityOpts, service.WithBalanceReservation(&balanceReservation))
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingEligibilityOpts...); err != nil {
 		reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
@@ -611,6 +614,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
@@ -861,7 +866,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			balanceReservation.HandOff()
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+				defer balanceReservation.Release(ctx)
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
@@ -1061,7 +1068,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+		balanceReservation.HandOff()
 		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,
@@ -1354,6 +1363,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body); worstSpend > 0 {
 		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
 	}
+	// 在途预留：并发请求不能再用同一份余额快照同时放行（结算才发现的坏账来源）。
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts = append(billingEligibilityOpts, service.WithBalanceReservation(&balanceReservation))
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingEligibilityOpts...); err != nil {
 		reqLog.Info("openai_messages.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
@@ -1363,6 +1375,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
@@ -1512,7 +1526,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			balanceReservation.HandOff()
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+				defer balanceReservation.Release(ctx)
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
@@ -1647,7 +1663,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		sessionID := service.ExtractClientSessionID(c)
 
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+		balanceReservation.HandOff()
 		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,
