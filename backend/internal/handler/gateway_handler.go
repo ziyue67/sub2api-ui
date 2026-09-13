@@ -600,8 +600,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			forceCacheBilling := fs.ForceCacheBilling
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
-			balanceReservation.HandOff()
-			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+			h.submitUsageRecordTaskWithReservation(c.Request.Context(), &balanceReservation, func(ctx context.Context) {
 				defer balanceReservation.Release(ctx)
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:             result,
@@ -1015,8 +1014,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
 				sessionID := service.ExtractClientSessionID(c)
-				balanceReservation.HandOff()
-				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+				h.submitUsageRecordTaskWithReservation(c.Request.Context(), &balanceReservation, func(ctx context.Context) {
 					defer balanceReservation.Release(ctx)
 					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 						Result:             result,
@@ -2643,16 +2641,31 @@ func (h *GatewayHandler) maybeLogCompatibilityFallbackMetrics(reqLog *zap.Logger
 }
 
 func (h *GatewayHandler) submitUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
+	h.submitUsageRecordTaskTracked(parent, task)
+}
+
+// submitUsageRecordTaskTracked 与 submitUsageRecordTask 语义完全一致，但额外返回
+// "任务是否会被执行"：
+//   - true：任务已入队，或已在关停窗口内联同步执行（两种情况都会真正跑）；
+//   - false：任务被池按显式 drop/sample 语义丢弃，**永远不会运行**。
+//
+// 调用方（尤其是持有在途预留的结算路径）必须据返回值决定后续动作：任务不会跑就意味着
+// 既不会扣费、也不会归还预留，预留只能靠 TTL 自愈 —— 那会白占用户额度十分钟。
+func (h *GatewayHandler) submitUsageRecordTaskTracked(parent context.Context, task service.UsageRecordTask) bool {
 	if task == nil {
-		return
+		return false
 	}
 	task = wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
-		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
-			return
+		mode := h.usageRecordWorkerPool.Submit(task)
+		if !mode.Dropped() {
+			return true
+		}
+		if mode != service.UsageRecordSubmitModeDroppedStopped {
+			// 显式配置的 drop/sample 溢出丢弃：按配置语义保留，任务不会执行。
+			return false
 		}
 		// 池已停止（进程关停窗口）：计费任务不能静默丢失，降级为内联同步执行。
-		// 显式配置的 drop/sample 溢出丢弃仍按配置语义保留。
 		logger.L().With(
 			zap.String("component", "handler.gateway.messages"),
 		).Warn("gateway.usage_record_task_stopped_sync_fallback")
@@ -2669,6 +2682,27 @@ func (h *GatewayHandler) submitUsageRecordTask(parent context.Context, task serv
 		}
 	}()
 	task(ctx)
+	return true
+}
+
+// submitUsageRecordTaskWithReservation 提交结算任务并一并处理在途预留的归还责任。
+//
+// 三条路径：
+//   - 任务被接收（入队 / 内联执行）：HandOff()，归还责任交给结算任务，扣费完成后 Release；
+//   - 任务被丢弃：永远不会扣费，立即 Release 归还预留，不等 TTL（否则用户在没消费的
+//     情况下被白占额度十分钟，且只能靠 TTL 自愈）；
+//   - task == nil：没有结算发生，同样立即归还。
+func (h *GatewayHandler) submitUsageRecordTaskWithReservation(parent context.Context, slot *service.BillingReservationSlot, task service.UsageRecordTask) {
+	if slot == nil {
+		h.submitUsageRecordTask(parent, task)
+		return
+	}
+	if !h.submitUsageRecordTaskTracked(parent, task) {
+		service.RecordBillingReservationAbandoned()
+		slot.Release(parent)
+		return
+	}
+	slot.HandOff()
 }
 
 // submitMandatoryUsageRecordTask never silently drops billing work on pool overflow.

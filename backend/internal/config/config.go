@@ -961,8 +961,12 @@ type BillingConfig struct {
 	// RequestSpendMinOutputTokens 预检输出上界下限（token）。部分上游桥不执行
 	// 请求声明的 max_tokens / max_output_tokens（实测 /v1/responses 桥声明 64 或
 	// 190 仍产出 999 token）：预检若信任声明的小上限就会低估最坏费用，钱包贴底
-	// 时结算仍会封顶产生坏账。>0 时输出上界取 max(声明值, 本下限)；0（默认）
-	// 保持“信任声明值”的既有行为。
+	// 时结算仍会封顶产生坏账。>0 时输出上界取 max(声明值, 本下限)。
+	//
+	// 默认 8192（= RequestSpendDefaultMaxOutputTokens），即不再信任任何小于缺省
+	// 上界的声明值 —— 这是堵死上述已知坏账洞所需的取值。零值安全：手工构造的
+	// Config（测试/工具）取值 0 时保持"信任声明值"的旧行为；要显式回到旧行为，
+	// 在生产配置里写 0，并接受 write-off 指标不为零。
 	RequestSpendMinOutputTokens int `mapstructure:"request_spend_min_output_tokens"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
@@ -2155,7 +2159,12 @@ func setDefaults() {
 	viper.SetDefault("billing.request_spend_precheck_disabled", false)
 	viper.SetDefault("billing.request_spend_default_max_output_tokens", 8192)
 	viper.SetDefault("billing.request_spend_safety_multiplier", 1.0)
-	viper.SetDefault("billing.request_spend_min_output_tokens", 0)
+	// 输出上界下限默认取 8192（= 未声明时的缺省上界）：部分上游桥不执行请求声明的
+	// max_tokens（实测声明 64/190 仍产出 999 token），信任小声明值会让预检低估、
+	// 钱包贴底时重新产生坏账（usage_log 实证应收 0.099561 / 实收 0.095776）。
+	// 只在用户已贴近封底时才可能改变判定：余额充足的用户不受任何影响。
+	// 若要回到"信任声明值"的旧行为，显式配 0，并接受 write-off 指标不为零。
+	viper.SetDefault("billing.request_spend_min_output_tokens", 8192)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 

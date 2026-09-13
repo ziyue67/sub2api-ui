@@ -1164,8 +1164,17 @@ billing:
   # behaviour (default).
   # 预检输出上界下限（token）：上游桥可能不执行请求声明的 max_tokens（实测声明
   # 64/190 仍产出 999 token），信任小上限会低估最坏费用、贴底时仍产生坏账。
-  # >0 时按 max(声明值, 本下限) 预检；0（默认）= 保持信任声明值的既有行为。
-  request_spend_min_output_tokens: 0
+  # >0 时按 max(声明值, 本下限) 预检；0 = 保持信任声明值的旧行为（会产生坏账）。
+  #
+  # 本示例配置默认取 8192，与"请求未声明输出上限"时的缺省上界一致 —— 即不再信任
+  # 任何比 8192 更小的声明值。这是修掉"responses 桥不执行 max_tokens"那个已知坏账
+  # 洞所需的取值；若要保留旧行为请显式改成 0，并同步接受 write-off 指标不为零。
+  # Floor for the preflight's output-token upper bound: some upstream bridges ignore the
+  # request's declared max_tokens (64 declared → 999 produced in production), so trusting
+  # a small declared value underestimates the worst-case cost and reopens write-offs when
+  # the wallet is near the floor. 8192 = never trust a declared value below the default
+  # upper bound. Set to 0 only if you accept non-zero billing write-offs.
+  request_spend_min_output_tokens: 8192
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口
   user_platform_quota_cache_ttl_seconds: 86400

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"strings"
@@ -43,6 +44,15 @@ const (
 	// requestSpendInputOverheadTokens 输入上界的固定附加量：覆盖请求体之外的
 	// 计费输入（网关模板、头部折算等）的保守附加。
 	requestSpendInputOverheadTokens = 16
+	// requestSpendMinInlineBinaryRun 被识别为"内联二进制负载"（base64 图片/文件）
+	// 的最短连续串长度。短于它的串仍按文本折算，避免把普通长标识符误判成图片。
+	requestSpendMinInlineBinaryRun = 512
+	// requestSpendImageTokenAllowance 每块内联图片折算的输入 token 上界。
+	//
+	// 图片按 patch/分辨率计费，与 base64 字节数无关：一张 4K 图的 base64 可达数 MB，
+	// 若按 len(body)/2 折算会得出几十万 token 的天文上界，让"余额充足但贴底"的用户
+	// 在带图请求上被误 403。这里改用固定上限（取高分辨率场景的保守值）替代字节折算。
+	requestSpendImageTokenAllowance = 1600
 )
 
 // requestSpendPrecheckEnabled 返回最坏费用预检是否启用。
@@ -105,13 +115,76 @@ func ExtractRequestMaxOutputTokens(body []byte) (int, bool) {
 // 保守口径：对 UTF-8 文本，BPE 分词每个 token 至少消费 2 字节，因此 len(body)/2
 // 是常用的经验上界；再加固定附加量覆盖请求体之外/网关侧注入的计费输入。
 // 宁可高估（多拦一笔付不满最坏费用的请求）也不低估（低估即重新产生坏账）。
-// 非典型内容（如大量短 token 的特殊编码）可由
-// billing.request_spend_safety_multiplier 进一步放大兜底。
+//
+// 例外：内联 base64 图片/文件（data URI 或 `"data":"<base64>"` 字段）是**二进制**，
+// 不是文本 token。把它们的字节按 len(body)/2 折算会得到"一张小图 = 几十万 token"的
+// 荒谬上界，使余额充足但贴近封底的用户在带图请求上被误 403。这类负载改按
+// requestSpendImageTokenAllowance × 块数 折算（与分辨率无关的固定上限）。
+//
+// 扫描有字面量闸门（不含 "base64" 的请求体完全走原口径），且只认**未被转义**的
+// JSON 字段与 data URI 标记，因此 prompt 里粘贴的 base64 样例（转义形式）不会被误减。
+// 非典型内容可由 billing.request_spend_safety_multiplier 进一步放大兜底。
 func EstimateRequestInputTokensUpperBound(body []byte) int {
 	if len(body) <= 0 {
 		return requestSpendInputOverheadTokens
 	}
-	return len(body)/2 + requestSpendInputOverheadTokens
+	inlineBytes, blobs := inlineBinaryPayloadStats(body)
+	textBytes := len(body) - inlineBytes
+	if textBytes < 0 {
+		textBytes = 0
+	}
+	return textBytes/2 + blobs*requestSpendImageTokenAllowance + requestSpendInputOverheadTokens
+}
+
+// inlineBinaryPayloadStats 统计请求体内联 base64 负载的字节数与块数。
+//
+// 识别两种真实形态（都要求标记未被 JSON 转义，因此不会命中 prompt 正文里的样例）：
+//   - data URI：`;base64,` 之后连续的 base64 字符；
+//   - 字段值：`"data":"<base64>"` / `"data": "<base64>"`（Anthropic image block、
+//     OpenAI 部分多模态字段的形态）。
+//
+// 连续串短于 requestSpendMinInlineBinaryRun 时不计入二进制（仍按文本折算），
+// 避免把普通长标识符误判成图片而低估费用。
+func inlineBinaryPayloadStats(body []byte) (payloadBytes int, blobs int) {
+	if !bytes.Contains(body, []byte("base64")) && !bytes.Contains(body, []byte(`"data":`)) {
+		return 0, 0
+	}
+	for _, marker := range [...][]byte{
+		[]byte(";base64,"),
+		[]byte(`"data":"`),
+		[]byte(`"data": "`),
+	} {
+		searchFrom := 0
+		for {
+			rel := bytes.Index(body[searchFrom:], marker)
+			if rel < 0 {
+				break
+			}
+			start := searchFrom + rel + len(marker)
+			end := start
+			for end < len(body) && isBase64Alphabet(body[end]) {
+				end++
+			}
+			if end-start >= requestSpendMinInlineBinaryRun {
+				payloadBytes += end - start
+				blobs++
+			}
+			searchFrom = end
+		}
+	}
+	return payloadBytes, blobs
+}
+
+// isBase64Alphabet 判断字节是否属于 base64 字符集（含 padding）。
+func isBase64Alphabet(c byte) bool {
+	switch {
+	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		return true
+	case c == '+', c == '/', c == '=':
+		return true
+	default:
+		return false
+	}
 }
 
 // estimateRequestSpendUpperBound 组装最坏费用上界（USD）。返回 0 表示本闸门
@@ -128,13 +201,16 @@ func estimateRequestSpendUpperBound(
 	body []byte,
 ) float64 {
 	if !requestSpendPrecheckEnabled(cfg) {
+		RecordBillingPrecheckDisabled()
 		return 0
 	}
 	if billingService == nil || resolveBaseMultiplier == nil || user == nil || apiKey == nil || apiKey.Group == nil {
+		RecordBillingPrecheckUnavailable()
 		return 0
 	}
 	model = strings.TrimSpace(model)
 	if model == "" {
+		RecordBillingPrecheckUnavailable()
 		return 0
 	}
 
@@ -181,10 +257,12 @@ func estimateRequestSpendUpperBound(
 		Resolved:       resolved,
 	})
 	if err != nil || cost == nil {
+		RecordBillingPrecheckUnavailable()
 		return 0
 	}
 	spend := cost.ActualCost * requestSpendSafetyMultiplier(cfg)
 	if spend <= 0 || math.IsNaN(spend) || math.IsInf(spend, 0) {
+		RecordBillingPrecheckUnavailable()
 		return 0
 	}
 	return spend
@@ -248,4 +326,80 @@ func (s *OpenAIGatewayService) resolveRequestSpendBaseMultiplier(ctx context.Con
 		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
 	return multiplier
+}
+
+// imageSpendTierCandidates 返回图片预检要试探的尺寸档。
+//
+// 分组配置了图片单价时，按**全部档位**取最贵的一档作为上界：上游桥可能不执行请求
+// 声明的 size，只按声明档预检会低估（与 request_spend_min_output_tokens 的思路一致，
+// 方向保守，宁多拦不失守）。未配置单价时只试探声明档，避免在热路径上为每个档位各
+// 触发一次"刷新分组媒体定价"的 DB 读。
+func imageSpendTierCandidates(apiKey *APIKey, size string) []string {
+	declared := NormalizeImageBillingTierOrDefault(size)
+	if apiKey != nil && apiKey.Group != nil &&
+		(apiKey.Group.ImagePrice1K != nil || apiKey.Group.ImagePrice2K != nil || apiKey.Group.ImagePrice4K != nil) {
+		return []string{ImageBillingSize1K, ImageBillingSize2K, ImageBillingSize4K}
+	}
+	return []string{declared}
+}
+
+// EstimateImageRequestSpendUpperBound 预判一次"按次计费"图片生成请求的最坏费用上界（USD）。
+//
+// 图片是固定单价（尺寸档 × 张数），与 token 无关，因此**不能**复用 token 预估
+// （token 预估对图片请求会得出天文数字或 0，两种都错）。口径与结算严格同源：
+// 直接复用结算用的 calculateOpenAIImageCost（同一条分组/渠道定价 + 兜底单价链），
+// 倍率取结算所用的 imageMultiplier（含高峰因子）。
+//
+// count <= 0（请求未声明 n）按 1 张计。返回 0 表示无法给出有效上界（功能关闭、
+// 依赖缺失或无正价格），调用方保持既有行为。
+//
+// 已知边界：与 token 预估同理，这里是"声明 + 保守放大"的估计，不覆盖上游自行放大
+// 张数的情况；`billing.request_spend_safety_multiplier` 可进一步放大兜底。
+func (s *OpenAIGatewayService) EstimateImageRequestSpendUpperBound(
+	ctx context.Context,
+	user *User,
+	apiKey *APIKey,
+	model string,
+	size string,
+	count int,
+) float64 {
+	if !requestSpendPrecheckEnabled(s.cfg) {
+		RecordBillingPrecheckDisabled()
+		return 0
+	}
+	if s == nil || s.billingService == nil || user == nil || apiKey == nil || apiKey.Group == nil {
+		RecordBillingPrecheckUnavailable()
+		return 0
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		RecordBillingPrecheckUnavailable()
+		return 0
+	}
+	if count <= 0 {
+		count = 1
+	}
+
+	at := timezone.Now()
+	baseMultiplier := s.resolveRequestSpendBaseMultiplier(ctx, user, apiKey)
+	_, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, at)
+
+	best := 0.0
+	for _, tier := range imageSpendTierCandidates(apiKey, size) {
+		breakdown := s.calculateOpenAIImageCost(ctx, model, apiKey, &OpenAIForwardResult{
+			ImageCount: count,
+			ImageSize:  tier,
+		}, imageMultiplier)
+		if breakdown == nil {
+			continue
+		}
+		if breakdown.ActualCost > best {
+			best = breakdown.ActualCost
+		}
+	}
+	if best <= 0 || math.IsNaN(best) || math.IsInf(best, 0) {
+		RecordBillingPrecheckUnavailable()
+		return 0
+	}
+	return best * requestSpendSafetyMultiplier(s.cfg)
 }
