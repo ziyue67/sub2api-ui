@@ -257,3 +257,57 @@ func TestEstimateRequestInputTokensUpperBound_AnthropicBase64Block(t *testing.T)
 	shortId := `{"model":"gpt-4o","messages":[{"role":"user","content":"` + strings.Repeat("abc", 50) + `"}]}`
 	require.Greater(t, EstimateRequestInputTokensUpperBound([]byte(shortId)), 100, "短串必须仍按文本折算")
 }
+
+// TestEstimateRequestInputTokensUpperBound_Base64InTextIsDense 是生产坏账的回归测试
+// （166.1.232.118 2026-09-13：20KB base64 粘在 text 里，上游按文本分词为 18907 token、
+// 实际成本 $0.00835，而修复前按"图片=1600 token"折算只估 $0.0021 → 低估 4 倍，
+// 产生一笔 shortfall=$0.00335208 的 write-off）。
+//
+// 口径：**不在多模态块内**（前面最近的 JSON 键是 text/content 等）的 base64,
+// 必须按稠密费率 requestSpendDenseTokensPerByte(1 token/字节) 计,
+// 绝不能享受图片固定折算。
+func TestEstimateRequestInputTokensUpperBound_Base64InTextIsDense(t *testing.T) {
+	blob := strings.Repeat("iVBORw0KGgoAAAANSUhEUg", 1000) // ≈22KB base64 文本
+	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":[{"type":"text","text":"describe: data:image/png;base64,` + blob + `"}]}]}`)
+
+	upper := EstimateRequestInputTokensUpperBound([]byte(body))
+	require.GreaterOrEqual(t, upper, len(blob),
+		"text 里的 base64 必须按稠密费率(≈1 token/字节)计,不得按图片 1600/块折算")
+	require.LessOrEqual(t, upper, len(blob)+len(body)/2+requestSpendInputOverheadTokens+64,
+		"稠密部分之外不应再有大的放大")
+}
+
+// TestEstimateRequestInputTokensUpperBound_MixedImageAndTextBase64 验证同一请求里
+// 两种形态并存时各按各的口径:真实 image block 固定折算,text 里的 base64 稠密折算。
+func TestEstimateRequestInputTokensUpperBound_MixedImageAndTextBase64(t *testing.T) {
+	realImage := strings.Repeat("iVBORw0KGgoAAAANSUhEUg", 400)      // ≈8.8KB 真实图片块
+	textBase64 := strings.Repeat("QWxwaGE0QmV0YUdBTU1hRGF0YQ", 800) // ≈20.4KB 文本里的 base64
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":[
+		{"type":"image_url","image_url":{"url":"data:image/png;base64,` + realImage + `"}},
+		{"type":"text","text":"data:image/png;base64,` + textBase64 + `"}]}]}`)
+
+	upper := EstimateRequestInputTokensUpperBound([]byte(body))
+	// 真实图片块 → 1600;文本 base64 → ≈1 token/字节;其余文本 → /2。
+	require.GreaterOrEqual(t, upper, len(textBase64), "text 里的 base64 必须按稠密费率计")
+	require.Less(t, upper, len(realImage)+len(textBase64),
+		"真实图片块不得按字节折算(否则会再加 8000+ token)")
+}
+
+// TestJsonKeyBefore 验证键名回溯(多模态块判定的核心)。
+func TestJsonKeyBefore(t *testing.T) {
+	cases := []struct {
+		body string
+		pos  int // valueStart(值的第一个字节)
+		want string
+	}{
+		{`{"a":{"url":"data:image/png;base64,XXXX"`, len(`{"a":{"url":"`), "url"},
+		{`{"s":{"type":"base64","data":"XXXX"`, len(`{"s":{"type":"base64","data":"`), "data"},
+		{`{"m":{"inline_data":{"data": "XXXX"`, len(`{"m":{"inline_data":{"data": "`), "data"},
+		{`{"m":{"text":"data:image/png;base64,XXXX"`, len(`{"m":{"text":"data:image/png;base64,`), "text"},
+		{`{"m":{"text":"here: XXXX"`, len(`{"m":{"text":"here: `), ""},
+	}
+	for _, tc := range cases {
+		got := jsonKeyBefore([]byte(tc.body), tc.pos)
+		require.Equal(t, tc.want, got, "body=%s pos=%d", tc.body, tc.pos)
+	}
+}

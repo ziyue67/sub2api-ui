@@ -112,67 +112,180 @@ func ExtractRequestMaxOutputTokens(body []byte) (int, bool) {
 
 // EstimateRequestInputTokensUpperBound 把请求体字节数折算为输入 token 上界。
 //
-// 保守口径：对 UTF-8 文本，BPE 分词每个 token 至少消费 2 字节，因此 len(body)/2
-// 是常用的经验上界；再加固定附加量覆盖请求体之外/网关侧注入的计费输入。
+// 三段口径（生产实测校准，166.1.232.118 2026-09-13）：
+//   - 普通文本：len/2（BPE 每 token ≥2 字节的经验上界）；
+//   - **多模态块内的 base64**（`url`/`data`/`file_data` 字段承载的 data URI 或
+//     `"type":"base64"` 块）：上游按图片/音频 patch 计费、与字节数无关 → 每块按
+//     requestSpendImageTokenAllowance 固定折算。真实图片若按字节折算会得到
+//     "一张小图 = 几十万 token"的荒谬上界，使贴底用户的带图请求被误 403；
+//   - **文本内容里的 base64**（不处于多模态块内）：上游会把它当**文本**分词，
+//     实测 20KB base64 ≈ 18907 token ≈ 0.92 token/字节 → 按 1 token/字节 计
+//     （requestSpendDenseTokensPerByte）。若也按 1600/块折算会低估 4 倍，
+//     生产实测产生过一笔 $0.00335 的 write-off（cost=0.00835208 collected=0.005）。
+//
 // 宁可高估（多拦一笔付不满最坏费用的请求）也不低估（低估即重新产生坏账）。
-//
-// 例外：内联 base64 图片/文件（data URI 或 `"data":"<base64>"` 字段）是**二进制**，
-// 不是文本 token。把它们的字节按 len(body)/2 折算会得到"一张小图 = 几十万 token"的
-// 荒谬上界，使余额充足但贴近封底的用户在带图请求上被误 403。这类负载改按
-// requestSpendImageTokenAllowance × 块数 折算（与分辨率无关的固定上限）。
-//
-// 扫描有字面量闸门（不含 "base64" 的请求体完全走原口径），且只认**未被转义**的
-// JSON 字段与 data URI 标记，因此 prompt 里粘贴的 base64 样例（转义形式）不会被误减。
 // 非典型内容可由 billing.request_spend_safety_multiplier 进一步放大兜底。
 func EstimateRequestInputTokensUpperBound(body []byte) int {
 	if len(body) <= 0 {
 		return requestSpendInputOverheadTokens
 	}
-	inlineBytes, blobs := inlineBinaryPayloadStats(body)
-	textBytes := len(body) - inlineBytes
+	binaryBytes, denseBytes, blobs := inlineBinaryPayloadStats(body)
+	textBytes := len(body) - binaryBytes - denseBytes
 	if textBytes < 0 {
 		textBytes = 0
 	}
-	return textBytes/2 + blobs*requestSpendImageTokenAllowance + requestSpendInputOverheadTokens
+	return textBytes/requestSpendTextBytesPerToken +
+		denseBytes*requestSpendDenseTokensPerByte +
+		blobs*requestSpendImageTokenAllowance +
+		requestSpendInputOverheadTokens
 }
 
-// inlineBinaryPayloadStats 统计请求体内联 base64 负载的字节数与块数。
+// requestSpendTextBytesPerToken 普通文本的"每 token 字节数"下界（保守口径：2 字节/token）。
+const requestSpendTextBytesPerToken = 2
+
+// requestSpendDenseTokensPerByte 文本内容里 base64 的分词密度（token/字节）。
+// 实测：20KB base64 由上游分词为 18907 token ≈ 0.92 token/字节（base64 无自然词边界，
+// BPE 压缩极差）。取 1.0 略保守。误按普通文本的 0.5 token/字节会低估 2 倍。
+const requestSpendDenseTokensPerByte = 1
+
+// inlineBinaryPayloadStats 统计请求体内联 base64 负载,并按其**所在位置**分类:
 //
-// 识别两种真实形态（都要求标记未被 JSON 转义，因此不会命中 prompt 正文里的样例）：
-//   - data URI：`;base64,` 之后连续的 base64 字符；
-//   - 字段值：`"data":"<base64>"` / `"data": "<base64>"`（Anthropic image block、
-//     OpenAI 部分多模态字段的形态）。
+//   - binary(多模态块内):base64 是 JSON 多模态负载字段(`url`/`data`/`file_data`)
+//     的值 —— 上游按图片/音频 patch 计费、与字节数无关 → 每块按固定 allowance 折算。
+//     覆盖形态:OpenAI `image_url.url` 的 data URI、Anthropic `source.data`
+//     (配 `"type":"base64"`)、Gemini `inline_data.data`、`input_audio.data`。
+//   - dense(文本内容里):base64 出现在其它位置(典型:整段 base64 粘在 text 里)——
+//     上游会把它当**文本**分词(实测 ≈0.92 token/字节)→ 按
+//     requestSpendDenseTokensPerByte 折算,绝不能按图片固定值折算
+//     (生产实测曾因此低估 4 倍、产生一笔 write-off)。
 //
-// 连续串短于 requestSpendMinInlineBinaryRun 时不计入二进制（仍按文本折算），
-// 避免把普通长标识符误判成图片而低估费用。
-func inlineBinaryPayloadStats(body []byte) (payloadBytes int, blobs int) {
+// 判定方式:从负载标记向前找**最近的 JSON 键名** —— 只有键是
+// `url`/`data`/`file_data`(多模态负载字段)时才算多模态块;
+// 文本内容里的 base64,它前面最近的键是 `text`/`content` 等 → 归入 dense。
+// 连续串短于 requestSpendMinInlineBinaryRun 时不单独处理(仍按普通文本折算)。
+func inlineBinaryPayloadStats(body []byte) (binaryBytes int, denseBytes int, blobs int) {
 	if !bytes.Contains(body, []byte("base64")) && !bytes.Contains(body, []byte(`"data":`)) {
-		return 0, 0
+		return 0, 0, 0
 	}
+	lastEnd := 0
 	for _, marker := range [...][]byte{
 		[]byte(";base64,"),
 		[]byte(`"data":"`),
 		[]byte(`"data": "`),
 	} {
-		searchFrom := 0
+		from := lastEnd
 		for {
-			rel := bytes.Index(body[searchFrom:], marker)
+			rel := bytes.Index(body[from:], marker)
 			if rel < 0 {
 				break
 			}
-			start := searchFrom + rel + len(marker)
+			markerStart := from + rel
+			start := markerStart + len(marker)
 			end := start
 			for end < len(body) && isBase64Alphabet(body[end]) {
 				end++
 			}
-			if end-start >= requestSpendMinInlineBinaryRun {
-				payloadBytes += end - start
-				blobs++
+			from = end
+			if start < lastEnd || end-start < requestSpendMinInlineBinaryRun {
+				continue
 			}
-			searchFrom = end
+			if multimodalPayloadKeys[jsonKeyBefore(body, start)] {
+				binaryBytes += end - start
+				blobs++
+			} else {
+				denseBytes += end - start
+			}
+			lastEnd = end
 		}
 	}
-	return payloadBytes, blobs
+	return binaryBytes, denseBytes, blobs
+}
+
+// multimodalPayloadKeys 是 JSON 中承载多模态二进制负载的字段名:
+//   - OpenAI: `image_url.url`(data URI)、`input_audio.data`、`file_data`
+//   - Anthropic: `source.data`(配 `"type":"base64"`)
+//   - Gemini: `inline_data.data` / `inlineData.data`
+//
+// 出现在这些键里的 base64 由上游按 patch 计费(与字节数无关),按固定 allowance 折算;
+// 其它位置(典型是 text/content 字段)的 base64 会被上游当文本分词,按稠密费率折算。
+var multimodalPayloadKeys = map[string]bool{
+	"url":       true,
+	"data":      true,
+	"file_data": true,
+}
+
+// jsonKeyBefore 返回 valueStart 处 JSON 字符串值所属的**键名**。
+//
+// valueStart 指向值的第一个字节。从它向前解析(反向)五段结构:
+//
+//	[URI 前缀(可空)] 值起始引号 [空白] `:` [空白] 键名收尾引号 …… 键名起始引号
+//
+// 其中 URI 前缀 = `data:<mime>;base64,`(data URI 形态下,负载标记 `;base64,`
+// 之前的 `data:` 冒号也是值的一部分)。解析不出该结构时返回 ""(调用方按 dense
+// 处理,方向保守:base64 文本按 1 token/字节计,宁多估不少估)。
+func jsonKeyBefore(body []byte, valueStart int) string {
+	isJSONSpace := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+	i := valueStart - 1
+	// (a) 跳过 data URI 前缀:`data:<mime>;base64,` 整段(含 scheme 名与它的冒号)
+	//     都属于值的一部分,要一路回溯到值的起始引号。
+	for {
+		for i >= 0 && isDataURIChar(body[i]) {
+			i--
+		}
+		if i < 0 {
+			return ""
+		}
+		if body[i] == ':' {
+			// `data:` 的 scheme 冒号:它前面还有 scheme 名(URI 字符),继续回溯
+			i--
+			continue
+		}
+		break
+	}
+	// (b) 此处应是值的起始引号
+	if i < 0 || body[i] != '"' {
+		return ""
+	}
+	i--
+	// (c) 跳过空白,期望键值分隔符 `:`
+	for i >= 0 && isJSONSpace(body[i]) {
+		i--
+	}
+	if i < 0 || body[i] != ':' {
+		return ""
+	}
+	i--
+	// (d) 跳过空白,期望键名收尾引号
+	for i >= 0 && isJSONSpace(body[i]) {
+		i--
+	}
+	if i < 0 || body[i] != '"' {
+		return ""
+	}
+	end := i
+	// (e) 回溯键名起始引号(跳过 `\"` 转义)
+	i--
+	for i >= 0 {
+		if body[i] == '"' && (i == 0 || body[i-1] != '\\') {
+			return string(body[i+1 : end])
+		}
+		i--
+	}
+	return ""
+}
+
+// isDataURIChar 判断字节是否属于 data URI 前缀(`data:<mime>;base64,`)的组成字符。
+// 注意不含 `:`(它是回溯的终止锚点)与 `"`(值的起始引号)。
+func isDataURIChar(c byte) bool {
+	switch {
+	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		return true
+	case c == ';', c == ',', c == '/', c == '+', c == '-', c == '.':
+		return true
+	default:
+		return false
+	}
 }
 
 // isBase64Alphabet 判断字节是否属于 base64 字符集（含 padding）。
