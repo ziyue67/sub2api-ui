@@ -51,9 +51,10 @@ func (s *BillingReservationSuite) TestReserveAccumulatesAndReportsTotal() {
 	require.Equal(s.T(), int64(1), exists, "预留键应存在")
 
 	// 每笔请求都留有自己的凭据键。
-	itemExists, err := rdb.Exists(ctx, billingReservedItemKey(scope, "req-a"), billingReservedItemKey(scope, "req-b")).Result()
-	require.NoError(s.T(), err, "Exists item")
-	require.Equal(s.T(), int64(2), itemExists, "每笔请求应各自留有一条凭据")
+	// 注意：夹具的 prefixHook 对 EXISTS 只改写第一个 key 参数，因此这里必须逐 key
+	// 单发 EXISTS，不能用一次多 key 的 Exists（否则统计会偏小）。
+	require.Equal(s.T(), int64(1), s.itemExists(rdb, scope, "req-a"), "req-a 应留有凭据")
+	require.Equal(s.T(), int64(1), s.itemExists(rdb, scope, "req-b"), "req-b 应留有凭据")
 
 	ttl, err := rdb.TTL(ctx, key).Result()
 	require.NoError(s.T(), err, "TTL")
@@ -214,7 +215,7 @@ func (s *BillingReservationSuite) TestRenewExtendsReceiptTTL() {
 }
 
 func (s *BillingReservationSuite) TestConcurrentReserveAccumulatesExactly() {
-	cache, _ := s.reservationCache()
+	cache, rdb := s.reservationCache()
 	ctx := context.Background()
 	scope := "9009"
 
@@ -246,18 +247,23 @@ func (s *BillingReservationSuite) TestConcurrentReserveAccumulatesExactly() {
 	require.Greater(s.T(), final, perWorker, "并发累加不得退化为单笔覆盖")
 
 	// 并发场景下每笔都必须留下自己的凭据，否则无法安全归还。
-	itemCount, err := rdbItemCount(ctx, cache, scope)
-	require.NoError(s.T(), err, "统计凭据数")
+	// （夹具的 prefixHook 不改写 KEYS 的 pattern，所以这里逐 key 单发 EXISTS 统计。）
+	itemCount := 0
+	for i := 0; i < workers; i++ {
+		itemCount += int(s.itemExists(rdb, scope, fmt.Sprintf("req-%d", i)))
+	}
 	require.Equal(s.T(), workers, itemCount, "每笔并发预留都应有独立凭据")
 }
 
-// rdbItemCount 统计某个 scope 下的凭据键数量（仅测试使用）。
-func rdbItemCount(ctx context.Context, cache *billingCache, scope string) (int, error) {
-	keys, err := cache.rdb.Keys(ctx, billingReservedItemKeyPrefix+scope+":*").Result()
-	if err != nil {
-		return 0, err
-	}
-	return len(keys), nil
+// itemExists 单 key 探测某笔预留凭据是否存在（返回 1/0）。
+//
+// 必须单 key：夹具的 prefixHook 对 EXISTS 只改写第一个 key 参数，一次传多个 key
+// 会漏改写、得到错误的计数。
+func (s *BillingReservationSuite) itemExists(rdb *redis.Client, scope, requestID string) int64 {
+	s.T().Helper()
+	n, err := rdb.Exists(context.Background(), billingReservedItemKey(scope, requestID)).Result()
+	require.NoError(s.T(), err, "Exists reservation receipt %s", requestID)
+	return n
 }
 
 func TestBillingReservationSuite(t *testing.T) {
