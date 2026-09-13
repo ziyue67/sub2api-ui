@@ -397,8 +397,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
-		balanceReservation.HandOff()
-		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+		h.submitUsageRecordTaskWithReservation(c.Request.Context(), &balanceReservation, func(ctx context.Context) {
 			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,

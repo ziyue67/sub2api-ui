@@ -133,7 +133,22 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 按次计费（图片）的最坏费用预检 + 在途预留：图片单价远高于文本 token 费用，
+	// 且不与 token 预估同源，因此单独按"尺寸档 × 张数"估上界，并挂同一个预留槽位
+	// 使并发准入原子化。预付能力不可用时闸门返回 0，自动退回既有封底结算兜底。
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts := []service.BillingEligibilityOption{
+		service.WithBalanceReservation(&balanceReservation),
+	}
+	if worstSpend := h.gatewayService.EstimateImageRequestSpendUpperBound(
+		c.Request.Context(), apiKey.User, apiKey, requestModel, parsed.Size, parsed.N,
+	); worstSpend > 0 {
+		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
+	}
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
+
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingEligibilityOpts...); err != nil {
 		reqLog.Info("openai.images.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -396,7 +411,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			upstreamModel = result.UpstreamModel
 		}
 		sessionID := service.ExtractClientSessionID(c)
-		h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+		h.submitMandatoryUsageRecordTaskWithReservation(c.Request.Context(), &balanceReservation, func(ctx context.Context) {
+			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,

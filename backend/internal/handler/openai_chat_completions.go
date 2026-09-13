@@ -335,8 +335,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-			balanceReservation.HandOff()
-			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+			h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), res, &balanceReservation, func(ctx context.Context) {
 				defer balanceReservation.Release(ctx)
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
@@ -486,8 +485,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		sessionID := service.ExtractClientSessionID(c)
 
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		balanceReservation.HandOff()
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+		h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), result, &balanceReservation, func(ctx context.Context) {
 			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
