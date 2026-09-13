@@ -961,8 +961,13 @@ type BillingConfig struct {
 	// RequestSpendMinOutputTokens 预检输出上界下限（token）。部分上游桥不执行
 	// 请求声明的 max_tokens / max_output_tokens（实测 /v1/responses 桥声明 64 或
 	// 190 仍产出 999 token）：预检若信任声明的小上限就会低估最坏费用，钱包贴底
-	// 时结算仍会封顶产生坏账。>0 时输出上界取 max(声明值, 本下限)；0（默认）
-	// 保持“信任声明值”的既有行为。
+	// 时结算仍会封顶产生坏账。>0 时输出上界取 max(声明值, 本下限)。
+	//
+	// 默认 0 = 保持"信任声明值"的既有行为，升级零行为变化；观察到 write-off 指标
+	// （settlement_shortfall_count）非零时再显式打开（推荐 8192 = 缺省上界）。
+	//
+	// 作用范围：本下限只"抬高偏小的声明值"，对 >= 本值的声明值（含大 max_tokens）
+	// 逐位不变，因此不会让"大 max_tokens 请求更早被 403"。
 	RequestSpendMinOutputTokens int `mapstructure:"request_spend_min_output_tokens"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
@@ -2155,6 +2160,19 @@ func setDefaults() {
 	viper.SetDefault("billing.request_spend_precheck_disabled", false)
 	viper.SetDefault("billing.request_spend_default_max_output_tokens", 8192)
 	viper.SetDefault("billing.request_spend_safety_multiplier", 1.0)
+	// 输出上界下限，默认 0 = 保持"信任请求声明值"的既有行为（升级零行为变化）。
+	//
+	// 何时需要打开：部分上游桥不执行请求声明的 max_tokens（实测声明 64/190 仍产出
+	// 999 token），此时预检会低估最坏费用、钱包贴底时产生坏账（usage_log 实证
+	// 应收 0.099561 / 实收 0.095776）。把本值配成 8192（= 未声明时的缺省上界）即可
+	// 把这类桥按保守输出量预检。
+	//
+	// 作用范围（很重要）：本下限只"抬高偏小的声明值"，对 >= 本值的声明值（含大
+	// max_tokens）逐位不变。因此它**不会**让"大 max_tokens 请求更早被 403" ——
+	// 那来自最坏费用闸门本身按声明上限计价，是零超发的既有取舍。
+	//
+	// 是否打开由 write-off 指标决定：settlement_shortfall_count 斜率 > 0 就打开它
+	// 或收紧 request_spend_default_max_output_tokens；恒为 0 则保持 0 即可。
 	viper.SetDefault("billing.request_spend_min_output_tokens", 0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)

@@ -27,10 +27,22 @@ const (
 	// 最坏费用上界之和（USD）。预检放行前用 INCRBYFLOAT 原子累加、结算完成后归还，
 	// 使"余额 - 在途预留 >= 封底"成为跨请求的原子准入护栏，堵住并发突发时用同一份
 	// 余额快照全部放行、结算时却扣不动钱的坏账（键带 TTL 自愈，崩溃/丢任务不会永久钉住余额）。
-	billingReservedKeyPrefix  = "billing:reserved:"
-	subCacheInvalidateChannel = "subscription:cache:invalidate"
-	billingCacheTTL           = 5 * time.Minute
-	billingCacheJitter        = 30 * time.Second
+	billingReservedKeyPrefix = "billing:reserved:"
+	// billingReservedItemKeyPrefix 是"单笔预留凭据"键前缀：每个请求用**自己的**
+	// requestID 在 Redis 上留一条金额凭据（TTL 与预留一致）。
+	//
+	// 为什么必须有它：上面的聚合键只有"总额"一个标量，无法回答"这笔归还到底是不是
+	// 我自己那笔"。当某个请求在途时间超过预留 TTL（长流式响应完全可能），它的聚合份额
+	// 已被 TTL 自愈清掉，而它结算时的递减会**吃掉同一用户后来那笔请求的预留**，
+	// 甚至把聚合键 DEL 掉 —— 护栏被错误解除，并发超额窗口原样复现。
+	//
+	// 有了凭据键，归还变成"只有我这条凭据还在，才允许递减，且递减金额以凭据为准"：
+	// 凭据过期的归还一律 no-op，绝不会触碰别人的预留。代价是聚合键可能短暂偏高
+	// （已过期但未归还的份额要等聚合键 TTL 兜底），这是保守方向，不会放行超额。
+	billingReservedItemKeyPrefix = "billing:resv_item:"
+	subCacheInvalidateChannel    = "subscription:cache:invalidate"
+	billingCacheTTL              = 5 * time.Minute
+	billingCacheJitter           = 30 * time.Second
 	// balanceExhaustedMarkerTTL 必须 >= 余额缓存的最长存活时间（billingCacheTTL），
 	// 否则标记先过期、而余额缓存里仍留着偏高的旧值，预检又会被放行。
 	balanceExhaustedMarkerTTL = billingCacheTTL + time.Minute
@@ -62,9 +74,19 @@ func billingBalanceExhaustedKey(userID int64) string {
 	return fmt.Sprintf("%s%d", billingBalanceExhaustedKeyPrefix, userID)
 }
 
-// billingReservedKey generates the Redis key for a user's in-flight spend reservations.
-func billingReservedKey(userID int64) string {
-	return fmt.Sprintf("%s%d", billingReservedKeyPrefix, userID)
+// billingReservedKey generates the Redis key for a reservation scope's in-flight total.
+//
+// scope 由服务层构造，必须是"同一份可被并发放大的额度"的唯一标识：
+//   - 余额模式：用户的 userID；
+//   - 订阅模式："sub:<userID>:<groupID>"（限额挂在用户 × 分组上，与余额互不干扰）。
+func billingReservedKey(scope string) string {
+	return billingReservedKeyPrefix + scope
+}
+
+// billingReservedItemKey generates the Redis key holding one request's reservation
+// receipt (amount + its own TTL). scope/requestID must already be sanitized by the caller.
+func billingReservedItemKey(scope, requestID string) string {
+	return billingReservedItemKeyPrefix + scope + ":" + requestID
 }
 
 // billingSubKey generates the Redis key for subscription cache.
@@ -107,43 +129,91 @@ var (
 		return 1
 	`)
 
-	// reserveBalanceScript 原子地把本次请求的"最坏费用上界"累加进用户的在途预留总额，
-	// 并把累加后的总额以十进制文本原样返回。
+	// reserveBalanceScript 原子地"落凭据 + 累加总额"：为本次请求写入一条带 TTL 的
+	// 预留凭据，并把它累加进用户的在途预留总额，返回累加后的总额（十进制文本）。
 	//
 	// 用 INCRBYFLOAT 而不是 GET+SET：单命令原子、天然支持"键不存在即从 0 开始"，
 	// 且返回值是十进制字符串（不像 Lua number 会被 RESP 整数截断掉小数）。
 	//
-	// KEYS[1] = billing:reserved:<userID>
-	// ARGV[1] = 预留金额（USD，>0），ARGV[2] = 预留键 TTL（毫秒）
+	// 幂等：同 requestID 重复预留（重试/重复绑定）只刷新 TTL，不重复累加，
+	// 否则同一笔请求会被记两次额度。
+	//
+	// KEYS[1] = billing:reserved:<userID>（聚合总额）
+	// KEYS[2] = billing:resv_item:<userID>:<requestID>（本笔凭据）
+	// ARGV[1] = 预留金额（USD，>0），ARGV[2] = TTL（毫秒）
 	reserveBalanceScript = redis.NewScript(`
+		local placed = redis.call('SET', KEYS[2], ARGV[1], 'NX', 'PX', ARGV[2])
+		if not placed then
+			redis.call('PEXPIRE', KEYS[2], ARGV[2])
+			local current = redis.call('GET', KEYS[1])
+			if current == false then
+				return '0'
+			end
+			return current
+		end
 		local newVal = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
 		redis.call('PEXPIRE', KEYS[1], ARGV[2])
 		return newVal
 	`)
 
-	// releaseBalanceScript 原子地归还一笔在途预留：递减总额，降到 ~0 时删除键。
+	// releaseBalanceScript 原子地归还一笔在途预留，**且只归还属于本请求的那一笔**。
 	//
-	// 键不存在（预留已随 TTL 过期 / 从未建立）时是 no-op：绝不能把总额减成负数，
-	// 否则会凭空多放行一份额度。INCRBYFLOAT 不改动键的 TTL，只有当键没有 TTL
-	// （异常情形）时才用 ARGV[2] 兜底补一个。
+	// 关键约束：凭据键不存在（预留已随 TTL 过期 / 从未建立）时必须整体 no-op。
+	// 旧实现只看聚合键是否存在，于是"晚到的归还"会递减别人刚建立的预留 ——
+	// 出现"护栏被错误解除、并发窗口重开"的方向性错误。现在递减金额取自本请求的
+	// 凭据，凭据没了就绝不触碰聚合键。
 	//
-	// KEYS[1] = billing:reserved:<userID>
-	// ARGV[1] = 归还金额的相反数（USD，<0），ARGV[2] = 兜底 TTL（毫秒）
+	// 返回值：'0'（已归还/无需归还）、新的总额字符串、或 'EXPIRED'
+	// （凭据已过期，本次归还被安全忽略）。
+	//
+	// KEYS[1] = billing:reserved:<userID>，KEYS[2] = billing:resv_item:<userID>:<requestID>
+	// ARGV[1] = 兜底 TTL（毫秒）
 	releaseBalanceScript = redis.NewScript(`
+		local amount = redis.call('GET', KEYS[2])
+		if amount == false then
+			return 'EXPIRED'
+		end
+		redis.call('DEL', KEYS[2])
 		local exists = redis.call('EXISTS', KEYS[1])
 		if exists == 0 then
 			return '0'
 		end
-		local newVal = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
+		local newVal = redis.call('INCRBYFLOAT', KEYS[1], '-' .. amount)
 		if tonumber(newVal) <= 1e-07 then
 			redis.call('DEL', KEYS[1])
 			return '0'
 		end
 		local pttl = redis.call('PTTL', KEYS[1])
 		if pttl < 0 then
-			redis.call('PEXPIRE', KEYS[1], ARGV[2])
+			redis.call('PEXPIRE', KEYS[1], ARGV[1])
 		end
 		return newVal
+	`)
+
+	// renewBalanceScript 为**长请求**续期预留：只有凭据仍在时才刷新凭据与聚合键的
+	// TTL。没有它，超过预留 TTL 的流式请求会在结算前就丢掉护栏保护。
+	//
+	// KEYS[1] = billing:reserved:<userID>，KEYS[2] = billing:resv_item:<userID>:<requestID>
+	// ARGV[1] = TTL（毫秒）
+	renewBalanceScript = redis.NewScript(`
+		if redis.call('EXISTS', KEYS[2]) == 0 then
+			return '0'
+		end
+		redis.call('PEXPIRE', KEYS[2], ARGV[1])
+		redis.call('PEXPIRE', KEYS[1], ARGV[1])
+		return '1'
+	`)
+
+	// peekBalanceScript 只读返回聚合总额（不存在时返回 '0'），供运维/测试观测用，
+	// 不引入新的键、也不改变 TTL。
+	//
+	// KEYS[1] = billing:reserved:<userID>
+	peekBalanceScript = redis.NewScript(`
+		local current = redis.call('GET', KEYS[1])
+		if current == false then
+			return '0'
+		end
+		return current
 	`)
 
 	updateSubUsageScript = redis.NewScript(`
@@ -265,38 +335,96 @@ func (c *billingCache) IsUserBalanceExhausted(ctx context.Context, userID int64)
 	return n > 0, nil
 }
 
-// ReserveUserBalance 原子地把本次请求的"最坏费用上界"累加进该用户的在途预留总额，
-// 返回累加后的总额（USD）。
+// ReserveUserBalance 原子地为**某一次请求**建立在途预留：写入该请求的预留凭据，
+// 并把它累加进该 scope 的在途预留总额，返回累加后的总额（USD）。
 //
-// 调用方（BillingCacheService 的余额预检）用它的返回值判断
-// "balance - 在途预留总额 >= reserve 封底"是否仍然成立：只要成立，即使全部在途请求
-// 都以最坏费用结算，钱包也不会被击穿封底，不存在收不满的坏账。
-func (c *billingCache) ReserveUserBalance(ctx context.Context, userID int64, amount float64, ttl time.Duration) (float64, error) {
+// 调用方（BillingCacheService 的预检）用它的返回值判断"这份可花额度减去在途预留后
+// 是否仍然充足"：余额模式看 `balance - reserved >= reserve`，订阅模式看
+// `usage + reserved <= limit`。只要成立，即使全部在途请求都以最坏费用结算，
+// 也不会击穿额度，不存在收不满的坏账。
+//
+// scope 标识"同一份可被并发放大的额度"（余额用 userID，订阅用 user+group）；
+// requestID 必须是**每笔请求唯一且不含分隔符 ':'** 的标识（服务层用去掉连字符的
+// UUID），它决定归还时能否精确匹配到本笔凭据。
+func (c *billingCache) ReserveUserBalance(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) (float64, error) {
 	if amount < 0 {
 		return 0, fmt.Errorf("reserve amount must be nonnegative, got %v", amount)
 	}
-	key := billingReservedKey(userID)
-	reply, err := reserveBalanceScript.Run(ctx, c.rdb, []string{key}, amount, reservationTTLMillis(ttl)).Result()
+	if scope == "" {
+		return 0, fmt.Errorf("reserve scope must not be empty")
+	}
+	if requestID == "" {
+		return 0, fmt.Errorf("reserve requestID must not be empty")
+	}
+	reply, err := reserveBalanceScript.Run(ctx, c.rdb,
+		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
+		amount, reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return 0, err
 	}
 	return parseReservedBalanceReply(reply)
 }
 
-// ReleaseUserBalanceReservation 原子地归还一笔在途预留（结算完成后由请求生命周期调用）。
-// 预留键不存在（已随 TTL 过期）时是 no-op，避免把总额减成负数。
-func (c *billingCache) ReleaseUserBalanceReservation(ctx context.Context, userID int64, amount float64, ttl time.Duration) error {
+// ReleaseUserBalanceReservation 原子地归还"本请求"占用的在途预留。
+//
+// 与旧实现的关键差别：归还的前提是**本请求的凭据仍然存在**。凭据已随 TTL 过期时
+// 整体 no-op 并返回 ErrBillingReservationExpired —— 少了这道闸，晚到的归还会把
+// 同一 scope 后来那笔请求的预留一起扣掉，护栏被错误解除。
+func (c *billingCache) ReleaseUserBalanceReservation(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) error {
+	if scope == "" || requestID == "" {
+		return nil
+	}
 	if amount <= 0 {
 		return nil
 	}
-	key := billingReservedKey(userID)
-	_, err := releaseBalanceScript.Run(ctx, c.rdb, []string{key}, -amount, reservationTTLMillis(ttl)).Result()
+	reply, err := releaseBalanceScript.Run(ctx, c.rdb,
+		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
+		reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		log.Printf("Warning: release balance reservation failed for user %d: %v", userID, err)
+		log.Printf("Warning: release balance reservation failed for scope %s: %v", scope, err)
 		return err
+	}
+	if text, ok := reply.(string); ok && text == reservationReleaseExpiredReply {
+		return service.ErrBillingReservationExpired
 	}
 	return nil
 }
+
+// RenewUserBalanceReservation 为**长请求**续期本笔预留（心跳）。凭据已过期/已归还时返回
+// ErrBillingReservationExpired，调用方据此停止心跳。
+func (c *billingCache) RenewUserBalanceReservation(ctx context.Context, scope string, requestID string, ttl time.Duration) error {
+	if scope == "" || requestID == "" {
+		return nil
+	}
+	reply, err := renewBalanceScript.Run(ctx, c.rdb,
+		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
+		reservationTTLMillis(ttl)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		log.Printf("Warning: renew balance reservation failed for scope %s: %v", scope, err)
+		return err
+	}
+	if text, ok := reply.(string); ok && text == "0" {
+		return service.ErrBillingReservationExpired
+	}
+	return nil
+}
+
+// ReservedUserBalanceTotal 只读返回该 scope 当前的在途预留总额（USD），供运维观测使用。
+// 不存在的键返回 0，不创建键、不改变 TTL。
+func (c *billingCache) ReservedUserBalanceTotal(ctx context.Context, scope string) (float64, error) {
+	if scope == "" {
+		return 0, nil
+	}
+	reply, err := peekBalanceScript.Run(ctx, c.rdb, []string{billingReservedKey(scope)}).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, err
+	}
+	return parseReservedBalanceReply(reply)
+}
+
+// reservationReleaseExpiredReply 是归还脚本在"本请求凭据已过期"时的返回值。
+// 归一成一个常量，避免脚本字面量与 Go 侧判断漂移。
+const reservationReleaseExpiredReply = "EXPIRED"
 
 // reservationTTLMillis 把预留 TTL 规范化为毫秒；缺省/非法值退化为余额缓存 TTL。
 func reservationTTLMillis(ttl time.Duration) int64 {

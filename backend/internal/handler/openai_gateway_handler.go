@@ -866,8 +866,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-			balanceReservation.HandOff()
-			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+			h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), res, &balanceReservation, func(ctx context.Context) {
 				defer balanceReservation.Release(ctx)
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
@@ -1068,8 +1067,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		balanceReservation.HandOff()
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+		h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), result, &balanceReservation, func(ctx context.Context) {
 			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
@@ -1526,8 +1524,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-			balanceReservation.HandOff()
-			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+			h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), res, &balanceReservation, func(ctx context.Context) {
 				defer balanceReservation.Release(ctx)
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
@@ -1663,8 +1660,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		sessionID := service.ExtractClientSessionID(c)
 
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		balanceReservation.HandOff()
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+		h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), result, &balanceReservation, func(ctx context.Context) {
 			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
@@ -3457,16 +3453,24 @@ func getContextInt64(c *gin.Context, key string) (int64, bool) {
 }
 
 func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
+	h.submitUsageRecordTaskTracked(parent, task)
+}
+
+// submitUsageRecordTaskTracked 返回任务是否会被执行（见 GatewayHandler 同名方法）。
+func (h *OpenAIGatewayHandler) submitUsageRecordTaskTracked(parent context.Context, task service.UsageRecordTask) bool {
 	if task == nil {
-		return
+		return false
 	}
 	task = wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
-		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
-			return
+		mode := h.usageRecordWorkerPool.Submit(task)
+		if !mode.Dropped() {
+			return true
+		}
+		if mode != service.UsageRecordSubmitModeDroppedStopped {
+			return false
 		}
 		// 池已停止（进程关停窗口）：计费任务不能静默丢失，降级为内联同步执行。
-		// 显式配置的 drop/sample 溢出丢弃仍按配置语义保留。
 		logger.L().With(
 			zap.String("component", "handler.openai_gateway.responses"),
 		).Warn("openai.usage_record_task_stopped_sync_fallback")
@@ -3483,6 +3487,7 @@ func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, tas
 		}
 	}()
 	task(ctx)
+	return true
 }
 
 func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTask(parent context.Context, result *service.OpenAIForwardResult, task service.UsageRecordTask) {
@@ -3493,6 +3498,45 @@ func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTask(parent context.Contex
 		return
 	}
 	h.submitUsageRecordTask(parent, task)
+}
+
+// submitOpenAIUsageRecordTaskTracked 返回任务是否会被执行。媒体/搜索/语音等
+// money-critical 结算永远走 mandatory 路径（不会丢弃），因此恒为 true。
+func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTaskTracked(parent context.Context, result *service.OpenAIForwardResult, task service.UsageRecordTask) bool {
+	if result != nil && (result.ImageCount > 0 || result.VideoCount > 0 ||
+		result.SearchCount > 0 || result.WebSearchCalls > 0 || result.AudioUsage != nil) {
+		h.submitMandatoryUsageRecordTask(parent, task)
+		return true
+	}
+	return h.submitUsageRecordTaskTracked(parent, task)
+}
+
+// submitOpenAIUsageRecordTaskWithReservation 提交 OpenAI 结算任务并一并处理在途预留的
+// 归还责任：任务被接收则 HandOff（由结算任务扣费后 Release）；任务被丢弃则立即归还，
+// 避免"没扣费却占着额度直到 TTL"。
+func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTaskWithReservation(parent context.Context, result *service.OpenAIForwardResult, slot *service.BillingReservationSlot, task service.UsageRecordTask) {
+	if slot == nil {
+		h.submitOpenAIUsageRecordTask(parent, result, task)
+		return
+	}
+	if !h.submitOpenAIUsageRecordTaskTracked(parent, result, task) {
+		service.RecordBillingReservationAbandoned()
+		slot.Release(parent)
+		return
+	}
+	slot.HandOff()
+}
+
+// submitMandatoryUsageRecordTaskWithReservation 提交"永不丢弃"的结算任务并移交预留
+// 归还责任。mandatory 路径不会丢弃任务，因此不存在"任务没跑但预留还在"的窗口；
+// 任务若在池停止窗口内联执行，其 defer Release 会先行归还，随后的 HandOff 为 no-op。
+func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTaskWithReservation(parent context.Context, slot *service.BillingReservationSlot, task service.UsageRecordTask) {
+	if slot == nil {
+		h.submitMandatoryUsageRecordTask(parent, task)
+		return
+	}
+	h.submitMandatoryUsageRecordTask(parent, task)
+	slot.HandOff()
 }
 
 func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTask(parent context.Context, task service.UsageRecordTask) {

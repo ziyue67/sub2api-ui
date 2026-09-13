@@ -232,6 +232,17 @@ func TestEstimateRequestSpendUpperBound_MinOutputTokensFloor(t *testing.T) {
 	large := svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", []byte(`{"model":"spend-test-model","max_tokens":10000}`))
 	require.GreaterOrEqual(t, large, 10000*1e-5)
 
+	// 大声明值"逐位不受下限影响"：声明 max_tokens >= 下限 时，开着下限与关着下限的
+	// 预检结果必须完全一致 —— 这是"下限不会让大 max_tokens 请求更早被 403"的权威
+	// 口径（作用范围只限抬高偏小的声明值）。
+	svc.cfg.Billing.RequestSpendMinOutputTokens = 0
+	largeBody := []byte(`{"model":"spend-test-model","max_tokens":64000}`)
+	withoutFloor := svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", largeBody)
+	require.Greater(t, withoutFloor, 0.0)
+	svc.cfg.Billing.RequestSpendMinOutputTokens = 8192
+	withFloor := svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", largeBody)
+	require.InDelta(t, withoutFloor, withFloor, 1e-12, "声明值 >= 下限时，下限不得改变预检结果")
+
 	// 未声明 → 取 max(缺省 8192, 下限 9000) = 9000。
 	svc.cfg.Billing.RequestSpendMinOutputTokens = 9000
 	undeclared := svc.EstimateRequestSpendUpperBound(ctx, user, apiKey, "spend-test-model", []byte(`{"model":"spend-test-model"}`))
