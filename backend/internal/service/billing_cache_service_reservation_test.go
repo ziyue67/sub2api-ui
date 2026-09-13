@@ -107,6 +107,107 @@ func newReservationTestService(cache BillingCache) *BillingCacheService {
 	return svc
 }
 
+func newReservationTestServiceWithMultiplier(cache BillingCache, m float64) *BillingCacheService {
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	cfg.Billing.InflightReservationBudgetMultiplier = m
+	return NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+}
+
+// TestInflightReservationBudgetMultiplier_ZeroValueIsStrict 锁死零值/缺省语义：
+// 未配置或 <1（含 0）一律回退 1.0，保证手工装配的 Config 与线上默认都是严格模式。
+func TestInflightReservationBudgetMultiplier_ZeroValueIsStrict(t *testing.T) {
+	for _, m := range []float64{0, 0.5, -1} {
+		svc := newReservationTestServiceWithMultiplier(&reservationCacheStub{}, m)
+		require.Equal(t, 1.0, svc.inflightReservationBudgetMultiplier(context.Background()),
+			"multiplier=%v 必须回退默认 1.0（严格、零坏账）", m)
+		svc.Stop()
+	}
+	svc := newReservationTestServiceWithMultiplier(&reservationCacheStub{}, 1000)
+	require.Equal(t, 1000.0, svc.inflightReservationBudgetMultiplier(context.Background()))
+	svc.Stop()
+
+	// 完全未配置（BillingConfig 零值）同样是严格模式。
+	svc = newReservationTestService(&reservationCacheStub{})
+	require.Equal(t, 1.0, svc.inflightReservationBudgetMultiplier(context.Background()))
+	svc.Stop()
+}
+
+// TestInflightReservationAllowed_DefaultStrictVsRelaxed 用 10 万 token 上下文的真实数字
+// 对比两种准入语义：余额 $1.0、封底 $0.10、单笔最坏费用 $0.075。
+//
+//   - 严格（默认 1.0）：预算 = 可花余额 0.90，最多同时放行 12 笔；第 13 笔起被拒。
+//   - 放宽（1000）：预算 = 900，200 个并发全部放行，停止点交给「单笔最坏费用」闸门
+//     与结算封底 —— 也就是「余额花到 0.1 才拒」。
+func TestInflightReservationAllowed_DefaultStrictVsRelaxed(t *testing.T) {
+	const (
+		balance = 1.0
+		reserve = 0.10
+		worst   = 0.075
+	)
+	strict := newReservationTestServiceWithMultiplier(&reservationCacheStub{}, 0)
+	defer strict.Stop()
+	relaxed := newReservationTestServiceWithMultiplier(&reservationCacheStub{}, 1000)
+	defer relaxed.Stop()
+	ctx := context.Background()
+
+	// 严格模式：0.90 / 0.075 == 12 笔是上限。
+	require.True(t, strict.inflightReservationAllowed(ctx, balance, 12*worst, worst),
+		"严格模式：第 12 笔仍在可花余额内")
+	require.False(t, strict.inflightReservationAllowed(ctx, balance, 13*worst, worst),
+		"严格模式：第 13 笔超预算，必须拒绝")
+	require.False(t, strict.inflightReservationAllowed(ctx, balance, 200*worst, worst),
+		"严格模式：200 并发远超预算，必须拒绝")
+
+	// 放宽模式：200 并发全部放行。
+	require.True(t, relaxed.inflightReservationAllowed(ctx, balance, 200*worst, worst),
+		"放宽模式：200 个并发预留应全部放行（余额花到封底为止）")
+
+	// 两种模式都至少放行一笔，避免退化时第一笔被自己挡住。
+	require.True(t, relaxed.inflightReservationAllowed(ctx, reserve+worst, worst, worst))
+	require.True(t, strict.inflightReservationAllowed(ctx, reserve+worst, worst, worst))
+	require.True(t, relaxed.inflightReservationAllowed(ctx, balance, worst, worst))
+}
+
+// TestReserveRequestSpend_RelaxedBudgetAdmitsAllConcurrency 端到端验证放宽后的并发准入：
+// 余额 1.0、封底 0.1、单笔最坏费用 0.075，200 个并发请求必须**全部**放行，
+// 而不是严格模式下的 12 笔。
+func TestReserveRequestSpend_RelaxedBudgetAdmitsAllConcurrency(t *testing.T) {
+	cache := &reservationCacheStub{}
+	cache.balance = 1.0
+	svc := newReservationTestServiceWithMultiplier(cache, 1000)
+	t.Cleanup(svc.Stop)
+
+	const attempts = 200
+	start := make(chan struct{})
+	results := make(chan error, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slot := new(BillingReservationSlot)
+			<-start
+			results <- svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "",
+				reservationEligibilityOpts(slot, 0.075)...)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var admitted int
+	for err := range results {
+		if err == nil {
+			admitted++
+			continue
+		}
+		require.ErrorIs(t, err, ErrInsufficientBalance)
+	}
+	require.Equal(t, attempts, admitted, "放宽模式：200 并发必须全部放行")
+	require.InDelta(t, attempts*0.075, cache.reservedAmount(), 1e-6, "在途预留总额 = 200 * 0.075")
+}
+
 func reservationEligibilityOpts(slot *BillingReservationSlot, worstSpend float64) []BillingEligibilityOption {
 	return []BillingEligibilityOption{
 		WithMaxRequestSpend(worstSpend),

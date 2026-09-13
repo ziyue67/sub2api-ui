@@ -474,6 +474,7 @@ const baseSettingsResponse = {
   min_claude_code_version: "",
   max_claude_code_version: "",
   allow_ungrouped_key_scheduling: false,
+  inflight_reservation_budget_multiplier: 1,
   openai_ttft_mode: "semantic",
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
