@@ -47,19 +47,23 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 | `request_spend_precheck_disabled` | `false` | 反向命名，零值安全。`true` 关闭第 ② 层（不建议）。 |
 | `request_spend_default_max_output_tokens` | `8192` | 请求未声明输出上限时的缺省上界。 |
 | `request_spend_safety_multiplier` | `1.0` | 预检安全系数。`>1` 更保守（多拦、零坏账），`<1` 更激进。 |
-| `request_spend_min_output_tokens` | `8192` | **输出上界下限**。部分上游桥不执行请求声明的 `max_tokens`（实测声明 64/190 仍产出 999 token），信任小声明值会让预检低估。`>0` 时按 `max(声明值, 本值)` 预检。 |
+| `request_spend_min_output_tokens` | `0` | **输出上界下限（默认关）**。部分上游桥不执行请求声明的 `max_tokens`（实测声明 64/190 仍产出 999 token），信任小声明值会让预检低估。`>0` 时按 `max(声明值, 本值)` 预检。**只抬高偏小的声明值，对大声明值逐位不变**。 |
 | `database.max_open_conns` | `32` | 必须**显著低于** PG `max_connections`（默认 100）；多实例按实例数均摊。 |
 | `database.max_idle_conns` | `8` | 建议为 `max_open_conns` 的 25%–50%。 |
 
-### 关于 `request_spend_min_output_tokens` 的默认值
+### 关于 `request_spend_min_output_tokens`
 
-该值默认取 `8192`（与"未声明时的缺省上界"一致），语义是**不再信任任何小于 8192 的
-声明值**。这是修掉"responses 桥不执行 max_tokens"这个已知坏账洞所需的取值。
+默认 `0` = **信任请求声明的值**（与历史行为一致，升级零行为变化）。
 
-- 影响范围有限：只有**余额贴近封底**的用户才可能因此被提前 403；余额充足的用户
-  完全不受影响（`balance` 远大于最坏费用）。
-- 要回到"信任声明值"的旧行为，显式配置 `request_spend_min_output_tokens: 0`，
-  并接受 write-off 指标持续非零。
+- **作用范围（先读这个）**：本下限只"抬高偏小的声明值"。声明 `max_tokens: 64` 且下限为
+  8192 时按 8192 估；声明 `max_tokens: 64000` 时**逐位不变**、完全不受影响。因此它
+  **不会**让"大 max_tokens 请求更早被 403" —— 那来自最坏费用闸门按声明上限计价，
+  属于零超发的既有取舍，与本下限无关。
+- **何时打开**：观察 ops 端点的 `settlement_shortfall_count`，斜率 > 0（仍在产生
+  write-off，典型是 responses 桥不执行 max_tokens）时把它配成 `8192`（= 未声明时的
+  缺省上界）；恒为 0 则保持 0 即可。
+- 打开后影响范围有限：只有**余额贴近封底**的用户才可能因此被提前 403；余额充足的
+  用户完全不受影响（`balance` 远大于最坏费用）。
 
 ## 4. 如何验证护栏在跑
 
@@ -123,8 +127,8 @@ GET /api/v1/admin/ops/billing-guard
 1. **`database.max_open_conns` 默认值从 256 降到 32**。若你的部署高吞吐、且未显式配置
    该值，升级后吞吐可能下降，需要显式调大并**同步调大 PG `max_connections`**；
    多实例部署按实例数均摊（例：3 实例建议 ≤ 30）。
-2. **`request_spend_min_output_tokens` 默认从 0 改为 8192**（见第 3 节）。升级后贴底
-   用户的大 `max_tokens` 请求会更早被 403 —— 这是零超发的预期代价。回退方式见上。
+2. **`request_spend_min_output_tokens` 保持默认 0**（不改变现有部署行为，见第 3 节）。
+   它是按 write-off 指标决定是否打开的"修补开关"，不是本次升级的强制变更。
 3. 新增 `billing.balance_recheck_band`（默认 1.0）。它使余额 ≤ 1.1 的用户每笔请求都
    回源查 DB；同一用户的并发复核已由 singleflight 合并为一次。若你的流量中"贴底小额
    高频"占比很高，可适当调小该带宽。

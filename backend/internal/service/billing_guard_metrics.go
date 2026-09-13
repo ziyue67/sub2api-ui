@@ -64,14 +64,14 @@ func AllBillingPreflightRejectReasons() []BillingPreflightRejectReason {
 
 // 预检拒绝原因计数（按原因分离，避免"护栏误拦"淹没在"真的没钱"里）。
 var (
-	billingRejectMarkerActiveTotal         atomic.Int64
-	billingRejectBelowReserveTotal         atomic.Int64
-	billingRejectDBTruthBelowReserveTotal  atomic.Int64
-	billingRejectWorstCaseCacheTotal       atomic.Int64
-	billingRejectWorstCaseDBTruthTotal     atomic.Int64
-	billingRejectReservationGuardTotal     atomic.Int64
-	billingRejectWorstCaseDBTruthLastUnix  atomic.Int64
-	billingRejectReservationLastUnix       atomic.Int64
+	billingRejectMarkerActiveTotal        atomic.Int64
+	billingRejectBelowReserveTotal        atomic.Int64
+	billingRejectDBTruthBelowReserveTotal atomic.Int64
+	billingRejectWorstCaseCacheTotal      atomic.Int64
+	billingRejectWorstCaseDBTruthTotal    atomic.Int64
+	billingRejectReservationGuardTotal    atomic.Int64
+	billingRejectWorstCaseDBTruthLastUnix atomic.Int64
+	billingRejectReservationLastUnix      atomic.Int64
 )
 
 // 在途预留计数。这些计数直接回答"并发护栏到底有没有在挡人"。
@@ -92,12 +92,12 @@ var (
 
 // 复核与降级计数。这些是"护栏静默失效"的直接证据面。
 var (
-	billingRecheckDBReadsTotal            atomic.Int64
-	billingRecheckFailClosedTotal         atomic.Int64
-	billingRecheckSkippedNoUserRepoTotal  atomic.Int64
-	billingPrecheckDisabledTotal          atomic.Int64
-	billingPrecheckUnavailableTotal       atomic.Int64
-	billingSubscriptionReservationTotal   atomic.Int64
+	billingRecheckDBReadsTotal              atomic.Int64
+	billingRecheckFailClosedTotal           atomic.Int64
+	billingRecheckSkippedNoUserRepoTotal    atomic.Int64
+	billingPrecheckDisabledTotal            atomic.Int64
+	billingPrecheckUnavailableTotal         atomic.Int64
+	billingSubscriptionReservationTotal     atomic.Int64
 	billingSubscriptionReserveFailOpenTotal atomic.Int64
 )
 
@@ -140,41 +140,41 @@ func RecordBillingReservationAbandoned() {
 // RejectWorstCase / RejectInflightReservation 的斜率，判断预检是否过保守（误伤）。
 type BillingGuardStats struct {
 	// 结算侧：write-off（与 GatewayBillingShortfallStats 同源）。
-	SettlementShortfallCount  int64 `json:"settlement_shortfall_count"`
-	SettlementShortfallMicros int64 `json:"settlement_shortfall_micros"`
+	SettlementShortfallCount    int64 `json:"settlement_shortfall_count"`
+	SettlementShortfallMicros   int64 `json:"settlement_shortfall_micros"`
 	SettlementShortfallLastUnix int64 `json:"settlement_shortfall_last_unix"`
 
 	// 预检拒绝（按原因）。
-	RejectMarkerActive         int64 `json:"reject_marker_active"`
-	RejectBelowReserve         int64 `json:"reject_below_reserve"`
-	RejectDBTruthBelowReserve  int64 `json:"reject_db_truth_below_reserve"`
-	RejectWorstCaseCacheOnly   int64 `json:"reject_worst_case_cache_only"`
-	RejectWorstCaseDBTruth     int64 `json:"reject_worst_case_db_truth"`
-	RejectInflightReservation  int64 `json:"reject_inflight_reservation"`
-	RejectWorstCaseLastUnix    int64 `json:"reject_worst_case_last_unix"`
-	RejectReservationLastUnix  int64 `json:"reject_reservation_last_unix"`
+	RejectMarkerActive        int64 `json:"reject_marker_active"`
+	RejectBelowReserve        int64 `json:"reject_below_reserve"`
+	RejectDBTruthBelowReserve int64 `json:"reject_db_truth_below_reserve"`
+	RejectWorstCaseCacheOnly  int64 `json:"reject_worst_case_cache_only"`
+	RejectWorstCaseDBTruth    int64 `json:"reject_worst_case_db_truth"`
+	RejectInflightReservation int64 `json:"reject_inflight_reservation"`
+	RejectWorstCaseLastUnix   int64 `json:"reject_worst_case_last_unix"`
+	RejectReservationLastUnix int64 `json:"reject_reservation_last_unix"`
 
 	// 在途预留。
-	ReservationReserved       int64 `json:"reservation_reserved"`
-	ReservationReleased       int64 `json:"reservation_released"`
-	ReservationRejected       int64 `json:"reservation_rejected"`
-	ReservationFailOpen       int64 `json:"reservation_fail_open"`
-	ReservationFailOpenLastUnix int64 `json:"reservation_fail_open_last_unix"`
-	ReservationReleaseErr     int64 `json:"reservation_release_error"`
+	ReservationReserved           int64 `json:"reservation_reserved"`
+	ReservationReleased           int64 `json:"reservation_released"`
+	ReservationRejected           int64 `json:"reservation_rejected"`
+	ReservationFailOpen           int64 `json:"reservation_fail_open"`
+	ReservationFailOpenLastUnix   int64 `json:"reservation_fail_open_last_unix"`
+	ReservationReleaseErr         int64 `json:"reservation_release_error"`
 	ReservationReleaseErrLastUnix int64 `json:"reservation_release_error_last_unix"`
-	ReservationAbandoned      int64 `json:"reservation_abandoned"`
-	ReservationAbandonedLastUnix int64 `json:"reservation_abandoned_last_unix"`
-	ReservationExpiredRelease int64 `json:"reservation_expired_release"`
-	ReservationRenew          int64 `json:"reservation_renew"`
-	ReservationRenewError     int64 `json:"reservation_renew_error"`
+	ReservationAbandoned          int64 `json:"reservation_abandoned"`
+	ReservationAbandonedLastUnix  int64 `json:"reservation_abandoned_last_unix"`
+	ReservationExpiredRelease     int64 `json:"reservation_expired_release"`
+	ReservationRenew              int64 `json:"reservation_renew"`
+	ReservationRenewError         int64 `json:"reservation_renew_error"`
 
 	// DB 复核与降级。
-	RecheckDBReads           int64 `json:"recheck_db_reads"`
-	RecheckFailClosed        int64 `json:"recheck_fail_closed"`
-	RecheckSkippedNoUserRepo int64 `json:"recheck_skipped_no_user_repo"`
-	PrecheckDisabled         int64 `json:"precheck_disabled"`
-	PrecheckUnavailable      int64 `json:"precheck_unavailable"`
-	SubscriptionReservation  int64 `json:"subscription_reservation"`
+	RecheckDBReads              int64 `json:"recheck_db_reads"`
+	RecheckFailClosed           int64 `json:"recheck_fail_closed"`
+	RecheckSkippedNoUserRepo    int64 `json:"recheck_skipped_no_user_repo"`
+	PrecheckDisabled            int64 `json:"precheck_disabled"`
+	PrecheckUnavailable         int64 `json:"precheck_unavailable"`
+	SubscriptionReservation     int64 `json:"subscription_reservation"`
 	SubscriptionReserveFailOpen int64 `json:"subscription_reservation_fail_open"`
 
 	// 派生判据。
@@ -187,8 +187,8 @@ type BillingGuardStats struct {
 func BillingGuardStatsSnapshot() BillingGuardStats {
 	count, micros, lastUnix := GatewayBillingShortfallStats()
 	stats := BillingGuardStats{
-		SettlementShortfallCount:  count,
-		SettlementShortfallMicros: micros,
+		SettlementShortfallCount:    count,
+		SettlementShortfallMicros:   micros,
 		SettlementShortfallLastUnix: lastUnix,
 
 		RejectMarkerActive:        billingRejectMarkerActiveTotal.Load(),
@@ -200,25 +200,25 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 		RejectWorstCaseLastUnix:   billingRejectWorstCaseDBTruthLastUnix.Load(),
 		RejectReservationLastUnix: billingRejectReservationLastUnix.Load(),
 
-		ReservationReserved:       billingReservationReservedTotal.Load(),
-		ReservationReleased:       billingReservationReleasedTotal.Load(),
-		ReservationRejected:       billingReservationRejectedTotal.Load(),
-		ReservationFailOpen:       billingReservationFailOpenTotal.Load(),
-		ReservationFailOpenLastUnix: billingReservationFailOpenLastUnix.Load(),
-		ReservationReleaseErr:     billingReservationReleaseErrTotal.Load(),
+		ReservationReserved:           billingReservationReservedTotal.Load(),
+		ReservationReleased:           billingReservationReleasedTotal.Load(),
+		ReservationRejected:           billingReservationRejectedTotal.Load(),
+		ReservationFailOpen:           billingReservationFailOpenTotal.Load(),
+		ReservationFailOpenLastUnix:   billingReservationFailOpenLastUnix.Load(),
+		ReservationReleaseErr:         billingReservationReleaseErrTotal.Load(),
 		ReservationReleaseErrLastUnix: billingReservationReleaseErrLastUnix.Load(),
-		ReservationAbandoned:      billingReservationAbandonedTotal.Load(),
-		ReservationAbandonedLastUnix: billingReservationAbandonedLastUnix.Load(),
-		ReservationExpiredRelease: billingReservationExpiredReleaseTotal.Load(),
-		ReservationRenew:          billingReservationRenewTotal.Load(),
-		ReservationRenewError:     billingReservationRenewErrTotal.Load(),
+		ReservationAbandoned:          billingReservationAbandonedTotal.Load(),
+		ReservationAbandonedLastUnix:  billingReservationAbandonedLastUnix.Load(),
+		ReservationExpiredRelease:     billingReservationExpiredReleaseTotal.Load(),
+		ReservationRenew:              billingReservationRenewTotal.Load(),
+		ReservationRenewError:         billingReservationRenewErrTotal.Load(),
 
-		RecheckDBReads:           billingRecheckDBReadsTotal.Load(),
-		RecheckFailClosed:        billingRecheckFailClosedTotal.Load(),
-		RecheckSkippedNoUserRepo: billingRecheckSkippedNoUserRepoTotal.Load(),
-		PrecheckDisabled:         billingPrecheckDisabledTotal.Load(),
-		PrecheckUnavailable:      billingPrecheckUnavailableTotal.Load(),
-		SubscriptionReservation:  billingSubscriptionReservationTotal.Load(),
+		RecheckDBReads:              billingRecheckDBReadsTotal.Load(),
+		RecheckFailClosed:           billingRecheckFailClosedTotal.Load(),
+		RecheckSkippedNoUserRepo:    billingRecheckSkippedNoUserRepoTotal.Load(),
+		PrecheckDisabled:            billingPrecheckDisabledTotal.Load(),
+		PrecheckUnavailable:         billingPrecheckUnavailableTotal.Load(),
+		SubscriptionReservation:     billingSubscriptionReservationTotal.Load(),
 		SubscriptionReserveFailOpen: billingSubscriptionReserveFailOpenTotal.Load(),
 	}
 
@@ -349,43 +349,5 @@ func BillingGuardRuntimeInfo() map[string]any {
 		"min_inline_binary_run":         requestSpendMinInlineBinaryRun,
 		"image_token_allowance":         requestSpendImageTokenAllowance,
 		"reject_reasons":                AllBillingPreflightRejectReasons(),
-	}
-}
-
-// resetBillingGuardStatsForTest 归零全部护栏计数（仅测试使用）。
-func resetBillingGuardStatsForTest() {
-	for _, c := range []*atomic.Int64{
-		&billingRejectMarkerActiveTotal,
-		&billingRejectBelowReserveTotal,
-		&billingRejectDBTruthBelowReserveTotal,
-		&billingRejectWorstCaseCacheTotal,
-		&billingRejectWorstCaseDBTruthTotal,
-		&billingRejectReservationGuardTotal,
-		&billingRejectWorstCaseDBTruthLastUnix,
-		&billingRejectReservationLastUnix,
-		&billingReservationReservedTotal,
-		&billingReservationReleasedTotal,
-		&billingReservationRejectedTotal,
-		&billingReservationFailOpenTotal,
-		&billingReservationFailOpenLastUnix,
-		&billingReservationReleaseErrTotal,
-		&billingReservationReleaseErrLastUnix,
-		&billingReservationAbandonedTotal,
-		&billingReservationAbandonedLastUnix,
-		&billingReservationExpiredReleaseTotal,
-		&billingReservationRenewTotal,
-		&billingReservationRenewErrTotal,
-		&billingRecheckDBReadsTotal,
-		&billingRecheckFailClosedTotal,
-		&billingRecheckSkippedNoUserRepoTotal,
-		&billingPrecheckDisabledTotal,
-		&billingPrecheckUnavailableTotal,
-		&billingSubscriptionReservationTotal,
-		&billingSubscriptionReserveFailOpenTotal,
-		&billingSettlementShortfallTotal,
-		&billingSettlementShortfallMicros,
-		&billingSettlementShortfallLastUnix,
-	} {
-		c.Store(0)
 	}
 }

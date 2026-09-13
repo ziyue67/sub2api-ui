@@ -40,9 +40,9 @@ const (
 	// 凭据过期的归还一律 no-op，绝不会触碰别人的预留。代价是聚合键可能短暂偏高
 	// （已过期但未归还的份额要等聚合键 TTL 兜底），这是保守方向，不会放行超额。
 	billingReservedItemKeyPrefix = "billing:resv_item:"
-	subCacheInvalidateChannel = "subscription:cache:invalidate"
-	billingCacheTTL           = 5 * time.Minute
-	billingCacheJitter        = 30 * time.Second
+	subCacheInvalidateChannel    = "subscription:cache:invalidate"
+	billingCacheTTL              = 5 * time.Minute
+	billingCacheJitter           = 30 * time.Second
 	// balanceExhaustedMarkerTTL 必须 >= 余额缓存的最长存活时间（billingCacheTTL），
 	// 否则标记先过期、而余额缓存里仍留着偏高的旧值，预检又会被放行。
 	balanceExhaustedMarkerTTL = billingCacheTTL + time.Minute
