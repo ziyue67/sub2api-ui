@@ -969,6 +969,25 @@ type BillingConfig struct {
 	// 作用范围：本下限只"抬高偏小的声明值"，对 >= 本值的声明值（含大 max_tokens）
 	// 逐位不变，因此不会让"大 max_tokens 请求更早被 403"。
 	RequestSpendMinOutputTokens int `mapstructure:"request_spend_min_output_tokens"`
+	// InflightReservationBudgetMultiplier 是「在途预留聚合闸门」的预算倍数：允许
+	// 当前的「可花余额」(balance - MinimumBalanceReserve) 被在途预留总额覆盖的倍数。
+	//
+	// 默认 1.0 = 严格模式：在途预留总额不得超过可花余额，任何并发下都不会出现
+	// "结算时收不满"的坏账，但并发准入量被 (可花余额 / 单笔最坏费用) 限制住 ——
+	// 10 万 token 上下文单笔最坏费用约 $0.075，$1 余额只能同时放行 ~12 笔，
+	// 100/200 并发会被大量 403。
+	//
+	// 调高它即可把准入语义放宽为「只要这一笔的最坏费用付得起就放行，直到余额花到
+	// 封底为止」：并发不再被预留总额卡住，结算仍按实际用量精确扣费，余额由结算 SQL 的
+	// GREATEST(balance - amount, floor) 夹在封底之上、永不为负。代价是在途请求的实际
+	// 总花费可能超过可花余额，超出部分记为 shortfall（坏账）。
+	//
+	// 因此：仅在明确接受"允许坏账以换取高并发"时调高（例如设为 1000 表示实际不限）。
+	// <1（含 0）与未配置一律按 1.0 处理，保证零值/缺省即最安全语义。
+	//
+	// 运行时可被后台设置 inflight_reservation_budget_multiplier 覆盖（/admin/settings），
+	// 且后台设置优先于本配置项。本项仅作为未配置后台设置时的兜底。
+	InflightReservationBudgetMultiplier float64 `mapstructure:"inflight_reservation_budget_multiplier"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -2155,6 +2174,9 @@ func setDefaults() {
 	// forwarding, so a stale-high balance cache cannot keep admitting
 	// requests that can no longer be collected.
 	viper.SetDefault("billing.balance_recheck_band", 1.0)
+	// 在途预留聚合闸门预算倍数：默认 1.0 = 严格（预留总额不得超过可花余额，零坏账）。
+	// 运行时可被后台设置 inflight_reservation_budget_multiplier 覆盖。
+	viper.SetDefault("billing.inflight_reservation_budget_multiplier", 1.0)
 	// 放行前最坏费用预估（零超发）：默认启用，缺省输出上界 8192 token，安全系数 1.0。
 	// 见 BillingConfig.RequestSpendPrecheckDisabled 注释。
 	viper.SetDefault("billing.request_spend_precheck_disabled", false)
@@ -3180,6 +3202,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.BalanceRecheckBand < 0 {
 		return fmt.Errorf("billing.balance_recheck_band must be non-negative")
+	}
+	if c.Billing.InflightReservationBudgetMultiplier < 0 {
+		return fmt.Errorf("billing.inflight_reservation_budget_multiplier must be non-negative")
 	}
 	if c.Billing.RequestSpendDefaultMaxOutputTokens < 0 {
 		return fmt.Errorf("billing.request_spend_default_max_output_tokens must be non-negative")

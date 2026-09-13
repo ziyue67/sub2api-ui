@@ -1516,15 +1516,79 @@ func (s *BillingCacheService) balanceReservation() (billingReservationStore, boo
 func (s *BillingCacheService) reserveRequestSpend(ctx context.Context, userID int64, balance float64, maxRequestSpend float64, slot *BillingReservationSlot) error {
 	scope := balanceReservationScope(userID)
 	return s.reserveSpendWithGuard(ctx, scope, maxRequestSpend, slot, func(reservedAfter float64) error {
-		if balance-reservedAfter >= s.minimumBalanceReserve() {
+		if s.inflightReservationAllowed(ctx, balance, reservedAfter, maxRequestSpend) {
 			return nil
 		}
 		// 护栏不成立：本次放行会击穿封底，立即回滚并拒绝。
 		logger.LegacyPrintf("service.billing_cache",
-			"billing preflight rejected user=%d (inflight reservation): balance=%.6f - reserved=%.6f < reserve=%.6f",
-			userID, balance, reservedAfter, s.minimumBalanceReserve())
+			"billing preflight rejected user=%d (inflight reservation): balance=%.6f - reserved=%.6f < reserve=%.6f (budget_multiplier=%.3f)",
+			userID, balance, reservedAfter, s.minimumBalanceReserve(), s.inflightReservationBudgetMultiplier(ctx))
 		return ErrInsufficientBalance
 	}, BillingRejectReservationGuard)
+}
+
+// defaultInflightReservationBudgetMultiplier 是在途预留聚合闸门的默认预算倍数。
+const defaultInflightReservationBudgetMultiplier = 1.0
+
+// inflightReservationBudgetResolver 是后台设置（/admin/settings）里的预算倍数解析器。
+// 由 wire 在启动时注入 SettingService.GetInflightReservationBudgetMultiplier（自带 60s
+// 进程内缓存），因此热路径不会触库。沿用包内既有的解析器注入约定（见
+// SetCodexCanonicalUserAgentResolver）：避免为一个运行时开关改动 BillingCacheService
+// 的构造签名（有 ~50 处调用点）。
+var inflightReservationBudgetResolver func(context.Context) float64
+
+// SetInflightReservationBudgetResolver 注入后台设置解析器（nil = 仅用静态配置）。
+func SetInflightReservationBudgetResolver(fn func(context.Context) float64) {
+	inflightReservationBudgetResolver = fn
+}
+
+// inflightReservationBudgetMultiplier 返回在途预留聚合闸门的预算倍数：
+// 允许「可花余额」被在途预留总额覆盖的倍数。1.0 = 严格（预留总额不得超过可花余额，
+// 坏账压到 0）。调高可放宽并发准入，代价是允许 shortfall 坏账
+// （见 config.BillingConfig.InflightReservationBudgetMultiplier 注释）。
+//
+// 取值优先级：后台设置（合法且 >=1）> 静态配置（合法且 >=1）> 1.0。任何一级出现非法值
+// 都回退到下一级，绝不因为一个坏值把准入放宽成危险模式。
+func (s *BillingCacheService) inflightReservationBudgetMultiplier(ctx context.Context) float64 {
+	if fn := inflightReservationBudgetResolver; fn != nil {
+		if v := fn(ctx); v >= 1 {
+			return v
+		}
+	}
+	if s == nil || s.cfg == nil ||
+		s.cfg.Billing.InflightReservationBudgetMultiplier < 1 {
+		return defaultInflightReservationBudgetMultiplier
+	}
+	return s.cfg.Billing.InflightReservationBudgetMultiplier
+}
+
+// inflightReservationAllowed 判定「在途预留总额」是否仍在预算内。
+//
+// 严格模式（倍数 = 1）等价于 balance - reservedAfter >= reserve：预留总额不得超过
+// 可花余额，因此在途请求全部按最坏费用结算也不会击穿封底，零坏账。
+//
+// 放宽模式（倍数 > 1）把上限改为 spendable × 倍数，于是并发准入不再被
+// (可花余额 / 单笔最坏费用) 卡住，语义变为「只要这一笔的最坏费用付得起就放行，
+// 直到余额花到封底为止」——单笔最坏费用闸门（checkBalanceEligibility 的 required）
+// 依然逐个请求生效，所以停止点仍是封底。代价是在途实际总花费可能超过可花余额，
+// 超出部分在结算时记为 shortfall（余额由结算 SQL 夹在封底之上，绝不为负）。
+//
+// 预算至少放行一笔：否则倍数退化时第一笔会被自己的预留挡住。
+func (s *BillingCacheService) inflightReservationAllowed(ctx context.Context, balance, reservedAfter, maxRequestSpend float64) bool {
+	reserve := s.minimumBalanceReserve()
+	spendable := balance - reserve
+	if spendable < 0 {
+		spendable = 0
+	}
+	budget := spendable * s.inflightReservationBudgetMultiplier(ctx)
+	if budget < maxRequestSpend {
+		budget = maxRequestSpend
+	}
+	if reservedAfter <= budget {
+		return true
+	}
+	// 严格模式下保持原有的封底判据，避免浮点/阈值语义漂移。
+	return balance-reservedAfter >= reserve
 }
 
 // reserveSpendWithGuard 是"在途预留"的通用实现：把本次请求的最坏费用原子地记入

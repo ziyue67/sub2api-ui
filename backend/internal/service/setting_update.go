@@ -395,6 +395,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyAffiliateRebatePerInviteeCap] = strconv.FormatFloat(settings.AffiliateRebatePerInviteeCap, 'f', 8, 64)
 	updates[SettingKeyAffiliateAdminRechargeEnabled] = strconv.FormatBool(settings.AdminRechargeRebateEnabled)
 	updates[SettingKeyDefaultUserRPMLimit] = strconv.Itoa(settings.DefaultUserRPMLimit)
+	// 在途预留预算倍数：<1 一律落库为 1.0（严格模式），避免坏值放宽准入。
+	inflightBudget := settings.InflightReservationBudgetMultiplier
+	if inflightBudget < 1 {
+		inflightBudget = 1.0
+	}
+	updates[SettingKeyInflightReservationBudgetMultiplier] = strconv.FormatFloat(inflightBudget, 'f', 8, 64)
 	defaultSubsJSON, err := json.Marshal(settings.DefaultSubscriptions)
 	if err != nil {
 		return nil, fmt.Errorf("marshal default subscriptions: %w", err)

@@ -65,6 +65,45 @@ func (s *BillingReservationSuite) TestReserveAccumulatesAndReportsTotal() {
 	require.InDelta(s.T(), 0.30, peeked, 1e-9, "只读总额应与累加值一致")
 }
 
+// TestReserveDoesNotRenewAggregateTTLOnLaterReserves 是"聚合键 TTL 不得被反复续期"的
+// 回归测试（对应真实的"账号在封底之上被永久锁死"故障）。
+//
+// 放行判定的顺序是「先落凭据+累加聚合 → 脚本返回后再在 Go 侧校验封底护栏 →
+// 护栏不成立就 release 回滚本笔」。也就是说**被拒绝的请求也会完整走完预留脚本**，
+// 回滚只归还金额、不归还 TTL。若脚本在每次预留时都无条件 PEXPIRE 聚合键，那么每一次
+// 被拒绝的请求都会把历史泄漏（崩溃 / 丢结算 / 晚到归还被忽略而从未递减的金额）的
+// 过期时间重新续满：并发突发下拒绝量远大于放行量，泄漏被反复续期、永不消失，
+// 用户会在余额远高于封底时就被"在途预留"持续 403，且只要还有流量就永远无法自愈。
+//
+// 这里断言：后续预留不得把聚合键的剩余 TTL 顶回接近满值，必须继续自然衰减。
+func (s *BillingReservationSuite) TestReserveDoesNotRenewAggregateTTLOnLaterReserves() {
+	cache, rdb := s.reservationCache()
+	ctx := context.Background()
+	scope := "9010"
+	key := billingReservedKeyPrefix + scope
+
+	const ttl = 10 * time.Second
+	_, err := cache.ReserveUserBalance(ctx, scope, "req-first", 0.10, ttl)
+	require.NoError(s.T(), err, "首笔预留")
+
+	// 让 TTL 明显衰减后再累加第二笔（模拟并发突发中被拒绝的那一批请求）。
+	time.Sleep(3 * time.Second)
+	_, err = cache.ReserveUserBalance(ctx, scope, "req-second", 0.10, ttl)
+	require.NoError(s.T(), err, "第二笔累加")
+
+	remaining, err := rdb.TTL(ctx, key).Result()
+	require.NoError(s.T(), err, "TTL")
+	require.Less(s.T(), remaining, 8*time.Second,
+		"累加不得续期：剩余 TTL 应继续衰减；若被 PEXPIRE 顶回 ~10s，说明泄漏会被无限续期")
+
+	// 被拒绝请求的真实路径：预留 → 回滚（release）。回滚同样不得把聚合键 TTL 续满。
+	require.NoError(s.T(), cache.ReleaseUserBalanceReservation(ctx, scope, "req-second", 0.10, ttl), "回滚第二笔")
+	remainingAfterRollback, err := rdb.TTL(ctx, key).Result()
+	require.NoError(s.T(), err, "TTL after rollback")
+	require.Less(s.T(), remainingAfterRollback, 8*time.Second,
+		"回滚不得续期：被拒绝的请求不能给历史泄漏续命")
+}
+
 func (s *BillingReservationSuite) TestReserveIsIdempotentForSameRequestID() {
 	cache, _ := s.reservationCache()
 	ctx := context.Background()
