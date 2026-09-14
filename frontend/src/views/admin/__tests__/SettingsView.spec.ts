@@ -1966,4 +1966,37 @@ describe("admin SettingsView platform quota matrix", () => {
     // 不管输入是什么，提交值应为 null（而非 "" 或 NaN）
     expect(quotas["anthropic"]?.["daily"]).toBe(null);
   });
+
+  it("清空在途预留预算倍数输入框时提交 1 而非空串（否则后端整次保存 400）", async () => {
+    // 回归：v-model.number 在清空数字框时产出 ""，后端 float64 字段反序列化空串会
+    // 400 拒绝整个 PUT /admin/settings；提交前必须归一为数字（<1 → 1 = 严格模式）。
+    const wrapper = mountView();
+    await flushPromises();
+    await openUsersTab(wrapper);
+
+    const label = wrapper
+      .findAll("label")
+      .find((node) => node.text().includes("在途预留预算倍数"));
+    expect(label).toBeDefined();
+    const input = label!.element.parentElement?.querySelector('input[type="number"]');
+    expect(input).not.toBeNull();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    const before = updateSettings.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(before["inflight_reservation_budget_multiplier"]).toBe(1);
+
+    // 清空输入框 → 提交值仍必须是数字 1（回归前是 ""）
+    const vueInput = wrapper.findAll('input[type="number"]').find(
+      (node) => node.element === input,
+    );
+    expect(vueInput).toBeDefined();
+    await vueInput!.setValue("");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(payload["inflight_reservation_budget_multiplier"]).toBe(1);
+    expect(typeof payload["inflight_reservation_budget_multiplier"]).toBe("number");
+  });
 });

@@ -98,7 +98,16 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 最坏费用预检 + 在途预留：与其余 OpenAI 文本链路同口径。embeddings 同样按余额
+	// 计费（RecordUsage），此前只做基础阈值检查，贴底用户仍可能出现"先服务、结算只能
+	// 扣到封底"的坏账。
+	var billingEligibilityOpts []service.BillingEligibilityOption
+	if worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body); worstSpend > 0 {
+		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
+	}
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts = append(billingEligibilityOpts, service.WithBalanceReservation(&balanceReservation))
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingEligibilityOpts...); err != nil {
 		reqLog.Info("openai_embeddings.billing_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -107,6 +116,8 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		h.errorResponse(c, status, code, message)
 		return
 	}
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -263,7 +274,8 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+		h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), result, &balanceReservation, func(ctx context.Context) {
+			defer balanceReservation.Release(ctx)
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,

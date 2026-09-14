@@ -11363,8 +11363,13 @@ async function saveSettings() {
       default_subscriptions: normalizedDefaultSubscriptions,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
       default_user_rpm_limit: form.default_user_rpm_limit,
-      inflight_reservation_budget_multiplier:
+      // 同 audit_log_retention_days：清空数字框时 v-model.number 得到空串，后端 float64
+      // 字段收到空串会 400 拒绝整次保存；<1 与后端一样归一为 1（严格模式）。
+      inflight_reservation_budget_multiplier: Number.isFinite(
         form.inflight_reservation_budget_multiplier,
+      )
+        ? Math.max(1, form.inflight_reservation_budget_multiplier)
+        : 1,
       site_name: form.site_name,
       site_logo: form.site_logo,
       site_subtitle: form.site_subtitle,

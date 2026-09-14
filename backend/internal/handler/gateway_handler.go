@@ -1081,7 +1081,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							return
 						}
 						fallbackAPIKey := cloneAPIKeyWithGroup(apiKey, fallbackGroup)
-						if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
+						// 兜底分组按它自己的倍率结算，因此最坏费用闸门要用兜底分组重新估一次；
+						// 这里**不再挂预留槽位**：本次请求的在途预留已在主链路按用户维度建立，
+						// 二次挂槽只会在 bind 失败的同时多留一条永不归还的凭据（白占额度到 TTL）。
+						var fallbackOpts []service.BillingEligibilityOption
+						if worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, reqModel, body); worstSpend > 0 {
+							fallbackOpts = append(fallbackOpts, service.WithMaxRequestSpend(worstSpend))
+						}
+						if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey), fallbackOpts...); err != nil {
 							status, code, message, retryAfter := billingErrorDetails(err)
 							if retryAfter > 0 {
 								c.Header("Retry-After", strconv.Itoa(retryAfter))

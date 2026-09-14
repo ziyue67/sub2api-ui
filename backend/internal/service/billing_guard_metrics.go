@@ -17,8 +17,8 @@ import (
 //   - 上游桥不执行 max_tokens 这类"预检低估"只有结算封顶指标能间接反映。
 //
 // 本文件把这些状态变成可查询的数字。所有计数器都是无锁原子量（热路径不能引入
-// 互斥），由 BillingGuardStatsSnapshot() 汇总，经 /admin/ops/billing-guard/health
-// 暴露给 ops 面板。
+// 互斥），由 BillingGuardStatsSnapshot() 汇总，经 GET /api/v1/admin/ops/billing-guard
+// （admin 鉴权，见 internal/server/routes/admin.go）暴露给 ops 面板。
 //
 // 健康基线：所有 reject 计数按斜率观察即可——余额不足的用户本来就会被拦，
 // 关键是 *_fail_open / *_degrade / *abandoned / *release_error 这些

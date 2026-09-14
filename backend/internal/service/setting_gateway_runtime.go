@@ -745,6 +745,10 @@ type cachedInflightReservationBudget struct {
 var inflightReservationBudgetCache atomic.Value // *cachedInflightReservationBudget
 var inflightReservationBudgetSF singleflight.Group
 
+// inflightReservationBudgetSFKey 是单飞键。失效路径要一并 Forget，避免在途的旧值
+// 覆盖刚保存的新值（沿用 refreshCachedSettings 里其他缓存的同一约定）。
+const inflightReservationBudgetSFKey = "inflight_reservation_budget"
+
 const inflightReservationBudgetCacheTTL = 60 * time.Second
 const inflightReservationBudgetErrorTTL = 5 * time.Second
 const inflightReservationBudgetDBTimeout = 5 * time.Second
@@ -768,7 +772,7 @@ func (s *SettingService) GetInflightReservationBudgetMultiplier(ctx context.Cont
 			return cached.multiplier
 		}
 	}
-	result, _, _ := inflightReservationBudgetSF.Do("inflight_reservation_budget", func() (any, error) {
+	result, _, _ := inflightReservationBudgetSF.Do(inflightReservationBudgetSFKey, func() (any, error) {
 		if cached, ok := inflightReservationBudgetCache.Load().(*cachedInflightReservationBudget); ok && cached != nil {
 			if time.Now().UnixNano() < cached.expiresAt {
 				return cached.multiplier, nil
@@ -805,7 +809,9 @@ func (s *SettingService) GetInflightReservationBudgetMultiplier(ctx context.Cont
 }
 
 // InvalidateInflightReservationBudgetCache 让后台设置保存后立即生效，不必等 60s TTL。
+// 由 refreshCachedSettings（设置写回后的统一刷新点）调用。
 func (s *SettingService) InvalidateInflightReservationBudgetCache() {
+	inflightReservationBudgetSF.Forget(inflightReservationBudgetSFKey)
 	inflightReservationBudgetCache.Store(&cachedInflightReservationBudget{
 		multiplier: s.inflightReservationBudgetFallback(),
 		expiresAt:  time.Now().UnixNano(), // 立即过期

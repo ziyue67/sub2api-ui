@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"math"
 	"strings"
@@ -92,6 +91,20 @@ func requestSpendMinOutputTokens(cfg *config.Config) int {
 	return cfg.Billing.RequestSpendMinOutputTokens
 }
 
+// requestSpendCJKRunesPerTokenValue 返回 CJK 折算率（token/字）：未配置（0）或非法时
+// 回退内置最坏值 requestSpendCJKRunesPerToken（=1）。
+//
+// 1 token/字 是按生产上游（deepseek-v4-flash：观测 0.5–1 token/字）校准的上界，对
+// 使用**字节回退**分词器的模型（cl100k/o200k 生僻汉字、Llama 系小 CJK 词表）并不成立：
+// 那些分词器对非常用汉字可达 2–3 token/字。路由到这类上游的部署应把
+// billing.request_spend_cjk_tokens_per_rune 调到 2（或 3），代价是 CJK 大包并发准入变紧。
+func requestSpendCJKRunesPerTokenValue(cfg *config.Config) int {
+	if cfg == nil || cfg.Billing.RequestSpendCJKTokensPerRune <= 0 {
+		return requestSpendCJKRunesPerToken
+	}
+	return cfg.Billing.RequestSpendCJKTokensPerRune
+}
+
 // ExtractRequestMaxOutputTokens 提取请求体声明的输出 token 上限：
 // max_completion_tokens / max_tokens / max_output_tokens 中的最大正值。
 // ok=false 表示请求没有声明任何输出上限（调用方应使用配置缺省值）。
@@ -120,20 +133,25 @@ func ExtractRequestMaxOutputTokens(body []byte) (int, bool) {
 //     类别"的兜底费率，覆盖英文短词、数字/符号/JSON 键名密集文本；实测英文
 //     自然文本约 4 字节/token，2 字节/token 已留 2 倍余量。
 //   - **CJK 文本**（中日韩表意文字及其标点/全角符号）：按 **1 token/字** 折算
-//     （requestSpendCJKRunesPerToken），即最坏字节/token 下界 = 3（常用 CJK 在
-//     UTF-8 下 3 字节/字；扩展区 4 字节/字仍按 1 token/字，更保守）。生产实测
+//     （requestSpendCJKRunesPerToken，可被 billing.request_spend_cjk_tokens_per_rune
+//     调高），即最坏字节/token 下界 = 3（常用 CJK 在 UTF-8 下 3 字节/字；扩展区
+//     4 字节/字仍按 1 token/字，更保守）。生产实测
 //     上游对中文约 0.5 token/字（≈6 字节/token），旧口径一刀切 2 字节/token
 //     = 1.5 token/字：同一条真实 90124 token 的请求被估成 ≈270000 token（约 3 倍
 //     高估），strict 模式下把 9 万 token 大包并发压到 2 笔。改用 1 token/字 上界后
 //     同一请求降到约 18 万 token（≈2 倍实测，仍是上界）。
-//   - **多模态块内的 base64**（`url`/`data`/`file_data` 字段承载的 data URI 或
-//     `"type":"base64"` 块）：上游按图片/音频 patch 计费、与字节数无关 → 每块按
-//     requestSpendImageTokenAllowance 固定折算。真实图片若按字节折算会得到
+//     **注意**：1 token/字 是按上述上游校准的值，对字节回退型分词器（非常用汉字
+//     2–3 token/字）不是上界，路由到这类模型时应调高该配置。
+//   - **多模态块内的 base64**（`url`/`image_url`/`data`/`file_data` 字段承载的
+//     data URI 或 `"type":"base64"` 块）：上游按图片/音频 patch 计费、与字节数无关
+//     → 每块按 requestSpendImageTokenAllowance 固定折算。真实图片若按字节折算会得到
 //     "一张小图 = 几十万 token"的荒谬上界，使贴底用户的带图请求被误 403；
 //   - **文本内容里的 base64**（不处于多模态块内）：上游会把它当**文本**分词，
 //     实测 20KB base64 ≈ 18907 token ≈ 0.92 token/字节 → 按 1 token/字节 计
 //     （requestSpendDenseTokensPerByte）。若也按 1600/块折算会低估 4 倍，
 //     生产实测产生过一笔 $0.00335 的 write-off（cost=0.00835208 collected=0.005）。
+//     该识别不依赖 `;base64,` / `"data":"` 标记：没有任何标记的裸 base64 长串
+//     同样按稠密费率计（否则仍按 2 字节/token 低估约 1.84 倍）。
 //
 // 保守性保证（不得低估）：
 //   - CJK 折算仅在"文本语言内容几乎全为 CJK"时启用——按**非结构字节**的 CJK 占比
@@ -143,19 +161,31 @@ func ExtractRequestMaxOutputTokens(body []byte) (int, bool) {
 //   - CJK 分支内非 CJK 字节仍按 2 字节/token 计，不会因整体分类而放松对
 //     符号/数字密集字节的估计。
 //   - 文本内 base64 的 1 token/字节与多模态块固定折算两条路径不受影响。
+//   - 无法回溯出 JSON 键名、但字符集足够丰富（高熵）的长 base64 串一律按稠密费率
+//     （1 token/字节）计，绝不因为"看起来像图片"而少估；低熵长串（重复模式、十六进制）
+//     留在普通文本口径 —— 上游 BPE 对这类内容压缩良好，按 1 token/字节 反而高估。
 //
 // 宁可高估（多拦一笔付不满最坏费用的请求）也不低估（低估即重新产生坏账）。
 // 非典型内容可由 billing.request_spend_safety_multiplier 进一步放大兜底。
 func EstimateRequestInputTokensUpperBound(body []byte) int {
+	return estimateRequestInputTokensUpperBound(body, requestSpendCJKRunesPerToken)
+}
+
+// estimateRequestInputTokensUpperBound 是带 CJK 折算率的内部实现：cjkTokensPerRune
+// 由配置解析（见 requestSpendCJKRunesPerTokenValue），<=0 时取内置默认。
+func estimateRequestInputTokensUpperBound(body []byte, cjkTokensPerRune int) int {
 	if len(body) <= 0 {
 		return requestSpendInputOverheadTokens
+	}
+	if cjkTokensPerRune <= 0 {
+		cjkTokensPerRune = requestSpendCJKRunesPerToken
 	}
 	binaryBytes, denseBytes, blobs := inlineBinaryPayloadStats(body)
 	textBytes := len(body) - binaryBytes - denseBytes
 	if textBytes < 0 {
 		textBytes = 0
 	}
-	return estimateTextInputTokensUpperBound(body, textBytes, denseBytes, binaryBytes) +
+	return estimateTextInputTokensUpperBound(body, textBytes, denseBytes, binaryBytes, cjkTokensPerRune) +
 		denseBytes*requestSpendDenseTokensPerByte +
 		blobs*requestSpendImageTokenAllowance +
 		requestSpendInputOverheadTokens
@@ -164,11 +194,14 @@ func EstimateRequestInputTokensUpperBound(body []byte) int {
 // estimateTextInputTokensUpperBound 给出"普通文本"部分的输入 token 上界。
 //
 // CJK 占比判定与折算见 EstimateRequestInputTokensUpperBound 的注释：
-//   - CJK 主导：cjkRunes×1 + 非 CJKBytes/2；
+//   - CJK 主导：cjkRunes×cjkTokensPerRune + 非 CJKBytes/2；
 //   - 否则：textBytes/2（保守口径，含混杂文本）。
-func estimateTextInputTokensUpperBound(body []byte, textBytes, denseBytes, binaryBytes int) int {
+func estimateTextInputTokensUpperBound(body []byte, textBytes, denseBytes, binaryBytes, cjkTokensPerRune int) int {
 	if textBytes <= 0 {
 		return 0
+	}
+	if cjkTokensPerRune <= 0 {
+		cjkTokensPerRune = requestSpendCJKRunesPerToken
 	}
 	cjkRunes, cjkBytes, structuralBytes := countCJKText(body)
 	// 语言内容字节 = 全部字节 - JSON 结构字节 - 文本内 base64 - 多模态负载。
@@ -182,7 +215,7 @@ func estimateTextInputTokensUpperBound(body []byte, textBytes, denseBytes, binar
 		if nonCJKBytes < 0 {
 			nonCJKBytes = 0
 		}
-		return cjkRunes*requestSpendCJKRunesPerToken +
+		return cjkRunes*cjkTokensPerRune +
 			nonCJKBytes/requestSpendTextBytesPerToken
 	}
 	return textBytes / requestSpendTextBytesPerToken
@@ -267,66 +300,136 @@ const requestSpendDenseTokensPerByte = 1
 
 // inlineBinaryPayloadStats 统计请求体内联 base64 负载,并按其**所在位置**分类:
 //
-//   - binary(多模态块内):base64 是 JSON 多模态负载字段(`url`/`data`/`file_data`)
-//     的值 —— 上游按图片/音频 patch 计费、与字节数无关 → 每块按固定 allowance 折算。
-//     覆盖形态:OpenAI `image_url.url` 的 data URI、Anthropic `source.data`
-//     (配 `"type":"base64"`)、Gemini `inline_data.data`、`input_audio.data`。
+//   - binary(多模态块内):base64 是 JSON 多模态负载字段(`url`/`image_url`/`data`/
+//     `file_data`)的值 —— 上游按图片/音频 patch 计费、与字节数无关 → 每块按固定
+//     allowance 折算。覆盖形态:OpenAI chat 的 `image_url.url`、**OpenAI Responses 的
+//     字符串形态 `image_url`**、Anthropic `source.data`(配 `"type":"base64"`)、
+//     Gemini `inline_data.data`、`input_audio.data`。
 //   - dense(文本内容里):base64 出现在其它位置(典型:整段 base64 粘在 text 里)——
 //     上游会把它当**文本**分词(实测 ≈0.92 token/字节)→ 按
 //     requestSpendDenseTokensPerByte 折算,绝不能按图片固定值折算
 //     (生产实测曾因此低估 4 倍、产生一笔 write-off)。
 //
-// 判定方式:从负载标记向前找**最近的 JSON 键名** —— 只有键是
-// `url`/`data`/`file_data`(多模态负载字段)时才算多模态块;
-// 文本内容里的 base64,它前面最近的键是 `text`/`content` 等 → 归入 dense。
-// 连续串短于 requestSpendMinInlineBinaryRun 时不单独处理(仍按普通文本折算)。
+// 判定方式(三步,均为纯位置/字面量判定,不依赖"负载标记"是否出现):
+//  1. 扫描全部**连续 base64 字母表串**(长度 ≥ requestSpendMinInlineBinaryRun),
+//     包括没有 `;base64,` / `"data":"` 标记的裸串 —— 旧实现只认标记,导致"整段
+//     裸 base64 粘进 text"完全不被识别、仍按 2 字节/token 低估约 1.84 倍
+//     (实测 0.92 token/字节),write-off 通道未关闭;
+//  2. 用串起点向前找**最近的 JSON 键名**:键属于 multimodalPayloadKeys 才算多模态块
+//     (Gemini 的 `inline_data.data` 就是**无 data: 前缀**的裸 base64,只能靠键名判定),
+//     `text`/`content` 等其它键一律走第 3 步;
+//  3. 其它键上的串:有 `;base64,` / `"data":"` 标记,或字符集足够丰富
+//     (looksLikeBase64Payload)时才按稠密费率计 —— 后者避免把 `abab…`、长十六进制
+//     串这类低熵文本按 1 token/字节 高估(上游 BPE 对重复串压缩很好),同时堵住
+//     "无标记裸 base64"的低估缺口。
+//
+// 说明:标记本身不参与二进制/文本的二分 —— data URI 的 `data:<mime>;base64,`
+// 前缀会被 jsonKeyBefore 一路回溯跳过,所以 `;base64,` 形态仍能正确定位到外层键名;
+// 连续串短于阈值时不单独处理(仍按普通文本折算),避免把普通长标识符误判成图片。
 func inlineBinaryPayloadStats(body []byte) (binaryBytes int, denseBytes int, blobs int) {
-	if !bytes.Contains(body, []byte("base64")) && !bytes.Contains(body, []byte(`"data":`)) {
-		return 0, 0, 0
-	}
-	lastEnd := 0
-	for _, marker := range [...][]byte{
-		[]byte(";base64,"),
-		[]byte(`"data":"`),
-		[]byte(`"data": "`),
-	} {
-		from := lastEnd
-		for {
-			rel := bytes.Index(body[from:], marker)
-			if rel < 0 {
-				break
-			}
-			markerStart := from + rel
-			start := markerStart + len(marker)
-			end := start
-			for end < len(body) && isBase64Alphabet(body[end]) {
-				end++
-			}
-			from = end
-			if start < lastEnd || end-start < requestSpendMinInlineBinaryRun {
-				continue
-			}
-			if multimodalPayloadKeys[jsonKeyBefore(body, start)] {
-				binaryBytes += end - start
-				blobs++
-			} else {
-				denseBytes += end - start
-			}
-			lastEnd = end
+	for _, run := range findBase64Runs(body, requestSpendMinInlineBinaryRun) {
+		payload := body[run.start:run.end]
+		if multimodalPayloadKeys[jsonKeyBefore(body, run.start)] {
+			binaryBytes += len(payload)
+			blobs++
+			continue
 		}
+		if !precededByBase64Marker(body, run.start) && !looksLikeBase64Payload(payload) {
+			// 低熵长串(重复模式、十六进制、普通标识符):上游 BPE 能压缩,留普通文本口径。
+			continue
+		}
+		denseBytes += len(payload)
 	}
 	return binaryBytes, denseBytes, blobs
 }
 
+// base64Markers 是显式的 base64 负载标记(与历史实现保持一致):data URI 的
+// `;base64,` 以及 JSON `"data":"…"` / `"data": "…"`。
+var base64Markers = [...][]byte{
+	[]byte(";base64,"),
+	[]byte(`"data":"`),
+	[]byte(`"data": "`),
+}
+
+// precededByBase64Marker 判断 runStart 之前是否紧邻某个显式 base64 负载标记。
+func precededByBase64Marker(body []byte, runStart int) bool {
+	for _, marker := range base64Markers {
+		if runStart >= len(marker) && string(body[runStart-len(marker):runStart]) == string(marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// requestSpendBase64DistinctBytes 是判定"看起来确实是 base64 负载"的最小字符种类数。
+//
+// 依据:真实 base64(随机/压缩过的二进制或文本)在 512+ 字节的串上几乎必然用到 55+
+// 种字符(base64 字母表共 64 种);而 `abab…`(2 种)、十六进制串(≤16 种)、普通标识符
+// (通常 < 40 种)都远低于该阈值 —— 这些内容上游 BPE 压缩良好,按 1 token/字节 会高估。
+// 取 40 兼顾两侧:既不放过真实 base64(否则重新低估约 1.84 倍),也不误伤低熵长串。
+const requestSpendBase64DistinctBytes = 40
+
+// looksLikeBase64Payload 用"字符种类数"近似判断一段 base64 字母表长串是否真的是
+// base64 负载(高熵),避免把重复模式/十六进制/长标识符按稠密费率高估。
+func looksLikeBase64Payload(run []byte) bool {
+	if len(run) < requestSpendMinInlineBinaryRun {
+		return false
+	}
+	var seen [256]bool
+	distinct := 0
+	for _, c := range run {
+		if !seen[c] {
+			seen[c] = true
+			distinct++
+			if distinct >= requestSpendBase64DistinctBytes {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// base64Run 是一段连续的 base64 字母表字节区间 [start, end)。
+type base64Run struct{ start, end int }
+
+// findBase64Runs 返回 body 中所有长度 >= minLen 的连续 base64 字母表串。
+// 单趟 O(n);返回的区间互不重叠,因此调用方无需再做去重。
+func findBase64Runs(body []byte, minLen int) []base64Run {
+	if minLen <= 0 {
+		minLen = 1
+	}
+	var runs []base64Run
+	for i := 0; i < len(body); {
+		if !isBase64Alphabet(body[i]) {
+			i++
+			continue
+		}
+		start := i
+		for i < len(body) && isBase64Alphabet(body[i]) {
+			i++
+		}
+		if i-start >= minLen {
+			runs = append(runs, base64Run{start: start, end: i})
+		}
+	}
+	return runs
+}
+
 // multimodalPayloadKeys 是 JSON 中承载多模态二进制负载的字段名:
-//   - OpenAI: `image_url.url`(data URI)、`input_audio.data`、`file_data`
+//   - OpenAI: `image_url.url`(chat 对象形态)、`image_url`(Responses 字符串形态)、
+//     `input_audio.data`、`file_data`
 //   - Anthropic: `source.data`(配 `"type":"base64"`)
 //   - Gemini: `inline_data.data` / `inlineData.data`
 //
 // 出现在这些键里的 base64 由上游按 patch 计费(与字节数无关),按固定 allowance 折算;
 // 其它位置(典型是 text/content 字段)的 base64 会被上游当文本分词,按稠密费率折算。
 var multimodalPayloadKeys = map[string]bool{
-	"url":       true,
+	"url": true,
+	// image_url：OpenAI Responses 的 `input_image.image_url` 是**字符串**形态的
+	// data URI（chat 形态才是 `image_url.url` 对象）。漏掉它会让一张 1MB 内联图
+	// 按 1 token/字节 估成 ≈100 万输入 token（实测 1 000 051），把余额只有几美元的
+	// 用户误 403、并在严格预留模式下吃光并发额度 —— 而正确口径是 1600 token/块。
+	"image_url": true,
 	"data":      true,
 	"file_data": true,
 }
@@ -444,7 +547,7 @@ func estimateRequestSpendUpperBound(
 		return 0
 	}
 
-	inputUpper := EstimateRequestInputTokensUpperBound(body)
+	inputUpper := estimateRequestInputTokensUpperBound(body, requestSpendCJKRunesPerTokenValue(cfg))
 	outputUpper, declared := ExtractRequestMaxOutputTokens(body)
 	if !declared {
 		outputUpper = requestSpendDefaultMaxOutputTokens(cfg)
@@ -593,11 +696,14 @@ func (s *OpenAIGatewayService) EstimateImageRequestSpendUpperBound(
 	size string,
 	count int,
 ) float64 {
+	if s == nil {
+		return 0
+	}
 	if !requestSpendPrecheckEnabled(s.cfg) {
 		RecordBillingPrecheckDisabled()
 		return 0
 	}
-	if s == nil || s.billingService == nil || user == nil || apiKey == nil || apiKey.Group == nil {
+	if s.billingService == nil || user == nil || apiKey == nil || apiKey.Group == nil {
 		RecordBillingPrecheckUnavailable()
 		return 0
 	}
