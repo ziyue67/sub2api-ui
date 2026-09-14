@@ -177,3 +177,35 @@
 - 真 PG/Redis 集成套件与生产压测未执行（H1 的绝对耗时随 CPU 而异，量级已验证）。
 - H5 在生产是否已被利用、`RequestPayloadHash` 是否在所有路由都被填充（若为空，指纹退化为常量，冲突分支反而更少触发，但"同请求重复投递"仍免费）。
 - H6/H7 的触发频次（依赖管理员/绑定/退款的实际使用）。
+
+---
+
+## 6. 修复记录（PR #14，`fix/billing-audit-pr12-findings`）
+
+| 编号 | 状态 | 修复要点 |
+| --- | --- | --- |
+| H1 | ✅ | `jsonKeyBefore` 改为"反向找值的起始引号 + 1024 字节预算"：1.64MB 构造体 **6.19s → 11ms**（6.6MB → 49ms，近似线性） |
+| H2 | ✅ | 熵阈值 `40 → 24`（英文文本的 base64 实测 37 种字符）；十六进制/重复串仍留文本口径 |
+| H3 | ✅ | 键名回溯不再依赖 URI 字符白名单；`;charset=utf-8;base64,` 等四种形态实测均回到 1 块 × 1600（原 1 200 072） |
+| H4 | ✅ | MIME 换行 / 转义 `\/` / url-safe `-`·`_` 按同一条串合并统计 |
+| H5 | ✅ | 幂等键只取服务端可信来源；指纹不再用客户端 id 兜底；冲突时换新 id 重新落账（不再丢单） |
+| H6 | ✅ | 仅 `balanceDiff > 0` 才清"钱包已耗尽"标记 |
+| H7 | ✅ | OAuth 首绑赠送、退款回滚加分统一走 `InvalidateUserBalanceAfterCredit` |
+| H8 | ✅ | CJK 费率校验 0–8 + 运行期钳制 + 饱和乘法（防全量 403 与溢出 fail-open） |
+| H9 | ✅ | 注释/文档与实现对齐（标记命中即稠密，熵闸门只用于无标记长串） |
+| H10 | ✅ | 结算封顶后 API key 配额/限流按实收累加（账户侧上游成本保持全额） |
+| H11 | ✅ | 小 body 快路径 + 文档写明扫描成本（≈5ms/MB） |
+| H12 | ✅ | legacy 路径回填 `NewBalance`、`userRepo` nil 不再 panic |
+| F10 | ✅ | batch image capture 补批次凭据校验（与 release 对称） |
+
+新增回归测试：`DataURIWithMimeParameters`、`SegmentedBase64`、`BacktrackIsLinear`、
+`RunesPerTokenValue_Clamped`、`MarkerLifecycle_OnlyCreditClearsMarker`、
+`QuotaUsesCollectedAmountOnFloorDrain`、`SkipsWhenHoldNeverReserved`；并把 5 个
+**锁定旧（不安全）行为**的用例改写为锁定新不变量
+（`PrefersClientRequestIDOverUpstreamRequestID` → `NeverUsesClientRequestIDAsBillingKey` 等）。
+
+验证：`go build ./...`、`go vet -tags=unit ./internal/...`、`go vet -tags=integration`、
+`go test -tags=unit ./internal/{service,repository,config,handler}/...` 全绿（service 195.8s /
+handler 41.3s / repository 5.2s / config 1.6s）。
+
+**仍待运行时验证**：真 PG/Redis 集成套件（testcontainers）、生产压测、H5 在生产是否已被利用。
