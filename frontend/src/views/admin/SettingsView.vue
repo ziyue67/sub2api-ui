@@ -3918,6 +3918,7 @@
                     step="1"
                     class="input"
                     placeholder="1"
+                    data-testid="inflight-reservation-budget-multiplier"
                   />
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.defaults.inflightReservationBudgetMultiplierHint") }}
