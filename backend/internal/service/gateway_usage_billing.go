@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"strings"
@@ -177,6 +178,10 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 			if deps != nil && deps.cfg != nil && deps.cfg.Billing.MinimumBalanceReserve > 0 {
 				minimumReserve = deps.cfg.Billing.MinimumBalanceReserve
 			}
+			if deps.userRepo == nil {
+				// 降级装配缺失用户仓储：不能 panic（审计 H12），按可观测的失败返回。
+				return nil, fmt.Errorf("billing deps missing user repository")
+			}
 			var err error
 			if floorDeductor, ok := deps.userRepo.(balanceFloorDeductor); ok {
 				// 后付费结算：余额不足以覆盖全额时扣到 floor 为止（永不为负），
@@ -193,6 +198,15 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 				err = deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost, minimumReserve)
 				if err == nil {
 					result.BalanceCollected = cost.ActualCost
+					// 严格扣费路径不返回新余额；这里补读一次（仅降级路径，非热路径），
+					// 否则 settlementReachedWalletFloor 永远看不到"正好扣到封底"，
+					// 会漏打"钱包已耗尽"标记（审计 H12）。
+					if user, getErr := deps.userRepo.GetByID(billingCtx, p.User.ID); getErr == nil && user != nil {
+						newBalance := user.Balance
+						result.NewBalance = &newBalance
+					} else if getErr != nil {
+						slog.Warn("read balance after legacy deduction failed", "user_id", p.User.ID, "error", getErr)
+					}
 				}
 			}
 			if err != nil {
@@ -220,6 +234,9 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		}
 	}
 
+	// 注：配额/限流按全额累加（与统一路径一致）：它们衡量"这笔请求真实消耗了多少"，
+	// 与钱包能否全额收回无关（钱包侧实收/坏账由 result.BalanceShortfall 表达）。
+	// 复审 H10 的"按实收"建议经评估属产品语义选择，保持既有设计。
 	if p.shouldDeductAPIKeyQuota() {
 		if err := p.APIKeyService.UpdateQuotaUsed(billingCtx, p.APIKey.ID, cost.ActualCost); err != nil {
 			slog.Error("update api key quota failed", "api_key_id", p.APIKey.ID, "error", err)
@@ -266,34 +283,29 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	return result, nil
 }
 
-func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string) string {
-	// Forced durable money-event IDs must win over client/local context IDs so
-	// standalone web_search / async video cannot collapse under a reused client id.
-	if requestID := strings.TrimSpace(upstreamRequestID); requestID != "" {
-		if isForcedUsageBillingRequestID(requestID) {
-			return requestID
-		}
-	}
-	if ctx != nil {
-		if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
-			return "client:" + strings.TrimSpace(clientRequestID)
-		}
-		if requestID, _ := ctx.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
-			return "local:" + strings.TrimSpace(requestID)
-		}
-	}
-	if requestID := strings.TrimSpace(upstreamRequestID); requestID != "" {
+// resolveUsageBillingRequestID 解析计费幂等键的 request_id。
+//
+// 安全约束（审计 H5）：**幂等键必须由服务端决定**，绝不能落在客户端可控的
+// `X-Client-Request-ID` / `X-Request-ID` 上。旧实现优先取这两个 header，于是客户端
+// 只要恒定发送同一个 id，就能让多笔真实调用命中同一个 (request_id, api_key_id)：
+//   - 指纹相同  → 静默去重（Applied=false，不扣费、不报错）
+//   - 指纹不同  → ErrUsageBillingRequestConflict → ActualCost=0
+//
+// 两种情况下上游都已经被调用、响应都已经返回，钱包却分文未动 —— 可无限免费调用。
+//
+// 取值优先级（全部服务端可信）：
+//  1. 强持久 money-event id（web_search / grok-video / grok_audio / grok_realtime）：
+//     这些流程用稳定 id 把多次轮询合并成一笔账单；
+//  2. 上游返回的请求 id：每笔上游调用唯一；
+//  3. 服务端生成的一次性 id。
+//
+// ctx 参数保留仅为兼容调用方签名（不再读取其中的客户端 id）。
+func resolveUsageBillingRequestID(_ context.Context, upstreamRequestID string) string {
+	requestID := strings.TrimSpace(upstreamRequestID)
+	if requestID != "" {
 		return requestID
 	}
 	return "generated:" + generateRequestID()
-}
-
-func isForcedUsageBillingRequestID(requestID string) bool {
-	id := strings.TrimSpace(requestID)
-	return strings.HasPrefix(id, "web_search:") ||
-		strings.HasPrefix(id, "grok-video:") ||
-		strings.HasPrefix(id, "grok_audio:") ||
-		strings.HasPrefix(id, "grok_realtime:")
 }
 
 // StableGrokAudioBillingRequestID is the durable usage_logs / dedup key for one
@@ -322,19 +334,21 @@ func StableGrokRealtimeBillingRequestID(sessionID string) string {
 	return "grok_realtime:" + sessionID
 }
 
-func resolveUsageBillingPayloadFingerprint(ctx context.Context, requestPayloadHash string) string {
-	if payloadHash := strings.TrimSpace(requestPayloadHash); payloadHash != "" {
-		return payloadHash
-	}
-	if ctx != nil {
-		if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
-			return "client:" + strings.TrimSpace(clientRequestID)
-		}
-		if requestID, _ := ctx.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
-			return "local:" + strings.TrimSpace(requestID)
-		}
-	}
-	return ""
+// resolveUsageBillingPayloadFingerprint 解析计费幂等键的"负载指纹"。
+//
+// 安全约束（审计 H5）：指纹**绝不能**由客户端可控的值兜底。旧实现在没有
+// request_payload_hash 时回落到 `client:<X-Client-Request-ID>`（或 `local:<X-Request-ID>`），
+// 而这两个 header 都由调用方提供 —— 于是客户端只要固定发送同一个 id，多笔**不同**
+// 的请求就会得到同一个 (request_id, fingerprint)，命中"静默去重"分支：上游已经调用、
+// 响应已经返回，钱包分文未动（实测可无限免费调用）。
+//
+// 因此这里在缺失真实负载哈希时返回空串，交由 UsageBillingCommand.Normalize() 用
+// **服务端算出的** buildUsageBillingFingerprint（模型 + token 数 + 金额）兜底：
+// 同一次调用的重复记录指纹一致（仍然幂等），不同调用则不同。
+//
+// 保留 ctx 参数以兼容调用方签名（当前实现不再读取其中的客户端 id）。
+func resolveUsageBillingPayloadFingerprint(_ context.Context, requestPayloadHash string) string {
+	return strings.TrimSpace(requestPayloadHash)
 }
 
 func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsageBillingParams) *UsageBillingCommand {
@@ -416,6 +430,15 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	defer cancel()
 
 	result, err := repo.Apply(billingCtx, cmd)
+	if errors.Is(err, ErrUsageBillingRequestConflict) {
+		// 同一个 request_id 已被另一笔**不同负载**的调用占用（典型：上游复用/伪造了
+		// request id，或历史数据里已有同 id 的不同指纹）。这绝不能变成"免费调用"：
+		// 换一个服务端新 id 重新落账，把这笔钱收回来。
+		logger.LegacyPrintf("service.gateway",
+			"ALERT: usage billing request id conflict, retrying with a fresh server id: request=%s", requestID)
+		cmd.RequestID = requestID + ":conflict:" + generateRequestID()
+		result, err = repo.Apply(billingCtx, cmd)
+	}
 	if err != nil {
 		return false, err
 	}

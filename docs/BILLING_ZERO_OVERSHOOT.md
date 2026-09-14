@@ -48,7 +48,7 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 | `request_spend_default_max_output_tokens` | `8192` | 请求未声明输出上限时的缺省上界。 |
 | `request_spend_safety_multiplier` | `1.0` | 预检安全系数。`>1` 更保守（多拦、零坏账），`<1` 更激进。 |
 | `request_spend_min_output_tokens` | `0` | **输出上界下限（默认关）**。部分上游桥不执行请求声明的 `max_tokens`（实测声明 64/190 仍产出 999 token），信任小声明值会让预检低估。`>0` 时按 `max(声明值, 本值)` 预检。**只抬高偏小的声明值，对大声明值逐位不变**。 |
-| `request_spend_cjk_tokens_per_rune` | `0`（= 内置 `1`） | CJK 每字 token 上界。内置 `1` 是按生产上游（deepseek）实测 0.5–1 token/字 校准的**已校准上游**上界，对**字节回退型分词器不是上界**（cl100k/o200k 生僻汉字、Llama 系 CJK 词表可达 2–3 token/字）。路由到这类模型（GPT 系 / Llama 系）的部署应设为 `2`（或 `3`）。 |
+| `request_spend_cjk_tokens_per_rune` | `0`（= 内置 `1`） | CJK 每字 token 上界，**校验范围 0–8**（超出即启动失败；运行期再钳到 8，防止误配 1e6 让 CJK 请求全量 403、或极大值让乘法溢出把闸门变成 fail-open）。内置 `1` 是按生产上游（deepseek）实测 0.5–1 token/字 校准的**已校准上游**上界，对**字节回退型分词器不是上界**（cl100k/o200k 生僻汉字、Llama 系 CJK 词表可达 2–3 token/字）。路由到这类模型（GPT 系 / Llama 系）的部署应设为 `2`（或 `3`）。 |
 | `inflight_reservation_budget_multiplier` | `1.0` | 在途预留聚合闸门的预算倍数：`1.0` = 严格（`balance − Σ预留 ≥ reserve`，并发下零坏账，但并发量被"可花余额 / 单笔最坏费用"卡住）；调高即用**有界坏账**换并发（`settlement_shortfall_count` 会随之上长）。**可被后台 `/admin/settings` 的同名项覆盖，后台值优先，保存后立即生效**。 |
 | `database.max_open_conns` | `32` | 必须**显著低于** PG `max_connections`（默认 100）；多实例按实例数均摊。 |
 | `database.max_idle_conns` | `8` | 建议为 `max_open_conns` 的 25%–50%。 |
@@ -180,13 +180,20 @@ GET /api/v1/admin/ops/billing-guard
   聚合键会短暂偏高（保守方向，不会放行超额，最多让该用户早一点被 403）。
 - **保守方向的误伤**：输入 token 按**四段口径**估计 —— 普通文本 `字节数/2`；
   **CJK 主导文本**（非结构字节中 CJK 占比 ≥ 90%）按 `每字 1 token`
-  （`request_spend_cjk_tokens_per_rune` 可调高；该费率按生产上游校准，对字节回退型
-  分词器不是上界）；**多模态块内**的 base64（`url`/`image_url`/`data`/`file_data`
-  字段承载，含 OpenAI Responses 的字符串形态 `image_url`，即真实图片/音频负载）
-  按固定 allowance（1600/块，与分辨率无关）；**其它位置的 base64**（含没有任何
-  `;base64,` / `"data":"` 标记的裸长串，判定依据是长串前最近的 JSON 键名）按
+  （`request_spend_cjk_tokens_per_rune` 可调高，上限 8；该费率按生产上游校准，对
+  字节回退型分词器不是上界）；**多模态块内**的 base64（`url`/`image_url`/`data`/
+  `file_data` 字段承载，含 OpenAI Responses 的字符串形态 `image_url` 与**带 mime
+  参数的 data URI**（`data:image/svg+xml;charset=utf-8;base64,…`），即真实图片/音频
+  负载）按固定 allowance（1600/块，与分辨率无关）；**其它位置的 base64**（含没有
+  任何 `;base64,` / `"data":"` 标记的裸长串，判定依据是长串前最近的 JSON 键名）按
   **1 token/字节** 稠密计（实测 20KB base64 被上游分词为 18907 token ≈ 0.92 token/字节，
-  若按图片折算会低估 4 倍、生产实测产生过一笔 $0.0034 的 write-off）。对超长单行
-  文本等异常内容仍会高估（方向安全）。
+  若按图片折算会低估 4 倍、生产实测产生过一笔 $0.0034 的 write-off）。
+  分段写法（MIME/PEM 每 76 字符换行、url-safe 的 `-`/`_`、转义 `\/`）按**同一条串**
+  合并识别；无标记的长串再按"字符种类 ≥ 24"判定是否真是 base64（英文文本的 base64
+  实测 37 种、十六进制 16 种、`abab…` 2 种），避免把低熵长串按稠密费率高估。
+  对超长单行文本等异常内容仍会高估（方向安全）。
+- **键名回溯有字节预算**（1024）：`jsonKeyBefore` 只回扫有限字节，避免"A×512;"这类
+  构造体触发 Θ(n²) 反向扫描（实测 1.64MB 请求体曾耗 6.19s CPU）；超预算按"未知键"
+  处理（归稠密，方向保守）。
 - **`userRepo` 未装配的降级部署**：无法做 DB 真值复核，护栏退化为"只按缓存判断"，
   会通过 `recheck_skipped_no_user_repo` 计数并出现在 `degraded_signals` 中。

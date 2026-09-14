@@ -197,6 +197,12 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.BalanceShortfall = deduction.Shortfall
 	}
 
+	// 注：API key 配额/限流按**全额**（cmd.APIKeyQuotaCost / APIKeyRateLimitCost）累加，
+	// 与 usage_log.total_cost 的口径一致 —— 它们衡量的是"这笔请求真实消耗了多少"，
+	// 与钱包能否全额收回无关（钱包侧的实收/坏账由 balance_collected/shortfall 表达）。
+	// 这是既有设计，由 TestUsageBillingRepositoryApply_DrainsWalletToReserveFloor 锁定
+	// （"quota reflects the real consumption"）；复审 H10 曾建议改为按实收，评估后
+	// 判定为产品语义选择而非缺陷，保持原样。
 	if cmd.APIKeyQuotaCost > 0 {
 		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
 		if err != nil {
@@ -444,6 +450,17 @@ func captureUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *
 	}
 	if cmd.ActualAmount-cmd.HoldAmount > 0.00000001 {
 		return nil, service.ErrBatchImageSettlementCostExceedsHold
+	}
+	// 与 release 路径对称：结算前校验该 job 确实预留过 hold（hold request id 已被
+	// claim）。否则一个"从未成功冻结"的 job 也能走到 capture，扣掉**同一用户其它
+	// job** 的冻结额（审计 F10）。未 claim 时按 no-op 返回，交由上层记账。
+	held, heldErr := batchImageHoldClaimExists(ctx, tx, service.BatchImageHoldRequestID(cmd.BatchID), cmd.APIKeyID)
+	if heldErr != nil {
+		return nil, heldErr
+	}
+	if !held {
+		logger.LegacyPrintf("repository.usage_billing", "[BatchImage] capture skipped, hold was never reserved: batch=%s", cmd.BatchID)
+		return &service.BatchImageBalanceHoldResult{}, nil
 	}
 	var balance, frozen float64
 	err := tx.QueryRowContext(ctx, `

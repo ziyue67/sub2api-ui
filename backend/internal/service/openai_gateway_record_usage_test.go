@@ -165,6 +165,9 @@ type openAIRecordUsageUserRepoStub struct {
 	deductErr   error
 	lastAmount  float64
 	lastCtxErr  error
+	// balanceAfterDeduct / getByIDErr 供 GetByID 使用（0 表示默认 100）。
+	balanceAfterDeduct float64
+	getByIDErr         error
 }
 
 func (s *openAIRecordUsageUserRepoStub) DeductBalance(ctx context.Context, id int64, amount float64, _ ...float64) error {
@@ -172,6 +175,19 @@ func (s *openAIRecordUsageUserRepoStub) DeductBalance(ctx context.Context, id in
 	s.lastAmount = amount
 	s.lastCtxErr = ctx.Err()
 	return s.deductErr
+}
+
+// GetByID 供 legacy 扣费路径在成功扣款后回填新余额（审计 H12）。默认返回一个
+// 远高于封底的余额，避免影响不关心标记的用例。
+func (s *openAIRecordUsageUserRepoStub) GetByID(ctx context.Context, id int64) (*User, error) {
+	if s.getByIDErr != nil {
+		return nil, s.getByIDErr
+	}
+	balance := s.balanceAfterDeduct
+	if balance == 0 {
+		balance = 100
+	}
+	return &User{ID: id, Balance: balance}, nil
 }
 
 func (s *openAIRecordUsageUserRepoStub) AdjustBalance(ctx context.Context, id int64, delta float64) (BalanceChange, error) {
@@ -981,7 +997,8 @@ func TestOpenAIGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloa
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_UsesFallbackRequestIDForBillingAndUsageLog(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_FallbackRequestIDIsServerGenerated(t *testing.T) {
+	// 审计 H5：没有上游 id 时必须服务端生成，不能回落到客户端 header。
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	userRepo := &openAIRecordUsageUserRepoStub{}
@@ -989,6 +1006,7 @@ func TestOpenAIGatewayServiceRecordUsage_UsesFallbackRequestIDForBillingAndUsage
 	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, userRepo, subRepo, nil)
 
 	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "req-local-fallback")
+	ctx = context.WithValue(ctx, ctxkey.ClientRequestID, "openai-client-stable-xyz")
 	err := svc.RecordUsage(ctx, &OpenAIRecordUsageInput{
 		Result: &OpenAIForwardResult{
 			RequestID: "",
@@ -1006,12 +1024,15 @@ func TestOpenAIGatewayServiceRecordUsage_UsesFallbackRequestIDForBillingAndUsage
 
 	require.NoError(t, err)
 	require.NotNil(t, billingRepo.lastCmd)
-	require.Equal(t, "local:req-local-fallback", billingRepo.lastCmd.RequestID)
+	require.Contains(t, billingRepo.lastCmd.RequestID, "generated:")
+	require.NotContains(t, billingRepo.lastCmd.RequestID, "req-local-fallback")
+	require.NotContains(t, billingRepo.lastCmd.RequestID, "openai-client-stable-xyz")
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, "local:req-local-fallback", usageRepo.lastLog.RequestID)
+	require.Equal(t, billingRepo.lastCmd.RequestID, usageRepo.lastLog.RequestID)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_NeverUsesClientRequestIDAsBillingKey(t *testing.T) {
+	// 安全回归（审计 H5）：客户端提供的 X-Client-Request-ID 绝不能成为计费幂等键。
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	userRepo := &openAIRecordUsageUserRepoStub{}
@@ -1036,9 +1057,10 @@ func TestOpenAIGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamReque
 
 	require.NoError(t, err)
 	require.NotNil(t, billingRepo.lastCmd)
-	require.Equal(t, "client:openai-client-stable-123", billingRepo.lastCmd.RequestID)
+	require.Equal(t, "upstream-openai-volatile-456", billingRepo.lastCmd.RequestID)
+	require.NotContains(t, billingRepo.lastCmd.RequestID, "openai-client-stable-123")
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, "client:openai-client-stable-123", usageRepo.lastLog.RequestID)
+	require.Equal(t, "upstream-openai-volatile-456", usageRepo.lastLog.RequestID)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_WSModePrefersUpstreamRequestIDOverClientRequestID(t *testing.T) {

@@ -294,6 +294,11 @@ func TestEstimateRequestInputTokensUpperBound_MixedImageAndTextBase64(t *testing
 }
 
 // TestJsonKeyBefore 验证键名回溯(多模态块判定的核心)。
+//
+// 注意第 5 例：旧实现沿"data URI 字符白名单"回扫，值内部出现 `:` 会把它误当 scheme
+// 冒号而回溯失败（返回 "" → 误判为 text）。现在改为"反向找到值的起始引号"，能正确
+// 读出 `text` —— 这与"带 mime 参数的 data URI（`;charset=utf-8;base64,`）能被正确
+// 归类"是同一个修复（见 gateway_request_spend_estimate.go 的 jsonKeyBefore 注释）。
 func TestJsonKeyBefore(t *testing.T) {
 	cases := []struct {
 		body string
@@ -304,7 +309,14 @@ func TestJsonKeyBefore(t *testing.T) {
 		{`{"s":{"type":"base64","data":"XXXX"`, len(`{"s":{"type":"base64","data":"`), "data"},
 		{`{"m":{"inline_data":{"data": "XXXX"`, len(`{"m":{"inline_data":{"data": "`), "data"},
 		{`{"m":{"text":"data:image/png;base64,XXXX"`, len(`{"m":{"text":"data:image/png;base64,`), "text"},
-		{`{"m":{"text":"here: XXXX"`, len(`{"m":{"text":"here: `), ""},
+		{`{"m":{"text":"here: XXXX"`, len(`{"m":{"text":"here: `), "text"},
+		// 带 mime 参数/名字参数的 data URI（旧实现遇 `=` 断掉 → 误判 dense）
+		{`{"m":{"image_url":"data:image/svg+xml;charset=utf-8;base64,XXXX"`, len(`{"m":{"image_url":"data:image/svg+xml;charset=utf-8;base64,`), "image_url"},
+		{`{"m":{"url":"data:image/png;name=a.png;base64,XXXX"`, len(`{"m":{"url":"data:image/png;name=a.png;base64,`), "url"},
+		// 值不在 JSON 字符串里（无起始引号）→ 无法回溯
+		{`nokey XXXXXXXX`, len(`nokey `), ""},
+		// 超出回扫预算（H1 的 Θ(n²) 防护）→ 返回 ""（调用方按稠密处理，方向保守）
+		{`{"k":"` + strings.Repeat("x", requestSpendJSONBacktrackBudget+64) + `AAAA`, len(`{"k":"`) + requestSpendJSONBacktrackBudget + 64, ""},
 	}
 	for _, tc := range cases {
 		got := jsonKeyBefore([]byte(tc.body), tc.pos)

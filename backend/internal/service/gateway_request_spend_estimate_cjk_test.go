@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -228,4 +229,121 @@ func TestRequestSpendCJKRunesPerTokenValue_Configurable(t *testing.T) {
 	two := estimateRequestInputTokensUpperBound(body, 2)
 	require.Greater(t, two, one, "调高每字 token 率必须抬高上界（保守方向）")
 	require.GreaterOrEqual(t, two, 2*utf8.RuneCountInString(text))
+}
+
+// TestEstimateRequestInputTokensUpperBound_DataURIWithMimeParameters 锁死审计 H3：
+// 带 mime 参数/名字参数的 data URI（`;charset=utf-8;base64,`、`;name=a.png;base64,`）
+// 必须和多模态块一样按固定 allowance 折算。旧实现的键名回溯沿"URI 字符白名单"回扫，
+// 遇到 `=` 就断掉 → 返回空键名 → 整张图按 1 token/字节 计（实测 1.2MB 图从 1 663
+// 放大到 1 200 072）。
+func TestEstimateRequestInputTokensUpperBound_DataURIWithMimeParameters(t *testing.T) {
+	raw := make([]byte, 900000)
+	for i := range raw {
+		raw[i] = byte((i*7919 + i/251) % 256)
+	}
+	blob := base64.StdEncoding.EncodeToString(raw)
+
+	for _, uri := range []string{
+		"data:image/png;base64,",
+		"data:image/svg+xml;charset=utf-8;base64,",
+		"data:image/png;name=a.png;base64,",
+		"data:text/plain;charset=utf-8;base64,",
+	} {
+		body := []byte(`{"messages":[{"content":[{"type":"image_url","image_url":{"url":"` + uri + blob + `"}}]}]}`)
+		binaryBytes, denseBytes, blobs := inlineBinaryPayloadStats(body)
+		require.Equal(t, len(blob), binaryBytes, "uri=%s 必须整块按多模态负载计", uri)
+		require.Zero(t, denseBytes, "uri=%s 不得按字节稠密计", uri)
+		require.Equal(t, 1, blobs)
+		require.Less(t, EstimateRequestInputTokensUpperBound(body), 5000,
+			"uri=%s 的估算必须落在 1600 token/块量级", uri)
+	}
+}
+
+// TestEstimateRequestInputTokensUpperBound_SegmentedBase64 锁死审计 H4：分段写法
+// （MIME/PEM 每 76 字符换行、url-safe 的 `-`/`_`）必须合并成同一条负载串识别。
+// 旧实现被换行/替换字符切碎后回落 2 字节/token（文本位低估 ≈1.8 倍），
+// 在 data URI 位置更会把整块图按字节计（高估 ≈120 倍）。
+func TestEstimateRequestInputTokensUpperBound_SegmentedBase64(t *testing.T) {
+	raw := make([]byte, 300000)
+	for i := range raw {
+		raw[i] = byte((i*7919 + i/251) % 256)
+	}
+	std := base64.StdEncoding.EncodeToString(raw)
+	urlSafe := base64.RawURLEncoding.EncodeToString(raw)
+
+	// 文本位置：分段写法也必须按稠密费率（≥ len(blob) token）
+	for _, payload := range []string{
+		wrapChunks(std, 76, `\n`),
+		urlSafe,
+	} {
+		body := []byte(`{"messages":[{"content":[{"type":"text","text":"` + payload + `"}]}]}`)
+		_, denseBytes, _ := inlineBinaryPayloadStats(body)
+		require.GreaterOrEqual(t, denseBytes, len(payload)/2,
+			"分段 base64 必须归入稠密路径（不得回落 2 字节/token）")
+	}
+
+	// 多模态位置：url-safe 的 data URI 仍按固定 allowance
+	body := []byte(`{"messages":[{"content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + urlSafe + `"}}]}]}`)
+	binaryBytes, denseBytes, blobs := inlineBinaryPayloadStats(body)
+	require.Equal(t, len(urlSafe), binaryBytes)
+	require.Zero(t, denseBytes)
+	require.Equal(t, 1, blobs)
+	require.Less(t, EstimateRequestInputTokensUpperBound(body), 5000)
+}
+
+func wrapChunks(s string, n int, sep string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); i += n {
+		end := i + n
+		if end > len(s) {
+			end = len(s)
+		}
+		sb.WriteString(s[i:end])
+		sb.WriteString(sep)
+	}
+	return sb.String()
+}
+
+// TestEstimateRequestInputTokensUpperBound_BacktrackIsLinear 锁死审计 H1：
+// "A×512;" 重复构造体曾让键名回溯退化成 Θ(n²)（1.64MB 实测 6.19s CPU）。
+// 现在回扫有字节预算，耗时必须随体积线性增长（这里用宽松上界防回归）。
+func TestEstimateRequestInputTokensUpperBound_BacktrackIsLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-sensitive")
+	}
+	mk := func(k int) []byte {
+		return []byte(`{"messages":[{"content":"` + strings.Repeat(strings.Repeat("A", 512)+";", k) + `"}]}`)
+	}
+	start := time.Now()
+	small := EstimateRequestInputTokensUpperBound(mk(800))
+	smallDur := time.Since(start)
+
+	start = time.Now()
+	large := EstimateRequestInputTokensUpperBound(mk(12800)) // 16x 体积
+	largeDur := time.Since(start)
+
+	require.Greater(t, small, 0)
+	require.Greater(t, large, small)
+	// 线性实现下 16x 体积 ≈16x 时间；给足抖动余量，只要求不出现二次方级爆炸。
+	require.Less(t, largeDur, smallDur*64+2*time.Second,
+		"回溯必须近似线性（旧实现 410KB→245ms、1.64MB→6.19s）")
+}
+
+// TestRequestSpendCJKRunesPerTokenValue_Clamped 锁死审计 H8：CJK 费率必须有上界，
+// 否则 1e6 会让 CJK 请求全量 403，MaxInt64 还会让乘法溢出把闸门变成 fail-open。
+func TestRequestSpendCJKRunesPerTokenValue_Clamped(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Billing.RequestSpendCJKTokensPerRune = 1000000
+	require.Equal(t, requestSpendCJKRunesPerTokenMax, requestSpendCJKRunesPerTokenValue(cfg))
+
+	cfg.Billing.RequestSpendCJKTokensPerRune = 1 << 62
+	require.Equal(t, requestSpendCJKRunesPerTokenMax, requestSpendCJKRunesPerTokenValue(cfg))
+
+	body := []byte(`{"messages":[{"content":"` + strings.Repeat("中文内容测试", 1000) + `"}]}`)
+	est := estimateRequestInputTokensUpperBound(body, requestSpendCJKRunesPerTokenValue(cfg))
+	require.Less(t, est, 200000, "钳制后不得出现 60 亿 token 级别的荒谬上界")
+
+	// 饱和乘法：溢出不得变成负数（负上界会让费用 ≤0 → 闸门 fail-open）
+	require.Greater(t, saturatingMul(int(^uint(0)>>1), requestSpendCJKRunesPerTokenMax), 0)
+	require.Equal(t, 0, saturatingMul(-1, 8))
 }
