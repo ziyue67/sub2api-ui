@@ -234,20 +234,17 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		}
 	}
 
-	// 余额被扣到封底时按实收累加用户侧配额/限流（与统一路径一致，审计 H10）。
-	userChargedCost := cost.ActualCost
-	if !p.IsSubscriptionBill && result != nil && result.BalanceShortfall > 0 {
-		userChargedCost = collectedBalanceCost(p, result)
-	}
-
+	// 注：配额/限流按全额累加（与统一路径一致）：它们衡量"这笔请求真实消耗了多少"，
+	// 与钱包能否全额收回无关（钱包侧实收/坏账由 result.BalanceShortfall 表达）。
+	// 复审 H10 的"按实收"建议经评估属产品语义选择，保持既有设计。
 	if p.shouldDeductAPIKeyQuota() {
-		if err := p.APIKeyService.UpdateQuotaUsed(billingCtx, p.APIKey.ID, userChargedCost); err != nil {
+		if err := p.APIKeyService.UpdateQuotaUsed(billingCtx, p.APIKey.ID, cost.ActualCost); err != nil {
 			slog.Error("update api key quota failed", "api_key_id", p.APIKey.ID, "error", err)
 		}
 	}
 
 	if p.shouldUpdateRateLimits() {
-		if err := p.APIKeyService.UpdateRateLimitUsage(billingCtx, p.APIKey.ID, userChargedCost); err != nil {
+		if err := p.APIKeyService.UpdateRateLimitUsage(billingCtx, p.APIKey.ID, cost.ActualCost); err != nil {
 			slog.Error("update api key rate limit usage failed", "api_key_id", p.APIKey.ID, "error", err)
 		}
 	}

@@ -197,32 +197,22 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.BalanceShortfall = deduction.Shortfall
 	}
 
-	// 结算封顶（余额被扣到封底、只收到 collected）时，用户侧的 API key 配额与
-	// 限流额度按**实收**累加，而不是按全额 —— 否则账实不一致：用户为没被扣到的
-	// 钱消耗了配额（审计 H10）。账户侧配额（AccountQuotaCost）记录的是上游成本，
-	// 与用户是否付得起无关，保持全额。
-	apiKeyCharge := cmd.APIKeyQuotaCost
-	apiKeyRateCharge := cmd.APIKeyRateLimitCost
-	if cmd.BalanceCost > 0 && result.BalanceShortfall > 0 {
-		collected := result.BalanceCollected
-		if collected < 0 {
-			collected = 0
-		}
-		ratio := collected / cmd.BalanceCost
-		apiKeyCharge = service.QuantizeUsageBillingAmount(cmd.APIKeyQuotaCost * ratio)
-		apiKeyRateCharge = service.QuantizeUsageBillingAmount(cmd.APIKeyRateLimitCost * ratio)
-	}
-
-	if apiKeyCharge > 0 {
-		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, apiKeyCharge)
+	// 注：API key 配额/限流按**全额**（cmd.APIKeyQuotaCost / APIKeyRateLimitCost）累加，
+	// 与 usage_log.total_cost 的口径一致 —— 它们衡量的是"这笔请求真实消耗了多少"，
+	// 与钱包能否全额收回无关（钱包侧的实收/坏账由 balance_collected/shortfall 表达）。
+	// 这是既有设计，由 TestUsageBillingRepositoryApply_DrainsWalletToReserveFloor 锁定
+	// （"quota reflects the real consumption"）；复审 H10 曾建议改为按实收，评估后
+	// 判定为产品语义选择而非缺陷，保持原样。
+	if cmd.APIKeyQuotaCost > 0 {
+		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
 		if err != nil {
 			return err
 		}
 		result.APIKeyQuotaExhausted = exhausted
 	}
 
-	if apiKeyRateCharge > 0 {
-		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, apiKeyRateCharge); err != nil {
+	if cmd.APIKeyRateLimitCost > 0 {
+		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, cmd.APIKeyRateLimitCost); err != nil {
 			return err
 		}
 	}
