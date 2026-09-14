@@ -5,6 +5,8 @@ import (
 	"context"
 	"math"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -112,8 +114,18 @@ func ExtractRequestMaxOutputTokens(body []byte) (int, bool) {
 
 // EstimateRequestInputTokensUpperBound 把请求体字节数折算为输入 token 上界。
 //
-// 三段口径（生产实测校准，166.1.232.118 2026-09-13）：
-//   - 普通文本：len/2（BPE 每 token ≥2 字节的经验上界）；
+// 四段口径（生产实测校准，166.1.232.118 2026-09-13/14）：
+//
+//   - **非 CJK 普通文本**：len/2（BPE 每 token ≥2 字节的经验上界）。这是"最坏
+//     类别"的兜底费率，覆盖英文短词、数字/符号/JSON 键名密集文本；实测英文
+//     自然文本约 4 字节/token，2 字节/token 已留 2 倍余量。
+//   - **CJK 文本**（中日韩表意文字及其标点/全角符号）：按 **1 token/字** 折算
+//     （requestSpendCJKRunesPerToken），即最坏字节/token 下界 = 3（常用 CJK 在
+//     UTF-8 下 3 字节/字；扩展区 4 字节/字仍按 1 token/字，更保守）。生产实测
+//     上游对中文约 0.5 token/字（≈6 字节/token），旧口径一刀切 2 字节/token
+//     = 1.5 token/字：同一条真实 90124 token 的请求被估成 ≈270000 token（约 3 倍
+//     高估），strict 模式下把 9 万 token 大包并发压到 2 笔。改用 1 token/字 上界后
+//     同一请求降到约 18 万 token（≈2 倍实测，仍是上界）。
 //   - **多模态块内的 base64**（`url`/`data`/`file_data` 字段承载的 data URI 或
 //     `"type":"base64"` 块）：上游按图片/音频 patch 计费、与字节数无关 → 每块按
 //     requestSpendImageTokenAllowance 固定折算。真实图片若按字节折算会得到
@@ -122,6 +134,15 @@ func ExtractRequestMaxOutputTokens(body []byte) (int, bool) {
 //     实测 20KB base64 ≈ 18907 token ≈ 0.92 token/字节 → 按 1 token/字节 计
 //     （requestSpendDenseTokensPerByte）。若也按 1600/块折算会低估 4 倍，
 //     生产实测产生过一笔 $0.00335 的 write-off（cost=0.00835208 collected=0.005）。
+//
+// 保守性保证（不得低估）：
+//   - CJK 折算仅在"文本语言内容几乎全为 CJK"时启用——按**非结构字节**的 CJK 占比
+//     ≥ requestSpendCJKCoveragePercent 判定。中英混杂、其它语种、或含大段非 CJK
+//     内容的文本一律退回 2 字节/token 的保守口径（JSON 键名/括号/引号等结构字节
+//     不计入占比，避免正常 JSON 包裹把纯中文内容误判为混杂）。
+//   - CJK 分支内非 CJK 字节仍按 2 字节/token 计，不会因整体分类而放松对
+//     符号/数字密集字节的估计。
+//   - 文本内 base64 的 1 token/字节与多模态块固定折算两条路径不受影响。
 //
 // 宁可高估（多拦一笔付不满最坏费用的请求）也不低估（低估即重新产生坏账）。
 // 非典型内容可由 billing.request_spend_safety_multiplier 进一步放大兜底。
@@ -134,14 +155,110 @@ func EstimateRequestInputTokensUpperBound(body []byte) int {
 	if textBytes < 0 {
 		textBytes = 0
 	}
-	return textBytes/requestSpendTextBytesPerToken +
+	return estimateTextInputTokensUpperBound(body, textBytes, denseBytes, binaryBytes) +
 		denseBytes*requestSpendDenseTokensPerByte +
 		blobs*requestSpendImageTokenAllowance +
 		requestSpendInputOverheadTokens
 }
 
-// requestSpendTextBytesPerToken 普通文本的"每 token 字节数"下界（保守口径：2 字节/token）。
+// estimateTextInputTokensUpperBound 给出"普通文本"部分的输入 token 上界。
+//
+// CJK 占比判定与折算见 EstimateRequestInputTokensUpperBound 的注释：
+//   - CJK 主导：cjkRunes×1 + 非 CJKBytes/2；
+//   - 否则：textBytes/2（保守口径，含混杂文本）。
+func estimateTextInputTokensUpperBound(body []byte, textBytes, denseBytes, binaryBytes int) int {
+	if textBytes <= 0 {
+		return 0
+	}
+	cjkRunes, cjkBytes, structuralBytes := countCJKText(body)
+	// 语言内容字节 = 全部字节 - JSON 结构字节 - 文本内 base64 - 多模态负载。
+	// 只用它做占比判定；固定折算区不计入分母，避免被 base64/图片稀释。
+	languageBytes := len(body) - structuralBytes - denseBytes - binaryBytes
+	if languageBytes < 0 {
+		languageBytes = 0
+	}
+	if cjkBytes > 0 && cjkBytes*100 >= languageBytes*requestSpendCJKCoveragePercent {
+		nonCJKBytes := textBytes - cjkBytes
+		if nonCJKBytes < 0 {
+			nonCJKBytes = 0
+		}
+		return cjkRunes*requestSpendCJKRunesPerToken +
+			nonCJKBytes/requestSpendTextBytesPerToken
+	}
+	return textBytes / requestSpendTextBytesPerToken
+}
+
+// countCJKText 统计 body 中的 CJK 字符数、CJK 字节数与 JSON 结构字节数。
+// 只对 ≥0x80 的字节做 UTF-8 解码，纯 ASCII 请求体走快路径。
+func countCJKText(body []byte) (cjkRunes, cjkBytes, structuralBytes int) {
+	for i := 0; i < len(body); {
+		b := body[i]
+		if b < utf8.RuneSelf {
+			if isJSONStructuralByte(b) {
+				structuralBytes++
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRune(body[i:])
+		if r != utf8.RuneError && isCJKTextRune(r) {
+			cjkRunes++
+			cjkBytes += size
+		}
+		i += size
+	}
+	return cjkRunes, cjkBytes, structuralBytes
+}
+
+// isJSONStructuralByte 判断字节是否为 JSON 结构字符。这些字节（空白、括号、冒号、
+// 逗号、引号、反斜杠）不承载"语言内容"，在 CJK 占比判定中不计入分母——否则
+// 一段纯中文内容只要被标准 JSON 包裹就会被拉低到混杂阈值以下，白白退回保守口径。
+func isJSONStructuralByte(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '{', '}', '[', ']', ':', ',', '"', '\\':
+		return true
+	default:
+		return false
+	}
+}
+
+// isCJKTextRune 判断 rune 是否属于"最坏不过 1 token/字"的 CJK 系文字：中文/日文
+// 汉字（unicode.Han）、注音（Bopomofo），以及 CJK 标点/全角符号/兼容表意文字。
+// 这些字符在 UTF-8 下为 3 字节（扩展区 4 字节），上游最坏按 1 token/字 计费。
+//
+// 注意：这里**故意不包含**假名（Hiragana/Katakana）与谚文（Hangul）——它们的
+// 最坏分词可能超过 1 token/字（尤其谚文由多个字母组成），放进同一费率会低估；
+// 它们连同其它文字落入 2 字节/token 的保守口径。
+func isCJKTextRune(r rune) bool {
+	if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Bopomofo, r) {
+		return true
+	}
+	switch {
+	case r >= 0x3000 && r <= 0x303F, // CJK 符号与标点（、。「」等）
+		r >= 0x31C0 && r <= 0x31EF,   // CJK 笔画
+		r >= 0xFE30 && r <= 0xFE4F,   // CJK 兼容形式
+		r >= 0xFF01 && r <= 0xFF60,   // 全角 ASCII 与全角标点（不含半角片假名）
+		r >= 0xFFE0 && r <= 0xFFE6,   // 全角货币/符号
+		r >= 0x20000 && r <= 0x3FFFD: // CJK 扩展 B 及以后（4 字节/字）
+		return true
+	}
+	return false
+}
+
+// requestSpendTextBytesPerToken 非 CJK 普通文本的"每 token 字节数"下界
+// （保守口径：2 字节/token）。这是所有非 CJK 字节的最坏类别保证。
 const requestSpendTextBytesPerToken = 2
+
+// requestSpendCJKRunesPerToken CJK 文本的每字符 token 上界。
+// 生产实测上游对中文约 0.5 token/字，观测区间 0.5–1 token/字；取最坏 1 token/字
+// 作为上界 —— 常用 CJK 3 字节/字 ⇒ 最坏字节/token 下界 = 3；扩展区 4 字节/字仍按
+// 1 token/字计更保守。低于此上界（例如按 6 字节/token 对齐实测均值）会低估。
+const requestSpendCJKRunesPerToken = 1
+
+// requestSpendCJKCoveragePercent 判定文本主导语言为 CJK 的字节占比下限（百分比）。
+// 仅当非结构语言内容中 CJK 占比 ≥ 90% 时启用 CJK 折算；中英混杂/其它语种回落
+// 2 字节/token。取 90 是给混杂文本留足余量：宁可少省一点，不可放宽上界。
+const requestSpendCJKCoveragePercent = 90
 
 // requestSpendDenseTokensPerByte 文本内容里 base64 的分词密度（token/字节）。
 // 实测：20KB base64 由上游分词为 18907 token ≈ 0.92 token/字节（base64 无自然词边界，
