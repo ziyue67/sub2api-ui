@@ -377,6 +377,52 @@ func TestLoadKeepsExplicitMinimumBalanceReserveValues(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsNonFiniteBillingValues(t *testing.T) {
+	// NaN / ±Inf 能通过所有 `< 0` 判断，却会让护栏静默失效（详见 Validate 注释）：
+	// reserve=NaN → 封底/最坏费用/DB 复核全部不触发，结算 SQL 变成"永不匹配"；
+	// budget=+Inf → 在途预留闸门永久放开。必须在启动时 fail-fast。
+	cases := []struct {
+		name    string
+		content string
+		wantKey string
+	}{
+		{"nan_reserve", "billing:\n  minimum_balance_reserve: .nan\n", "billing.minimum_balance_reserve"},
+		{"inf_reserve", "billing:\n  minimum_balance_reserve: .inf\n", "billing.minimum_balance_reserve"},
+		{"neg_inf_reserve", "billing:\n  minimum_balance_reserve: -.inf\n", "billing.minimum_balance_reserve"},
+		{"nan_band", "billing:\n  balance_recheck_band: .nan\n", "billing.balance_recheck_band"},
+		{"inf_budget", "billing:\n  inflight_reservation_budget_multiplier: .inf\n", "billing.inflight_reservation_budget_multiplier"},
+		{"nan_safety", "billing:\n  request_spend_safety_multiplier: .nan\n", "billing.request_spend_safety_multiplier"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			configFile := filepath.Join(t.TempDir(), "nonfinite.yaml")
+			require.NoError(t, os.WriteFile(configFile, []byte(tc.content), 0o600))
+			t.Setenv("CONFIG_FILE", configFile)
+
+			_, err := Load()
+			require.Error(t, err, "non-finite billing config must be rejected")
+			require.Contains(t, err.Error(), tc.wantKey)
+			require.Contains(t, err.Error(), "finite")
+		})
+	}
+}
+
+func TestLoadAcceptsCJKTokensPerRune(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	configFile := filepath.Join(t.TempDir(), "cjk-rate.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("billing:\n  request_spend_cjk_tokens_per_rune: 2\n"), 0o600))
+	t.Setenv("CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 2, cfg.Billing.RequestSpendCJKTokensPerRune)
+
+	// 负数在 Validate 阶段被拒（与同段其他取值的错误契约一致）。
+	cfg.Billing.RequestSpendCJKTokensPerRune = -1
+	require.ErrorContains(t, cfg.Validate(), "billing.request_spend_cjk_tokens_per_rune")
+}
+
 func TestLoadForBootstrapAllowsMissingJWTSecret(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)

@@ -969,6 +969,14 @@ type BillingConfig struct {
 	// 作用范围：本下限只"抬高偏小的声明值"，对 >= 本值的声明值（含大 max_tokens）
 	// 逐位不变，因此不会让"大 max_tokens 请求更早被 403"。
 	RequestSpendMinOutputTokens int `mapstructure:"request_spend_min_output_tokens"`
+	// RequestSpendCJKTokensPerRune CJK 文本每字符的 token 上界（预检输入折算用）。
+	//
+	// 默认 0 = 内置值 1（按生产上游 deepseek 实测 0.5–1 token/字 校准）。1 token/字
+	// 对**字节回退型分词器**（cl100k/o200k 的生僻汉字、Llama 系小 CJK 词表）不是上界：
+	// 这类分词器对非常用汉字可达 2–3 token/字，按 1 计会低估最坏费用、在钱包贴底时
+	// 重新产生 write-off。路由到这类模型（OpenAI GPT 系 / Llama 系）的部署建议设为 2，
+	// 代价是 CJK 大包的并发准入变紧（预检数字变大）。
+	RequestSpendCJKTokensPerRune int `mapstructure:"request_spend_cjk_tokens_per_rune"`
 	// InflightReservationBudgetMultiplier 是「在途预留聚合闸门」的预算倍数：允许
 	// 当前的「可花余额」(balance - MinimumBalanceReserve) 被在途预留总额覆盖的倍数。
 	//
@@ -2196,6 +2204,9 @@ func setDefaults() {
 	// 是否打开由 write-off 指标决定：settlement_shortfall_count 斜率 > 0 就打开它
 	// 或收紧 request_spend_default_max_output_tokens；恒为 0 则保持 0 即可。
 	viper.SetDefault("billing.request_spend_min_output_tokens", 0)
+	// CJK 每字 token 上界：0 = 使用内置值 1（按上游实测校准）。路由到字节回退型
+	// 分词器的部署应显式设为 2，避免对生僻汉字低估最坏费用。
+	viper.SetDefault("billing.request_spend_cjk_tokens_per_rune", 0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 
@@ -3197,6 +3208,27 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("billing.circuit_breaker.half_open_requests must be positive")
 		}
 	}
+	// NaN / ±Inf 必须显式拒绝（先于所有 `< 0` 判断）：它们通过所有大小比较，却会让
+	// 护栏静默失效。
+	// 例：minimum_balance_reserve = .nan → 封底判断（balance <= NaN 恒 false）、
+	// 最坏费用闸门（balance < NaN 恒 false）与 DB 复核全部不再触发，而结算 SQL
+	// `WHERE balance > $3` 在 PG 中 NaN 视为最大值 → 所有结算返回余额不足。
+	// inflight_reservation_budget_multiplier = .inf → 在途预留闸门永久放开。
+	// 这类值只能来自 config 文件/环境变量（JSON 管理接口无法表达），但一次模板事故
+	// 就足以打穿整条护栏，因此在这里 fail-fast。
+	for _, f := range []struct {
+		key   string
+		value float64
+	}{
+		{"billing.minimum_balance_reserve", c.Billing.MinimumBalanceReserve},
+		{"billing.balance_recheck_band", c.Billing.BalanceRecheckBand},
+		{"billing.inflight_reservation_budget_multiplier", c.Billing.InflightReservationBudgetMultiplier},
+		{"billing.request_spend_safety_multiplier", c.Billing.RequestSpendSafetyMultiplier},
+	} {
+		if math.IsNaN(f.value) || math.IsInf(f.value, 0) {
+			return fmt.Errorf("%s must be a finite number, got %v", f.key, f.value)
+		}
+	}
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
 	}
@@ -3214,6 +3246,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.RequestSpendMinOutputTokens < 0 {
 		return fmt.Errorf("billing.request_spend_min_output_tokens must be non-negative")
+	}
+	if c.Billing.RequestSpendCJKTokensPerRune < 0 {
+		return fmt.Errorf("billing.request_spend_cjk_tokens_per_rune must be non-negative")
 	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")

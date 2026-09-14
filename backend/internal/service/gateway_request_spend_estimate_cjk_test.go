@@ -3,10 +3,12 @@
 package service
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -123,4 +125,107 @@ func TestEstimateRequestInputTokensUpperBound_TextBase64StaysDenseWithCJK(t *tes
 	require.GreaterOrEqual(t, upper, len(blob)+2000,
 		"稠密 base64(1 token/字节) 与 CJK(1 token/字) 贡献都必须计入")
 	require.Less(t, upper, len(blob)*2, "稠密 base64 不得被放大成 >2 token/字节")
+}
+
+// TestEstimateRequestInputTokensUpperBound_ResponsesStringImageURL 锁死 PR#9 回归：
+// OpenAI Responses 的 `input_image.image_url` 是**字符串**形态的 data URI，必须与
+// chat 的 `image_url.url` 对象形态一样按「多模态块固定 allowance」折算。
+//
+// 回归前行为：键名 `image_url` 不在白名单 → 归入"文本内 base64" → 1 token/字节，
+// 一张 1MB 内联图估出 ≈100 万输入 token（实测 1 000 051），把余额几美元的用户误 403；
+// 修复后应为 1600 token/块（+ 少量文本）。
+func TestEstimateRequestInputTokensUpperBound_ResponsesStringImageURL(t *testing.T) {
+	blob := strings.Repeat("iVBORw0KGgoAAAANSUhEUgAAA", 40000) // 1,000,000 字节
+	stringForm := []byte(`{"input":[{"type":"input_image","image_url":"data:image/png;base64,` + blob + `"}]}`)
+	objectForm := []byte(`{"messages":[{"content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + blob + `"}}]}]}`)
+
+	stringEst := EstimateRequestInputTokensUpperBound(stringForm)
+	objectEst := EstimateRequestInputTokensUpperBound(objectForm)
+
+	require.Less(t, stringEst, 20000, "Responses 字符串形态的内联图不得按字节折算（会得到 ≈100 万 token）")
+	// 两种形态的 JSON 包裹字节不同（对象形态多一层 `{}`），因此只要求同一量级：
+	// 均为「1 块 × 1600 token + 少量文本」，差值远小于 1 块的折算量。
+	require.InDelta(t, objectEst, stringEst, 64, "两种 image_url 形态必须同口径（均为 1 块 × 1600 token）")
+}
+
+// TestEstimateRequestInputTokensUpperBound_BareBase64InTextIsDense 锁死"裸 base64"缺口：
+// **没有任何标记**（无 `data:` URI 前缀、无 `"data":"` 键）的整段 base64 粘在 text 里，
+// 上游同样按文本分词（实测 ≈0.92 token/字节）。旧实现只认 `;base64,` / `"data":"`
+// 三个字面标记，这类请求会回落 2 字节/token（≈0.5 token/字节），低估约 1.84 倍 →
+// 钱包贴底时重新产生 write-off（正是 #9 声称关闭的那条通道）。
+func TestEstimateRequestInputTokensUpperBound_BareBase64InTextIsDense(t *testing.T) {
+	// 真实 base64（高熵）：随机字节编码后字符种类接近整个字母表。
+	raw := make([]byte, 750000)
+	for i := range raw {
+		raw[i] = byte((i*7919 + i/251) % 256)
+	}
+	blob := base64.StdEncoding.EncodeToString(raw) // 1,000,000 字节裸 base64
+	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":[{"type":"text","text":"` + blob + `"}]}]}`)
+
+	binaryBytes, denseBytes, blobs := inlineBinaryPayloadStats(body)
+	require.Zero(t, binaryBytes, "text 字段里的裸 base64 不是多模态块")
+	require.Zero(t, blobs)
+	require.Equal(t, len(blob), denseBytes, "无标记的裸 base64 长串必须归入稠密路径")
+
+	upper := EstimateRequestInputTokensUpperBound(body)
+	require.GreaterOrEqual(t, upper, len(blob), "必须按 ≥1 token/字节 计（不得再按 2 字节/token 低估约 1.84 倍）")
+	require.Less(t, upper, len(blob)*2, "稠密费率不得被放大成 >2 token/字节")
+}
+
+// TestEstimateRequestInputTokensUpperBound_LowEntropyRunsStayText 反例保护：低熵的
+// base64 字母表长串（重复模式、十六进制串）不得被稠密费率放大 —— 上游 BPE 对这类
+// 内容压缩良好，按 1 token/字节 会把 `abab…` 这类文本高估 2 倍。
+func TestEstimateRequestInputTokensUpperBound_LowEntropyRunsStayText(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+	}{
+		{"repeated_pair", strings.Repeat("ab", 500)},
+		{"repeated_word", strings.Repeat("iVBORw0KGgoAAAANSUhEUg", 500)},
+		{"hex_string", strings.Repeat("0123456789abcdef", 64)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"messages":[{"role":"user","content":"` + tc.text + `"}]}`)
+			binaryBytes, denseBytes, _ := inlineBinaryPayloadStats(body)
+			require.Zero(t, binaryBytes)
+			require.Zero(t, denseBytes, "低熵长串必须留在普通文本口径")
+			require.Equal(t, len(body)/2+requestSpendInputOverheadTokens, EstimateRequestInputTokensUpperBound(body))
+		})
+	}
+}
+
+// TestEstimateRequestInputTokensUpperBound_ShortBase64StaysText 反例保护：短于阈值的
+// base64 字母表串（普通长标识符/短 hash）仍按普通文本折算，不得被稠密费率放大。
+func TestEstimateRequestInputTokensUpperBound_ShortBase64StaysText(t *testing.T) {
+	short := strings.Repeat("a", requestSpendMinInlineBinaryRun-1)
+	body := []byte(`{"messages":[{"role":"user","content":"` + short + `"}]}`)
+
+	binaryBytes, denseBytes, _ := inlineBinaryPayloadStats(body)
+	require.Zero(t, binaryBytes)
+	require.Zero(t, denseBytes)
+	require.Equal(t, len(body)/2+requestSpendInputOverheadTokens, EstimateRequestInputTokensUpperBound(body))
+}
+
+// TestRequestSpendCJKRunesPerTokenValue_Configurable 锁死 F3 的可配置口径：
+// 未配置（0）→ 内置 1；配置 2 → CJK 分支按 2 token/字（覆盖字节回退型分词器）。
+func TestRequestSpendCJKRunesPerTokenValue_Configurable(t *testing.T) {
+	require.Equal(t, 1, requestSpendCJKRunesPerTokenValue(nil))
+	require.Equal(t, 1, requestSpendCJKRunesPerTokenValue(&config.Config{}))
+
+	cfg := &config.Config{}
+	cfg.Billing.RequestSpendCJKTokensPerRune = 2
+	require.Equal(t, 2, requestSpendCJKRunesPerTokenValue(cfg))
+
+	// 负值（配置校验会拒绝，这里再兜一层）回退内置值。
+	bad := &config.Config{}
+	bad.Billing.RequestSpendCJKTokensPerRune = -3
+	require.Equal(t, 1, requestSpendCJKRunesPerTokenValue(bad))
+
+	// 同一请求：rate=2 的输入上界必须严格大于 rate=1（CJK 主导文本）。
+	text := strings.Repeat("这是一段用于预检上界校准的中文长文本内容", 2000)
+	body := cjkEstimateBody(text)
+	one := estimateRequestInputTokensUpperBound(body, 1)
+	two := estimateRequestInputTokensUpperBound(body, 2)
+	require.Greater(t, two, one, "调高每字 token 率必须抬高上界（保守方向）")
+	require.GreaterOrEqual(t, two, 2*utf8.RuneCountInString(text))
 }

@@ -1176,6 +1176,29 @@ billing:
   # enable (8192 = the default undeclared cap) only when settlement_shortfall_count
   # keeps growing; 0 keeps the legacy "trust the declared cap" behaviour.
   request_spend_min_output_tokens: 0
+  # CJK tokens-per-character upper bound used by the input estimate. 0 = built-in
+  # 1 (calibrated on the production upstream: 0.5-1 token per CJK char). That value
+  # is NOT an upper bound for byte-fallback tokenizers (rare Han chars in
+  # cl100k/o200k, Llama-family CJK vocabularies reach 2-3 tokens per char), which
+  # would under-estimate the worst case and re-open the write-off window. Deployments
+  # routing Chinese traffic to those models should set 2 (or 3); the cost is a
+  # tighter concurrency admission for large CJK requests.
+  # CJK 每字 token 上界（预检输入折算）：0 = 内置值 1（按生产上游实测 0.5–1 token/字
+  # 校准）。该值对**字节回退型分词器**（cl100k/o200k 生僻汉字、Llama 系 CJK 词表可达
+  # 2–3 token/字）不是上界，按 1 计会低估最坏费用、贴底时重新产生坏账。路由到这类
+  # 模型的部署应设为 2（或 3），代价是 CJK 大包的并发准入变紧。
+  request_spend_cjk_tokens_per_rune: 0
+  # In-flight reservation budget multiplier (spendable balance covered by
+  # reservations). 1.0 = strict: reservations never exceed the spendable balance, so
+  # concurrent admission can never leave an uncollected shortfall, but concurrency is
+  # capped at spendable / per-request worst case. Raise it to admit more concurrency
+  # at the cost of bounded write-offs; it can also be overridden at runtime from
+  # /admin/settings ("inflight_reservation_budget_multiplier"), which takes priority
+  # and applies immediately after saving.
+  # 在途预留聚合闸门预算倍数（可花余额被预留总额覆盖的倍数）：1.0 = 严格（并发下
+  # 绝不产生坏账，但并发量被"可花余额 / 单笔最坏费用"卡住）。调高即用有界坏账换取
+  # 并发；也可在后台 /admin/settings 覆盖（后台值优先），保存后立即生效。
+  inflight_reservation_budget_multiplier: 1.0
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口
   user_platform_quota_cache_ttl_seconds: 86400
