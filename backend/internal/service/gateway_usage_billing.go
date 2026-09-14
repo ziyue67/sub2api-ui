@@ -311,14 +311,6 @@ func resolveUsageBillingRequestID(_ context.Context, upstreamRequestID string) s
 	return "generated:" + generateRequestID()
 }
 
-func isForcedUsageBillingRequestID(requestID string) bool {
-	id := strings.TrimSpace(requestID)
-	return strings.HasPrefix(id, "web_search:") ||
-		strings.HasPrefix(id, "grok-video:") ||
-		strings.HasPrefix(id, "grok_audio:") ||
-		strings.HasPrefix(id, "grok_realtime:")
-}
-
 // StableGrokAudioBillingRequestID is the durable usage_logs / dedup key for one
 // voice HTTP call (TTS/STT). Prefer an upstream request id when present.
 func StableGrokAudioBillingRequestID(upstreamRequestID string) string {

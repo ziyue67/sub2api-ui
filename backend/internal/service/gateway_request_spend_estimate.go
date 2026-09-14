@@ -433,13 +433,9 @@ func looksLikeBase64Payload(run []byte) bool {
 	return false
 }
 
-// base64Run 是一段 base64 负载区间 [start, end)：
-// start/end 是原始 body 上的偏移（含内部分隔符），alphabetBytes 是其中真正的
-// base64 字母表字节数（阈值判定用它，避免"分隔符很多、内容很少"的串蒙混过关）。
-type base64Run struct {
-	start, end    int
-	alphabetBytes int
-}
+// base64Run 是一段 base64 负载区间 [start, end)：偏移含内部分隔符（换行/转义/`-`/`_`），
+// 阈值判定用的是区间内真正的字母表字节数（避免"分隔符很多、内容很少"的串蒙混过关）。
+type base64Run struct{ start, end int }
 
 // findBase64Runs 返回 body 中所有有效负载 >= minLen 的 base64 串。单趟 O(n)。
 //
@@ -484,7 +480,7 @@ func findBase64Runs(body []byte, minLen int) []base64Run {
 			break
 		}
 		if alphabetBytes >= minLen {
-			runs = append(runs, base64Run{start: start, end: end, alphabetBytes: alphabetBytes})
+			runs = append(runs, base64Run{start: start, end: end})
 		}
 	}
 	return runs
@@ -578,22 +574,6 @@ func jsonKeyBefore(body []byte, valueStart int) string {
 // 实测常见的 <200 字节）远小于该值；给到 1024 足以覆盖极端 mime 参数，同时把最坏
 // 回扫成本钉成常数，消除 Θ(n²)（见 jsonKeyBefore 注释）。
 const requestSpendJSONBacktrackBudget = 1024
-
-// isDataURIChar 判断字节是否属于 data URI 前缀的组成字符。
-//
-// 仅用于 `precededByBase64Marker` 之外的兼容路径已不需要；保留给测试与潜在调用方。
-// 注意：**键名回溯已不再使用它**（`=` 等 mime 参数字符曾导致误判，见 jsonKeyBefore）。
-func isDataURIChar(c byte) bool {
-	switch {
-	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
-		return true
-	case c == ';', c == ',', c == '/', c == '+', c == '-', c == '.', c == '=', c == '%',
-		c == '&', c == '~', c == '\'', c == '(', c == ')', c == '*', c == '!', c == '$':
-		return true
-	default:
-		return false
-	}
-}
 
 // isBase64Alphabet 判断字节是否属于 base64 字符集（含 padding）。
 func isBase64Alphabet(c byte) bool {
