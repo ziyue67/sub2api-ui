@@ -197,16 +197,32 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.BalanceShortfall = deduction.Shortfall
 	}
 
-	if cmd.APIKeyQuotaCost > 0 {
-		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
+	// 结算封顶（余额被扣到封底、只收到 collected）时，用户侧的 API key 配额与
+	// 限流额度按**实收**累加，而不是按全额 —— 否则账实不一致：用户为没被扣到的
+	// 钱消耗了配额（审计 H10）。账户侧配额（AccountQuotaCost）记录的是上游成本，
+	// 与用户是否付得起无关，保持全额。
+	apiKeyCharge := cmd.APIKeyQuotaCost
+	apiKeyRateCharge := cmd.APIKeyRateLimitCost
+	if cmd.BalanceCost > 0 && result.BalanceShortfall > 0 {
+		collected := result.BalanceCollected
+		if collected < 0 {
+			collected = 0
+		}
+		ratio := collected / cmd.BalanceCost
+		apiKeyCharge = service.QuantizeUsageBillingAmount(cmd.APIKeyQuotaCost * ratio)
+		apiKeyRateCharge = service.QuantizeUsageBillingAmount(cmd.APIKeyRateLimitCost * ratio)
+	}
+
+	if apiKeyCharge > 0 {
+		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, apiKeyCharge)
 		if err != nil {
 			return err
 		}
 		result.APIKeyQuotaExhausted = exhausted
 	}
 
-	if cmd.APIKeyRateLimitCost > 0 {
-		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, cmd.APIKeyRateLimitCost); err != nil {
+	if apiKeyRateCharge > 0 {
+		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, apiKeyRateCharge); err != nil {
 			return err
 		}
 	}
@@ -444,6 +460,17 @@ func captureUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *
 	}
 	if cmd.ActualAmount-cmd.HoldAmount > 0.00000001 {
 		return nil, service.ErrBatchImageSettlementCostExceedsHold
+	}
+	// 与 release 路径对称：结算前校验该 job 确实预留过 hold（hold request id 已被
+	// claim）。否则一个"从未成功冻结"的 job 也能走到 capture，扣掉**同一用户其它
+	// job** 的冻结额（审计 F10）。未 claim 时按 no-op 返回，交由上层记账。
+	held, heldErr := batchImageHoldClaimExists(ctx, tx, service.BatchImageHoldRequestID(cmd.BatchID), cmd.APIKeyID)
+	if heldErr != nil {
+		return nil, heldErr
+	}
+	if !held {
+		logger.LegacyPrintf("repository.usage_billing", "[BatchImage] capture skipped, hold was never reserved: batch=%s", cmd.BatchID)
+		return &service.BatchImageBalanceHoldResult{}, nil
 	}
 	var balance, frozen float64
 	err := tx.QueryRowContext(ctx, `

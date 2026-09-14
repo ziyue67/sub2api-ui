@@ -143,12 +143,17 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
 }
 
-func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {
+func TestGatewayServiceRecordUsage_BillingFingerprintNeverFallsBackToClientContextID(t *testing.T) {
+	// 安全回归（审计 H5）：计费幂等键的指纹绝不能由客户端可控的 X-Request-ID /
+	// X-Client-Request-ID 决定 —— 否则客户端固定一个 id 就能把多笔不同请求折叠成
+	// 一笔（静默去重、不扣费）。缺失真实负载哈希时必须用服务端算出的指纹
+	// （UsageBillingCommand.Normalize() → buildUsageBillingFingerprint）。
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
 
 	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "req-local-123")
+	ctx = context.WithValue(ctx, ctxkey.ClientRequestID, "client-evil-123")
 	err := svc.RecordUsage(ctx, &RecordUsageInput{
 		Result: &ForwardResult{
 			RequestID: "gateway_payload_fallback",
@@ -165,7 +170,12 @@ func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID
 	})
 	require.NoError(t, err)
 	require.NotNil(t, billingRepo.lastCmd)
-	require.Equal(t, "local:req-local-123", billingRepo.lastCmd.RequestPayloadHash)
+	// 生产路径由 usageBillingRepository.Apply → cmd.Normalize() 补齐服务端指纹；
+	// 这里的 stub 不做 Normalize，显式调一次以核对最终口径。
+	billingRepo.lastCmd.Normalize()
+	require.NotContains(t, billingRepo.lastCmd.RequestFingerprint, "client-evil-123")
+	require.NotContains(t, billingRepo.lastCmd.RequestFingerprint, "req-local-123")
+	require.NotEmpty(t, billingRepo.lastCmd.RequestFingerprint, "缺失负载哈希时必须由服务端 usage 数据派生指纹")
 }
 
 func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testing.T) {
@@ -555,13 +565,15 @@ func TestGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling(t *testi
 	require.Equal(t, 1, quotaSvc.quotaCalls)
 }
 
-func TestGatewayServiceRecordUsage_UsesFallbackRequestIDForUsageLog(t *testing.T) {
+func TestGatewayServiceRecordUsage_FallbackRequestIDIsServerGenerated(t *testing.T) {
+	// 审计 H5：没有上游 id 时必须服务端生成，绝不能回落到客户端 header
+	// （否则固定 header 即可让多笔调用共用同一个计费幂等键 → 免费调用）。
 	usageRepo := &openAIRecordUsageLogRepoStub{}
-	userRepo := &openAIRecordUsageUserRepoStub{}
-	subRepo := &openAIRecordUsageSubRepoStub{}
-	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, subRepo)
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
 
 	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "gateway-local-fallback")
+	ctx = context.WithValue(ctx, ctxkey.ClientRequestID, "client-stable-xyz")
 	err := svc.RecordUsage(ctx, &RecordUsageInput{
 		Result: &ForwardResult{
 			RequestID: "",
@@ -579,10 +591,15 @@ func TestGatewayServiceRecordUsage_UsesFallbackRequestIDForUsageLog(t *testing.T
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, "local:gateway-local-fallback", usageRepo.lastLog.RequestID)
+	require.NotEqual(t, "local:gateway-local-fallback", usageRepo.lastLog.RequestID)
+	require.NotEqual(t, "client:client-stable-xyz", usageRepo.lastLog.RequestID)
+	require.Contains(t, usageRepo.lastLog.RequestID, "generated:")
+	require.Equal(t, usageRepo.lastLog.RequestID, billingRepo.lastCmd.RequestID)
 }
 
-func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t *testing.T) {
+func TestGatewayServiceRecordUsage_NeverUsesClientRequestIDAsBillingKey(t *testing.T) {
+	// 安全回归（审计 H5）：即使客户端同时提供 X-Client-Request-ID 与 X-Request-ID，
+	// 计费幂等键也必须用上游 id（服务端可信、每笔调用唯一）。
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
@@ -606,9 +623,11 @@ func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t
 
 	require.NoError(t, err)
 	require.NotNil(t, billingRepo.lastCmd)
-	require.Equal(t, "client:client-stable-123", billingRepo.lastCmd.RequestID)
+	require.Equal(t, "upstream-volatile-456", billingRepo.lastCmd.RequestID)
+	require.NotContains(t, billingRepo.lastCmd.RequestID, "client-stable-123")
+	require.NotContains(t, billingRepo.lastCmd.RequestID, "req-local-ignored")
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, "client:client-stable-123", usageRepo.lastLog.RequestID)
+	require.Equal(t, "upstream-volatile-456", usageRepo.lastLog.RequestID)
 }
 
 func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *testing.T) {

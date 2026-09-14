@@ -291,6 +291,10 @@ func TestCaptureUsageBillingBatchImageBalance_ReleasesRemainder(t *testing.T) {
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
+	// F10：capture 前先校验该 batch 确实冻结过（与 release 对称）
+	mock.ExpectQuery(`SELECT 1\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+		WithArgs(service.BatchImageHoldRequestID(""), int64(0)).
+		WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(1))
 	mock.ExpectQuery(captureBatchImageHoldSQL).
 		WithArgs(1.0, 0.25, int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"balance", "frozen_balance"}).AddRow(9.75, 0.0))
@@ -370,5 +374,79 @@ func TestReleaseUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved(t *test
 	require.Nil(t, result.NewBalance)
 	require.Nil(t, result.FrozenBalance)
 	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestApplyUsageBillingEffects_QuotaUsesCollectedAmountOnFloorDrain 锁死审计 H10：
+// 结算被扣到封底（shortfall > 0）时，用户侧 API key 配额与限流按**实收**累加，
+// 而不是按全额 —— 否则用户会为没被扣到的钱消耗配额。
+func TestApplyUsageBillingEffects_QuotaUsesCollectedAmountOnFloorDrain(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+
+	// 余额只够扣 0.20（应收 0.75）
+	mock.ExpectQuery(floorBalanceDeductSQL).
+		WithArgs(0.75, int64(42), 0.1).
+		WillReturnRows(sqlmock.NewRows([]string{"previous_balance", "new_balance"}).AddRow(0.30, 0.10))
+	// 配额按实收缩放：0.75 × (0.20/0.75) = 0.20（旧实现会按全额 0.75 累加）
+	mock.ExpectQuery(`UPDATE api_keys\s+SET quota_used = quota_used \+ \$1`).
+		WithArgs(0.20, int64(7), service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).
+		WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(false))
+	// 限流窗口同样按实收 0.20 累加
+	mock.ExpectExec(`UPDATE api_keys SET\s+usage_5h =`).
+		WithArgs(0.20, int64(7)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	cmd := &service.UsageBillingCommand{
+		RequestID:           "req-h10",
+		APIKeyID:            7,
+		UserID:              42,
+		BalanceCost:         0.75,
+		APIKeyQuotaCost:     0.75,
+		APIKeyRateLimitCost: 0.75,
+	}
+	cmd.Normalize()
+	result := &service.UsageBillingApplyResult{Applied: true}
+	repo := &usageBillingRepository{minimumBalanceReserve: 0.1}
+	require.NoError(t, repo.applyUsageBillingEffects(ctx, tx, cmd, result))
+	require.NoError(t, tx.Commit())
+
+	require.InDelta(t, 0.20, result.BalanceCollected, 1e-9)
+	require.InDelta(t, 0.55, result.BalanceShortfall, 1e-9)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestCaptureUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved 锁死审计 F10：
+// 从未成功冻结过的 batch 不得走 capture（否则会扣掉同一用户其它 job 的冻结额）。
+func TestCaptureUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	// dedup 与 archive 均无该 hold 记录
+	mock.ExpectQuery(`SELECT 1\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT 1\s+FROM usage_billing_dedup_archive\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	result, err := captureUsageBillingBatchImageBalance(ctx, tx, &service.BatchImageBalanceHoldCommand{
+		BatchID: "batch-never-held", UserID: 42, HoldAmount: 1, ActualAmount: 0.25,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Nil(t, result.NewBalance, "未冻结过的批次必须整体 no-op，不得改余额")
+	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }

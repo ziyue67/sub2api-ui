@@ -292,3 +292,46 @@ func TestMarkBalanceExhaustedAfterSettlement_KeepsAboveFloorUnmarked(t *testing.
 	})
 	require.Equal(t, int64(0), cache.markCalls.Load())
 }
+
+// TestMarkerLifecycle_OnlyCreditClearsMarker 锁死审计 H6/H7：
+// 只有"余额增加"的路径可以清除"钱包已耗尽"标记；扣款/调低余额只失效缓存。
+func TestMarkerLifecycle_OnlyCreditClearsMarker(t *testing.T) {
+	cache := &markerProbeCache{exhausted: true}
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, &config.Config{}, nil)
+	t.Cleanup(svc.Stop)
+
+	// 减余额（管理员扣款）：不得清标记
+	svc.InvalidateUserBalance(context.Background(), 7)
+	require.True(t, cache.isExhausted(), "扣款路径不得清除耗尽标记（H6）")
+
+	// 加余额：清标记 + 失效缓存
+	require.NoError(t, svc.InvalidateUserBalanceAfterCredit(context.Background(), 7))
+	require.False(t, cache.isExhausted(), "加钱路径必须清除耗尽标记（H7 的正确行为）")
+	require.GreaterOrEqual(t, cache.invalidateCalls, 2)
+}
+
+// markerProbeCache 是只实现「余额缓存 + 耗尽标记」的最小 stub。
+type markerProbeCache struct {
+	BillingCache
+	exhausted       bool
+	invalidateCalls int
+}
+
+func (c *markerProbeCache) GetUserBalance(context.Context, int64) (float64, error) { return 0, nil }
+func (c *markerProbeCache) SetUserBalance(context.Context, int64, float64) error   { return nil }
+func (c *markerProbeCache) InvalidateUserBalance(context.Context, int64) error {
+	c.invalidateCalls++
+	return nil
+}
+func (c *markerProbeCache) MarkUserBalanceExhausted(context.Context, int64) error {
+	c.exhausted = true
+	return nil
+}
+func (c *markerProbeCache) ClearUserBalanceExhausted(context.Context, int64) error {
+	c.exhausted = false
+	return nil
+}
+func (c *markerProbeCache) IsUserBalanceExhausted(context.Context, int64) (bool, error) {
+	return c.exhausted, nil
+}
+func (c *markerProbeCache) isExhausted() bool { return c.exhausted }
