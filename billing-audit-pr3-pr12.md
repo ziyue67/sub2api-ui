@@ -193,7 +193,7 @@
 | H7 | ✅ | OAuth 首绑赠送、退款回滚加分统一走 `InvalidateUserBalanceAfterCredit` |
 | H8 | ✅ | CJK 费率校验 0–8 + 运行期钳制 + 饱和乘法（防全量 403 与溢出 fail-open） |
 | H9 | ✅ | 注释/文档与实现对齐（标记命中即稠密，熵闸门只用于无标记长串） |
-| H10 | ✅ | 结算封顶后 API key 配额/限流按实收累加（账户侧上游成本保持全额） |
+| H10 | ⚠️ 判定为**既有设计**（已还原） | 曾改为"按实收累加"，但仓库自带集成测试 `TestUsageBillingRepositoryApply_DrainsWalletToReserveFloor` 明确锁定 `quota_used == 全额`（断言文案 "quota reflects the real consumption"）：配额/限流衡量"这笔请求真实消耗了多少"，与钱包能否全额收回无关（实收/坏账由 `balance_collected`/`shortfall` 表达）。属产品语义选择而非缺陷，已还原并在代码注释中记录结论。 |
 | H11 | ✅ | 小 body 快路径 + 文档写明扫描成本（≈5ms/MB） |
 | H12 | ✅ | legacy 路径回填 `NewBalance`、`userRepo` nil 不再 panic |
 | F10 | ✅ | batch image capture 补批次凭据校验（与 release 对称） |
@@ -205,7 +205,7 @@
 （`PrefersClientRequestIDOverUpstreamRequestID` → `NeverUsesClientRequestIDAsBillingKey` 等）。
 
 验证：`go build ./...`、`go vet -tags=unit ./internal/...`、`go vet -tags=integration`、
-`go test -tags=unit ./internal/{service,repository,config,handler}/...` 全绿（service 195.8s /
-handler 41.3s / repository 5.2s / config 1.6s）。
+`go test -tags=unit ./internal/{service,repository,config,handler}/...` 全绿；CI 的
+Integration 作业第一轮因 H10 与既有设计冲突而失败，还原后复跑中。
 
 **仍待运行时验证**：真 PG/Redis 集成套件（testcontainers）、生产压测、H5 在生产是否已被利用。
