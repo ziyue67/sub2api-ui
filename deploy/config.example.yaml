@@ -1187,6 +1187,8 @@ billing:
   # 校准）。该值对**字节回退型分词器**（cl100k/o200k 生僻汉字、Llama 系 CJK 词表可达
   # 2–3 token/字）不是上界，按 1 计会低估最坏费用、贴底时重新产生坏账。路由到这类
   # 模型的部署应设为 2（或 3），代价是 CJK 大包的并发准入变紧。
+  # 允许范围 0-8（0 = 内置 1）：超出会在启动校验时被拒绝，运行期也会钳到 8 ——
+  # 防止误配成 1e6（CJK 请求全量 403）或极大值（乘法溢出 → 闸门 fail-open）。
   request_spend_cjk_tokens_per_rune: 0
   # In-flight reservation budget multiplier (spendable balance covered by
   # reservations). 1.0 = strict: reservations never exceed the spendable balance, so

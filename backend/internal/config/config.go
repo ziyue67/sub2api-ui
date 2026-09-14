@@ -3250,6 +3250,12 @@ func (c *Config) Validate() error {
 	if c.Billing.RequestSpendCJKTokensPerRune < 0 {
 		return fmt.Errorf("billing.request_spend_cjk_tokens_per_rune must be non-negative")
 	}
+	// 上界同样是安全阀：该值只应表达"每字几个 token"，误配成 1e6 会让 CJK 请求
+	// 全量 403（6000 字估出 60 亿 token），配成极大值还会让乘法溢出、把闸门变成
+	// fail-open。观测最坏 3（字节回退分词器的生僻汉字），取 8 留足余量。
+	if c.Billing.RequestSpendCJKTokensPerRune > 8 {
+		return fmt.Errorf("billing.request_spend_cjk_tokens_per_rune must be <= 8")
+	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")
 	}

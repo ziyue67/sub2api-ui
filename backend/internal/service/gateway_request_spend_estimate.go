@@ -98,9 +98,16 @@ func requestSpendMinOutputTokens(cfg *config.Config) int {
 // 使用**字节回退**分词器的模型（cl100k/o200k 生僻汉字、Llama 系小 CJK 词表）并不成立：
 // 那些分词器对非常用汉字可达 2–3 token/字。路由到这类上游的部署应把
 // billing.request_spend_cjk_tokens_per_rune 调到 2（或 3），代价是 CJK 大包并发准入变紧。
+//
+// 上界钳制到 requestSpendCJKRunesPerTokenMax：该值只应表达"每字几个 token"，
+// 误配成 1e6 会让 6000 字的请求估出 60 亿 token（所有人 403）；配成 MaxInt64 更会
+// 让乘法溢出成负数、把闸门变成 fail-open。配置校验也拒绝超出范围的值，这里再兜一层。
 func requestSpendCJKRunesPerTokenValue(cfg *config.Config) int {
 	if cfg == nil || cfg.Billing.RequestSpendCJKTokensPerRune <= 0 {
 		return requestSpendCJKRunesPerToken
+	}
+	if cfg.Billing.RequestSpendCJKTokensPerRune > requestSpendCJKRunesPerTokenMax {
+		return requestSpendCJKRunesPerTokenMax
 	}
 	return cfg.Billing.RequestSpendCJKTokensPerRune
 }
@@ -180,7 +187,12 @@ func estimateRequestInputTokensUpperBound(body []byte, cjkTokensPerRune int) int
 	if cjkTokensPerRune <= 0 {
 		cjkTokensPerRune = requestSpendCJKRunesPerToken
 	}
-	binaryBytes, denseBytes, blobs := inlineBinaryPayloadStats(body)
+	// 快路径：body 小于最短负载串时不可能命中，跳过整趟扫描（大 body 的扫描成本
+	// 约 5ms/MB，见 docs/BILLING_ZERO_OVERSHOOT.md 的运维说明）。
+	var binaryBytes, denseBytes, blobs int
+	if len(body) >= requestSpendMinInlineBinaryRun {
+		binaryBytes, denseBytes, blobs = inlineBinaryPayloadStats(body)
+	}
 	textBytes := len(body) - binaryBytes - denseBytes
 	if textBytes < 0 {
 		textBytes = 0
@@ -215,10 +227,22 @@ func estimateTextInputTokensUpperBound(body []byte, textBytes, denseBytes, binar
 		if nonCJKBytes < 0 {
 			nonCJKBytes = 0
 		}
-		return cjkRunes*cjkTokensPerRune +
+		return saturatingMul(cjkRunes, cjkTokensPerRune) +
 			nonCJKBytes/requestSpendTextBytesPerToken
 	}
 	return textBytes / requestSpendTextBytesPerToken
+}
+
+// saturatingMul 做饱和整数乘法：溢出时返回 math.MaxInt32 而不是负数。
+// 负数上界会让"最坏费用"变成 0 或负值，从而把闸门整体 fail-open（H8）。
+func saturatingMul(a, b int) int {
+	if a <= 0 || b <= 0 {
+		return 0
+	}
+	if a > math.MaxInt32/b {
+		return math.MaxInt32
+	}
+	return a * b
 }
 
 // countCJKText 统计 body 中的 CJK 字符数、CJK 字节数与 JSON 结构字节数。
@@ -288,6 +312,10 @@ const requestSpendTextBytesPerToken = 2
 // 1 token/字计更保守。低于此上界（例如按 6 字节/token 对齐实测均值）会低估。
 const requestSpendCJKRunesPerToken = 1
 
+// requestSpendCJKRunesPerTokenMax 是 CJK 每字 token 率的上界（配置/兜底都钳到这里）。
+// 观测最坏 3（字节回退分词器的生僻汉字），取 8 留足余量；超过则视为误配。
+const requestSpendCJKRunesPerTokenMax = 8
+
 // requestSpendCJKCoveragePercent 判定文本主导语言为 CJK 的字节占比下限（百分比）。
 // 仅当非结构语言内容中 CJK 占比 ≥ 90% 时启用 CJK 折算；中英混杂/其它语种回落
 // 2 字节/token。取 90 是给混杂文本留足余量：宁可少省一点，不可放宽上界。
@@ -311,21 +339,29 @@ const requestSpendDenseTokensPerByte = 1
 //     (生产实测曾因此低估 4 倍、产生一笔 write-off)。
 //
 // 判定方式(三步,均为纯位置/字面量判定,不依赖"负载标记"是否出现):
-//  1. 扫描全部**连续 base64 字母表串**(长度 ≥ requestSpendMinInlineBinaryRun),
+//  1. 扫描全部 base64 负载串(有效字母表字节数 ≥ requestSpendMinInlineBinaryRun),
 //     包括没有 `;base64,` / `"data":"` 标记的裸串 —— 旧实现只认标记,导致"整段
 //     裸 base64 粘进 text"完全不被识别、仍按 2 字节/token 低估约 1.84 倍
 //     (实测 0.92 token/字节),write-off 通道未关闭;
+//     分段写法(MIME/PEM 每 76 字符换行、url-safe 的 `-`/`_`、转义 `\/`)按**同一串**
+//     合并统计,避免被换行/替换字符切碎后回落到 2 字节/token;
 //  2. 用串起点向前找**最近的 JSON 键名**:键属于 multimodalPayloadKeys 才算多模态块
 //     (Gemini 的 `inline_data.data` 就是**无 data: 前缀**的裸 base64,只能靠键名判定),
 //     `text`/`content` 等其它键一律走第 3 步;
-//  3. 其它键上的串:有 `;base64,` / `"data":"` 标记,或字符集足够丰富
-//     (looksLikeBase64Payload)时才按稠密费率计 —— 后者避免把 `abab…`、长十六进制
-//     串这类低熵文本按 1 token/字节 高估(上游 BPE 对重复串压缩很好),同时堵住
-//     "无标记裸 base64"的低估缺口。
+//  3. 其它键上的串:有 `;base64,` / `"data":"` 标记,**或**字符集足够丰富
+//     (looksLikeBase64Payload)时才按稠密费率计。
+//     注意两者的优先级:标记是"显式声明此处是 base64",命中即按稠密计(即使字符种类
+//     很少,例如 `;base64,ababab…` 会被按 1 token/字节 高估 ~2 倍 —— 方向保守);
+//     熵闸门只用于**没有标记**的长串,避免把 `abab…`、长十六进制串这类低熵文本
+//     按 1 token/字节 高估(上游 BPE 对重复串压缩很好),同时堵住"无标记裸 base64"
+//     的低估缺口(实测英文文本的 base64 只有 37 种字符,阈值取 24)。
 //
-// 说明:标记本身不参与二进制/文本的二分 —— data URI 的 `data:<mime>;base64,`
-// 前缀会被 jsonKeyBefore 一路回溯跳过,所以 `;base64,` 形态仍能正确定位到外层键名;
-// 连续串短于阈值时不单独处理(仍按普通文本折算),避免把普通长标识符误判成图片。
+// 说明:键名回溯不依赖 data URI 的字符白名单,而是**反向找到本值所属字符串的起始
+// 引号**再读键名,因此 `data:image/svg+xml;charset=utf-8;base64,…`(带 mime 参数)、
+// `data:image/png;name=a.png;base64,…` 等形态都能正确定位到外层键名(旧实现在
+// `=` 处断掉,把整张图按 1 token/字节 计,实测放大 750 倍)。
+// 回溯带字节预算(requestSpendJSONBacktrackBudget),避免被"A×512;"这类构造体
+// 触发的 Θ(n²) 反向扫描(实测 1.64MB 请求体 6.19s CPU)。
 func inlineBinaryPayloadStats(body []byte) (binaryBytes int, denseBytes int, blobs int) {
 	for _, run := range findBase64Runs(body, requestSpendMinInlineBinaryRun) {
 		payload := body[run.start:run.end]
@@ -363,21 +399,29 @@ func precededByBase64Marker(body []byte, runStart int) bool {
 
 // requestSpendBase64DistinctBytes 是判定"看起来确实是 base64 负载"的最小字符种类数。
 //
-// 依据:真实 base64(随机/压缩过的二进制或文本)在 512+ 字节的串上几乎必然用到 55+
-// 种字符(base64 字母表共 64 种);而 `abab…`(2 种)、十六进制串(≤16 种)、普通标识符
-// (通常 < 40 种)都远低于该阈值 —— 这些内容上游 BPE 压缩良好,按 1 token/字节 会高估。
-// 取 40 兼顾两侧:既不放过真实 base64(否则重新低估约 1.84 倍),也不误伤低熵长串。
-const requestSpendBase64DistinctBytes = 40
+// 依据(本机对真实样本实测的"字符种类数"):
+//   - 随机/压缩二进制(如 PNG)编码后 65 种、JSON 文档 54 种、Go 源码 51 种、中文文本 61 种；
+//   - **英文自然文本的 base64 只有 37 种** —— 这正是上一版阈值 40 漏判的样本：
+//     它会被回落成 2 字节/token，比实测 0.92 token/字节低估 1.84 倍；
+//   - 十六进制串 ≤16 种、`abab…` 2 种、`AAAA…`(全 0 数据) 1 种 —— 上游 BPE 对这类
+//     重复串压缩良好，按 1 token/字节 会高估，必须留在文本口径。
+//
+// 取 24：既能覆盖"文本的 base64"(37)，又能排除十六进制(16)/重复模式(≤2)。
+// 阈值偏低只会让"字母数字混合的长串"更倾向稠密(保守方向：多估不多收)。
+const requestSpendBase64DistinctBytes = 24
 
-// looksLikeBase64Payload 用"字符种类数"近似判断一段 base64 字母表长串是否真的是
-// base64 负载(高熵),避免把重复模式/十六进制/长标识符按稠密费率高估。
+// looksLikeBase64Payload 用"字符种类数"近似判断一段 base64 负载串是否真的是高熵
+// base64,避免把重复模式/十六进制/长标识符按稠密费率高估。
+//
+// 统计时只算 base64 字母表字节(跳过换行/`-`/`_`/`\/` 这些分段分隔符),
+// 阈值判定用**有效字母表字节数**(见 base64Run.alphabetBytes)。
 func looksLikeBase64Payload(run []byte) bool {
-	if len(run) < requestSpendMinInlineBinaryRun {
-		return false
-	}
 	var seen [256]bool
 	distinct := 0
 	for _, c := range run {
+		if !isBase64Alphabet(c) {
+			continue
+		}
 		if !seen[c] {
 			seen[c] = true
 			distinct++
@@ -389,27 +433,58 @@ func looksLikeBase64Payload(run []byte) bool {
 	return false
 }
 
-// base64Run 是一段连续的 base64 字母表字节区间 [start, end)。
-type base64Run struct{ start, end int }
+// base64Run 是一段 base64 负载区间 [start, end)：
+// start/end 是原始 body 上的偏移（含内部分隔符），alphabetBytes 是其中真正的
+// base64 字母表字节数（阈值判定用它，避免"分隔符很多、内容很少"的串蒙混过关）。
+type base64Run struct {
+	start, end    int
+	alphabetBytes int
+}
 
-// findBase64Runs 返回 body 中所有长度 >= minLen 的连续 base64 字母表串。
-// 单趟 O(n);返回的区间互不重叠,因此调用方无需再做去重。
+// findBase64Runs 返回 body 中所有有效负载 >= minLen 的 base64 串。单趟 O(n)。
+//
+// 除连续字母表串外，还按"同一串"合并以下**分段写法**（真实世界很常见，
+// 旧实现被它们切碎后回落到 2 字节/token，实测低估约 1.8 倍）：
+//   - JSON 转义换行 `\n` / `\r`（MIME/PEM 每 76 字符换行的 base64）；
+//   - 转义斜杠 `\/`（base64 中的 `/` 被 JSON 转义）；
+//   - 原始 CR/LF，以及 url-safe base64 的 `-` / `_`。
+//
+// 结构性字符（`"`、`{`、`}`、`:`、`,` 等）一律打断，避免把相邻字段粘成一条串。
 func findBase64Runs(body []byte, minLen int) []base64Run {
 	if minLen <= 0 {
 		minLen = 1
 	}
 	var runs []base64Run
-	for i := 0; i < len(body); {
+	i := 0
+	for i < len(body) {
 		if !isBase64Alphabet(body[i]) {
 			i++
 			continue
 		}
 		start := i
-		for i < len(body) && isBase64Alphabet(body[i]) {
-			i++
+		alphabetBytes := 0
+		end := i
+		for i < len(body) {
+			c := body[i]
+			switch {
+			case isBase64Alphabet(c):
+				alphabetBytes++
+				i++
+				end = i
+				continue
+			case c == '\\' && i+1 < len(body) && (body[i+1] == 'n' || body[i+1] == 'r' || body[i+1] == '/'):
+				i += 2 // JSON 转义换行 / 转义斜杠：属分段写法，不打断
+				end = i
+				continue
+			case c == '\n' || c == '\r' || c == '-' || c == '_':
+				i++
+				end = i
+				continue
+			}
+			break
 		}
-		if i-start >= minLen {
-			runs = append(runs, base64Run{start: start, end: i})
+		if alphabetBytes >= minLen {
+			runs = append(runs, base64Run{start: start, end: end, alphabetBytes: alphabetBytes})
 		}
 	}
 	return runs
@@ -436,72 +511,84 @@ var multimodalPayloadKeys = map[string]bool{
 
 // jsonKeyBefore 返回 valueStart 处 JSON 字符串值所属的**键名**。
 //
-// valueStart 指向值的第一个字节。从它向前解析(反向)五段结构:
+// valueStart 指向值的第一个字节（base64 负载串的起点）。反向解析：
 //
-//	[URI 前缀(可空)] 值起始引号 [空白] `:` [空白] 键名收尾引号 …… 键名起始引号
+//	值起始引号 …… 键名起始引号 [空白] `:` [空白] "键名"
 //
-// 其中 URI 前缀 = `data:<mime>;base64,`(data URI 形态下,负载标记 `;base64,`
-// 之前的 `data:` 冒号也是值的一部分)。解析不出该结构时返回 ""(调用方按 dense
-// 处理,方向保守:base64 文本按 1 token/字节计,宁多估不少估)。
+// 实现要点（两处都是审计发现的坑）：
+//   - **不依赖 data URI 字符白名单**：直接反向找到本值所属字符串的起始引号，
+//     于是 `data:<mime>;charset=utf-8;base64,…`、`data:image/png;name=a.png;base64,…`
+//     这类带 mime 参数的形态也能正确定位键名。旧实现沿"URI 字符集"回扫，遇到
+//     `charset=` / `name=` 的 `=` 就断掉，把整张图按 1 token/字节 计（实测 750×）。
+//   - **带字节预算**：回扫上限 requestSpendJSONBacktrackBudget，避免"A×512;"这类
+//     构造体让每次回扫都跨越前面所有串，退化成 Θ(n²)（实测 1.64MB → 6.19s CPU）。
+//     超预算即返回 ""（调用方按稠密处理，方向保守），JSON 键名 + data URI 前缀
+//     实际远小于该预算。
 func jsonKeyBefore(body []byte, valueStart int) string {
 	isJSONSpace := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 
+	budget := requestSpendJSONBacktrackBudget
 	i := valueStart - 1
-	// (a) 跳过 data URI 前缀:`data:<mime>;base64,` 整段(含 scheme 名与它的冒号)
-	//     都属于值的一部分,要一路回溯到值的起始引号。
-	for {
-		for i >= 0 && isDataURIChar(body[i]) {
-			i--
+	// (a) 反向找到本值所属 JSON 字符串的起始引号（跳过任意 data URI 内容与转义）
+	for i >= 0 && budget > 0 {
+		if body[i] == '"' && (i == 0 || body[i-1] != '\\') {
+			break
 		}
-		if i < 0 {
-			return ""
-		}
-		if body[i] == ':' {
-			// `data:` 的 scheme 冒号:它前面还有 scheme 名(URI 字符),继续回溯
-			i--
-			continue
-		}
-		break
+		i--
+		budget--
 	}
 	// (b) 此处应是值的起始引号
-	if i < 0 || body[i] != '"' {
+	if i < 0 || budget <= 0 || body[i] != '"' {
 		return ""
 	}
 	i--
 	// (c) 跳过空白,期望键值分隔符 `:`
-	for i >= 0 && isJSONSpace(body[i]) {
+	for i >= 0 && budget > 0 && isJSONSpace(body[i]) {
 		i--
+		budget--
 	}
-	if i < 0 || body[i] != ':' {
+	if i < 0 || budget <= 0 || body[i] != ':' {
 		return ""
 	}
 	i--
 	// (d) 跳过空白,期望键名收尾引号
-	for i >= 0 && isJSONSpace(body[i]) {
+	for i >= 0 && budget > 0 && isJSONSpace(body[i]) {
 		i--
+		budget--
 	}
-	if i < 0 || body[i] != '"' {
+	if i < 0 || budget <= 0 || body[i] != '"' {
 		return ""
 	}
 	end := i
 	// (e) 回溯键名起始引号(跳过 `\"` 转义)
 	i--
-	for i >= 0 {
+	for i >= 0 && budget > 0 {
 		if body[i] == '"' && (i == 0 || body[i-1] != '\\') {
 			return string(body[i+1 : end])
 		}
 		i--
+		budget--
 	}
 	return ""
 }
 
-// isDataURIChar 判断字节是否属于 data URI 前缀(`data:<mime>;base64,`)的组成字符。
-// 注意不含 `:`(它是回溯的终止锚点)与 `"`(值的起始引号)。
+// requestSpendJSONBacktrackBudget 是键名回溯的字节预算。
+//
+// JSON 键名（<=64 字节）+ `:` + 空白 + data URI 前缀（`data:` + mime + 参数 + `;base64,`，
+// 实测常见的 <200 字节）远小于该值；给到 1024 足以覆盖极端 mime 参数，同时把最坏
+// 回扫成本钉成常数，消除 Θ(n²)（见 jsonKeyBefore 注释）。
+const requestSpendJSONBacktrackBudget = 1024
+
+// isDataURIChar 判断字节是否属于 data URI 前缀的组成字符。
+//
+// 仅用于 `precededByBase64Marker` 之外的兼容路径已不需要；保留给测试与潜在调用方。
+// 注意：**键名回溯已不再使用它**（`=` 等 mime 参数字符曾导致误判，见 jsonKeyBefore）。
 func isDataURIChar(c byte) bool {
 	switch {
 	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
 		return true
-	case c == ';', c == ',', c == '/', c == '+', c == '-', c == '.':
+	case c == ';', c == ',', c == '/', c == '+', c == '-', c == '.', c == '=', c == '%',
+		c == '&', c == '~', c == '\'', c == '(', c == ')', c == '*', c == '!', c == '$':
 		return true
 	default:
 		return false
