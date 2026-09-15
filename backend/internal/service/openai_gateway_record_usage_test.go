@@ -32,11 +32,16 @@ func (s *openAIRecordUsageLogRepoStub) Create(ctx context.Context, log *UsageLog
 type openAIRecordUsageBillingRepoStub struct {
 	UsageBillingRepository
 
-	result     *UsageBillingApplyResult
-	err        error
+	result *UsageBillingApplyResult
+	err    error
+	// errSeq 按调用序返回错误（用尽后回落到 err）；用于模拟"首次冲突、重试成功"。
+	errSeq     []error
 	calls      int
 	lastCmd    *UsageBillingCommand
 	lastCtxErr error
+	// cmdIDs 按调用序记录每次 Apply 收到的 RequestID（lastCmd 是同一个指针，
+	// 重试时会原地改写，无法反映首次调用的值）。
+	cmdIDs []string
 }
 
 type openAIRecordUsageAccountRepoStub struct {
@@ -74,7 +79,16 @@ func (s *openAIRecordUsageBillingRepoStub) Apply(ctx context.Context, cmd *Usage
 	s.calls++
 	s.lastCmd = cmd
 	s.lastCtxErr = ctx.Err()
-	if s.err != nil {
+	if cmd != nil {
+		s.cmdIDs = append(s.cmdIDs, cmd.RequestID)
+	}
+	if len(s.errSeq) > 0 {
+		err := s.errSeq[0]
+		s.errSeq = s.errSeq[1:]
+		if err != nil {
+			return nil, err
+		}
+	} else if s.err != nil {
 		return nil, s.err
 	}
 	if s.result != nil {
