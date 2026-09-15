@@ -630,6 +630,43 @@ func TestGatewayServiceRecordUsage_NeverUsesClientRequestIDAsBillingKey(t *testi
 	require.Equal(t, "upstream-volatile-456", usageRepo.lastLog.RequestID)
 }
 
+// TestGatewayServiceRecordUsage_ConflictRetryAlignsUsageLogRequestID 锁死审计 N2：
+// 上游复用/伪造 request id 导致指纹冲突时，会换服务端新 id **重新落账**（不丢单）；
+// 此时 usage_log 必须记录**实际计费键**，否则钱包侧的扣费记录挂在一个"影子 id"上，
+// 按 request_id 对账时两边对不上（usage_billing_dedup 与 usage_log 不一致）。
+func TestGatewayServiceRecordUsage_ConflictRetryAlignsUsageLogRequestID(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{
+		result: &UsageBillingApplyResult{Applied: true},
+		errSeq: []error{ErrUsageBillingRequestConflict, nil},
+	}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "upstream-reused-id",
+			Usage: ClaudeUsage{
+				InputTokens:  10,
+				OutputTokens: 6,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 508},
+		User:    &User{ID: 608},
+		Account: &Account{ID: 708},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, billingRepo.calls, "冲突后必须换新 id 重试一次")
+	require.Len(t, billingRepo.cmdIDs, 2)
+	require.Equal(t, "upstream-reused-id", billingRepo.cmdIDs[0], "首次必须用上游 id")
+	require.Contains(t, billingRepo.cmdIDs[1], ":conflict:", "重试必须换服务端新 id")
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, billingRepo.cmdIDs[1], usageRepo.lastLog.RequestID,
+		"usage_log 必须记录实际计费键，保证与 usage_billing_dedup 一致（审计 N2）")
+}
+
 func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

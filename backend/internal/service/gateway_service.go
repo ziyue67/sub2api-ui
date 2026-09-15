@@ -465,7 +465,13 @@ var allowedHeaders = map[string]bool{
 	"content-type":                              true,
 	"accept-encoding":                           true,
 	"x-claude-code-session-id":                  true,
-	"x-client-request-id":                       true,
+	// 安全约束（审计 N1）：**不要**把 `x-request-id` / `x-client-request-id` 放回
+	// 白名单。它们会被原样发往上游，而部分（第三方/中转）上游会把收到的值回显为
+	// 响应的 `x-request-id`；计费幂等键取自**上游响应** id
+	// （resolveUsageBillingRequestID），一旦客户端能通过 header 决定它，恒定发送
+	// 同一个 id 就能让多笔真实调用折叠成一笔（静默去重、不扣费），使整条零超发
+	// 护栏失效。OAuth/mimic 路径出站的 x-client-request-id 由指纹收敛链单独注入
+	// （见 claude.DefaultHeaders / ApplyFingerprint），不经过本白名单。
 }
 
 // ErrStickySessionNotFound is returned by GatewayCache.GetSessionAccountID

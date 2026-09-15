@@ -365,13 +365,14 @@ const requestSpendDenseTokensPerByte = 1
 func inlineBinaryPayloadStats(body []byte) (binaryBytes int, denseBytes int, blobs int) {
 	for _, run := range findBase64Runs(body, requestSpendMinInlineBinaryRun) {
 		payload := body[run.start:run.end]
-		if multimodalPayloadKeys[jsonKeyBefore(body, run.start)] {
+		if multimodalPayloadKeyIsBinary(body, run.start, jsonKeyBefore(body, run.start)) {
 			binaryBytes += len(payload)
 			blobs++
 			continue
 		}
 		if !precededByBase64Marker(body, run.start) && !looksLikeBase64Payload(payload) {
 			// 低熵长串(重复模式、十六进制、普通标识符):上游 BPE 能压缩,留普通文本口径。
+			// 非多模态父键下的 `data` 串也落到这里:高熵按稠密计,低熵留文本。
 			continue
 		}
 		denseBytes += len(payload)
@@ -494,6 +495,10 @@ func findBase64Runs(body []byte, minLen int) []base64Run {
 //
 // 出现在这些键里的 base64 由上游按 patch 计费(与字节数无关),按固定 allowance 折算;
 // 其它位置(典型是 text/content 字段)的 base64 会被上游当文本分词,按稠密费率折算。
+//
+// 注意:`data` 是极常见的通用键名(任何自定义 JSON 都可能用它表示数据),因此它还要
+// 通过父键上下文确认(见 multimodalDataParentKeys / multimodalPayloadKeyIsBinary),
+// 否则"把一份文档 base64 后放进普通 data 字段"会被按 1600 token/块低估(审计 N4)。
 var multimodalPayloadKeys = map[string]bool{
 	"url": true,
 	// image_url：OpenAI Responses 的 `input_image.image_url` 是**字符串**形态的
@@ -521,6 +526,13 @@ var multimodalPayloadKeys = map[string]bool{
 //     超预算即返回 ""（调用方按稠密处理，方向保守），JSON 键名 + data URI 前缀
 //     实际远小于该预算。
 func jsonKeyBefore(body []byte, valueStart int) string {
+	key, _ := jsonKeyBeforeWithOffset(body, valueStart)
+	return key
+}
+
+// jsonKeyBeforeWithOffset 同 jsonKeyBefore，并额外返回**键名起始引号**在 body 中的
+// 偏移（失败时为 -1）。父键回溯（jsonParentKeyBefore）需要它从键名继续向外层走。
+func jsonKeyBeforeWithOffset(body []byte, valueStart int) (string, int) {
 	isJSONSpace := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 
 	budget := requestSpendJSONBacktrackBudget
@@ -535,7 +547,7 @@ func jsonKeyBefore(body []byte, valueStart int) string {
 	}
 	// (b) 此处应是值的起始引号
 	if i < 0 || budget <= 0 || body[i] != '"' {
-		return ""
+		return "", -1
 	}
 	i--
 	// (c) 跳过空白,期望键值分隔符 `:`
@@ -544,7 +556,7 @@ func jsonKeyBefore(body []byte, valueStart int) string {
 		budget--
 	}
 	if i < 0 || budget <= 0 || body[i] != ':' {
-		return ""
+		return "", -1
 	}
 	i--
 	// (d) 跳过空白,期望键名收尾引号
@@ -553,19 +565,130 @@ func jsonKeyBefore(body []byte, valueStart int) string {
 		budget--
 	}
 	if i < 0 || budget <= 0 || body[i] != '"' {
-		return ""
+		return "", -1
 	}
 	end := i
 	// (e) 回溯键名起始引号(跳过 `\"` 转义)
 	i--
 	for i >= 0 && budget > 0 {
 		if body[i] == '"' && (i == 0 || body[i-1] != '\\') {
+			return string(body[i+1 : end]), i
+		}
+		i--
+		budget--
+	}
+	return "", -1
+}
+
+// jsonParentKeyBefore 返回 valueStart 处值所属**外层对象**的键名。
+//
+// 用途（审计 N4）：`data` 这个键名在真实 API 里极为常见（任意自定义 JSON 都可能
+// 用 `data` 表示数据），仅凭键名就把其中的长 base64 当成"多模态图片负载"按固定
+// allowance(1600/块) 折算，会让"把一份文档 base64 后塞进普通 data 字段"的请求被
+// 低估数个数量级（实测 1.2MB 高熵 base64：放 text 键 ≈1 200 027 token，放 data 键
+// 仅 1 627 token，差 737×）。多模态的 data 都有明确的父键上下文：
+//
+//	Anthropic `{"source":{"type":"base64","media_type":…,"data":…}}`
+//	Gemini    `{"inline_data":{"mime_type":…,"data":…}}` / inlineData
+//	OpenAI    `{"input_audio":{"data":…,"format":…}}`
+//
+// 返回 "" 表示**无法确证**父键（顶层值、数组元素、超出预算、非对象成员）——
+// 调用方应保持既有行为，避免把真实图片误降级为稠密口径而产生误 403。
+//
+// 实现：从本值所属键名的起始引号继续向左走，用引号奇偶计数跨过同一对象内的其它
+// 键值对，直到命中本层对象的 `{`，再读出该对象之前的键名。预算与 jsonKeyBefore 相同。
+func jsonParentKeyBefore(body []byte, valueStart int) string {
+	_, keyStart := jsonKeyBeforeWithOffset(body, valueStart)
+	if keyStart < 0 {
+		return ""
+	}
+	budget := requestSpendJSONBacktrackBudget
+	i := keyStart - 1
+	quotes := 0
+	for i >= 0 && budget > 0 {
+		c := body[i]
+		if c == '"' && !isEscapedByteAt(body, i) {
+			quotes++
+			i--
+			budget--
+			continue
+		}
+		// 同一层对象内已配平的键值对（引号成对）之后的 `{` 才是本层对象的起点。
+		if c == '{' && quotes%2 == 0 {
+			break
+		}
+		i--
+		budget--
+	}
+	if i < 0 || budget <= 0 || body[i] != '{' {
+		return ""
+	}
+	i--
+	// 跳过空白,期望键值分隔符 `:`
+	for i >= 0 && budget > 0 && isJSONSpaceByte(body[i]) {
+		i--
+		budget--
+	}
+	if i < 0 || budget <= 0 || body[i] != ':' {
+		return ""
+	}
+	i--
+	// 跳过空白,期望外层键名收尾引号
+	for i >= 0 && budget > 0 && isJSONSpaceByte(body[i]) {
+		i--
+		budget--
+	}
+	if i < 0 || budget <= 0 || body[i] != '"' {
+		return ""
+	}
+	end := i
+	i--
+	for i >= 0 && budget > 0 {
+		if body[i] == '"' && !isEscapedByteAt(body, i) {
 			return string(body[i+1 : end])
 		}
 		i--
 		budget--
 	}
 	return ""
+}
+
+// isEscapedByteAt 判断 body[i] 的引号是否被反斜杠转义（连续反斜杠个数为奇数）。
+func isEscapedByteAt(body []byte, i int) bool {
+	backslashes := 0
+	for j := i - 1; j >= 0 && body[j] == '\\'; j-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
+}
+
+// isJSONSpaceByte 判断字节是否为 JSON 空白。
+func isJSONSpaceByte(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// multimodalDataParentKeys 是允许把 `data` 键解释为多模态二进制负载的**父键**白名单。
+// 其它父键（或无法确证的父键）走文本/dense 判定，见 jsonParentKeyBefore 的说明。
+var multimodalDataParentKeys = map[string]bool{
+	"source":      true, // Anthropic: {"source":{"type":"base64","data":…}}
+	"inline_data": true, // Gemini:    {"inline_data":{"data":…}}
+	"inlineData":  true, // Gemini camelCase 变体
+	"input_audio": true, // OpenAI:    {"input_audio":{"data":…}}
+}
+
+// multimodalPayloadKeyIsBinary 判定 valueStart 处的 base64 串是否应按"多模态二进制
+// 负载"折算（每块固定 allowance）。`data` 键额外要求父键上下文（审计 N4）；父键无法
+// 确证时保持既有行为（仍按多模态），以免把真实图片降级成稠密口径而误 403。
+func multimodalPayloadKeyIsBinary(body []byte, valueStart int, key string) bool {
+	if !multimodalPayloadKeys[key] {
+		return false
+	}
+	if key != "data" {
+		return true
+	}
+	parent := jsonParentKeyBefore(body, valueStart)
+	if parent == "" {
+		return true
+	}
+	return multimodalDataParentKeys[parent]
 }
 
 // requestSpendJSONBacktrackBudget 是键名回溯的字节预算。

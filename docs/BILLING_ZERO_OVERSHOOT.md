@@ -184,7 +184,13 @@ GET /api/v1/admin/ops/billing-guard
   字节回退型分词器不是上界）；**多模态块内**的 base64（`url`/`image_url`/`data`/
   `file_data` 字段承载，含 OpenAI Responses 的字符串形态 `image_url` 与**带 mime
   参数的 data URI**（`data:image/svg+xml;charset=utf-8;base64,…`），即真实图片/音频
-  负载）按固定 allowance（1600/块，与分辨率无关）；**其它位置的 base64**（含没有
+  负载）按固定 allowance（1600/块，与分辨率无关）。其中 `data` 是极常见的通用键名
+  （任何自定义 JSON 都可能用它表示数据），因此还要由**父键**确认是否为多模态：
+  只有 `source`（Anthropic）/ `inline_data`·`inlineData`（Gemini）/ `input_audio`
+  （OpenAI）才算多模态块；父键明确但不是上述之一（如 `{"payload":{"data":"…"}}`）
+  时回落稠密/文本口径，父键无法确证（顶层 `data`、数组元素）时保持按多模态折算，
+  以免把真实图片降级为稠密口径而误 403。
+  **其它位置的 base64**（含没有
   任何 `;base64,` / `"data":"` 标记的裸长串，判定依据是长串前最近的 JSON 键名）按
   **1 token/字节** 稠密计（实测 20KB base64 被上游分词为 18907 token ≈ 0.92 token/字节，
   若按图片折算会低估 4 倍、生产实测产生过一笔 $0.0034 的 write-off）。
@@ -197,3 +203,18 @@ GET /api/v1/admin/ops/billing-guard
   处理（归稠密，方向保守）。
 - **`userRepo` 未装配的降级部署**：无法做 DB 真值复核，护栏退化为"只按缓存判断"，
   会通过 `recheck_skipped_no_user_repo` 计数并出现在 `degraded_signals` 中。
+- **计费幂等的安全前提（重要）**：`usage_billing_dedup` 的主键是
+  `(request_id, api_key_id)`，其中 `request_id` **只取服务端可信来源**
+  （强持久 money-event id（`web_search:` 等）> 上游响应 id > 服务端生成
+  `generated:`），**绝不读取客户端可控的 `X-Client-Request-ID` / `X-Request-ID`**；
+  这两个 header 也**不在上游透传白名单内**（否则"回显客户端 id 为响应
+  `x-request-id`"的上游会让客户端重新取得幂等键的控制权 —— 恒定一个 id 就能让多笔
+  真实调用折叠成一笔、静默去重不扣费，使整条护栏失效）。
+  由此推出两条运维含义：
+  1. **上游必须返回可信、互不相同的 request id**（或返回空 → 由服务端生成）。若某上游
+     对多笔调用复用同一个 id，第二笔起会走"指纹不同 → 换服务端新 id 重新落账"（不丢单，
+     会在日志打 `ALERT: usage billing request id conflict`）；该笔 `usage_log.request_id`
+     会同步为实际计费键（形如 `<原id>:conflict:<服务端id>`），便于按 request_id 对账。
+  2. 幂等以"同一笔调用只提交一次"为前提（worker 池的 `TrySubmit` 成功即仅入队一次，
+     失败按 overflow policy 单次降级）。若将来引入记账重试/人工重放，必须复用同一个
+     上游 id，否则会被视为两笔独立扣费。

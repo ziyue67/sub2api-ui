@@ -299,6 +299,11 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 //  2. 上游返回的请求 id：每笔上游调用唯一；
 //  3. 服务端生成的一次性 id。
 //
+// 前提（运维约束，审计 N3）：上游返回的 request id 必须**不由客户端 header 决定**。
+// 因此 `X-Request-ID` / `X-Client-Request-ID` 不在上游透传白名单里（见
+// `allowedHeaders` 的注释）——否则"把收到的客户端 id 回显为响应 x-request-id"的上游
+// 会让本函数重新拿到一个客户端可控的值，恒定一个 id 即可把多笔真实调用折叠成一笔。
+//
 // ctx 参数保留仅为兼容调用方签名（不再读取其中的客户端 id）。
 func resolveUsageBillingRequestID(_ context.Context, upstreamRequestID string) string {
 	requestID := strings.TrimSpace(upstreamRequestID)
@@ -434,10 +439,21 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		// 同一个 request_id 已被另一笔**不同负载**的调用占用（典型：上游复用/伪造了
 		// request id，或历史数据里已有同 id 的不同指纹）。这绝不能变成"免费调用"：
 		// 换一个服务端新 id 重新落账，把这笔钱收回来。
-		logger.LegacyPrintf("service.gateway",
-			"ALERT: usage billing request id conflict, retrying with a fresh server id: request=%s", requestID)
 		cmd.RequestID = requestID + ":conflict:" + generateRequestID()
+		logger.LegacyPrintf("service.gateway",
+			"ALERT: usage billing request id conflict, retrying with a fresh server id: original=%s actual=%s",
+			requestID, cmd.RequestID)
 		result, err = repo.Apply(billingCtx, cmd)
+		if err == nil {
+			// 让 usage_log 与 usage_billing_dedup 两侧的 request_id 一致（审计 N2）：
+			// 否则钱包侧的扣费记录挂在一个"影子 id"上，按 request_id 对账时两边对不上。
+			// 两处 usage_log 都在 applyUsageBilling 之后才落库（见调用方），
+			// 因此这里回写会作用到最终写入的那条记录上；原 id 已在上面的 ALERT 里留痕。
+			requestID = cmd.RequestID
+			if usageLog != nil {
+				usageLog.RequestID = cmd.RequestID
+			}
+		}
 	}
 	if err != nil {
 		return false, err
