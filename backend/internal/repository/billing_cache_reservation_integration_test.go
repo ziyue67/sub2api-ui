@@ -65,6 +65,57 @@ func (s *BillingReservationSuite) TestReserveAccumulatesAndReportsTotal() {
 	require.InDelta(s.T(), 0.30, peeked, 1e-9, "只读总额应与累加值一致")
 }
 
+func (s *BillingReservationSuite) TestTryReserveIsAtomicAndIdempotent() {
+	cache, rdb := s.reservationCache()
+	ctx := context.Background()
+	scope := "9015"
+
+	const workers = 8
+	start := make(chan struct{})
+	type result struct {
+		requestID string
+		total    float64
+		accepted bool
+		err      error
+	}
+	results := make(chan result, workers)
+	for i := 0; i < workers; i++ {
+		requestID := fmt.Sprintf("atomic-%d", i)
+		go func() {
+			<-start
+			total, accepted, err := cache.TryReserveUserBalance(ctx, scope, requestID, 0.10, 0.30, 10*time.Minute)
+			results <- result{requestID: requestID, total: total, accepted: accepted, err: err}
+		}()
+	}
+	close(start)
+
+	accepted := 0
+	var acceptedRequestID string
+	for i := 0; i < workers; i++ {
+		got := <-results
+		require.NoError(s.T(), got.err)
+		if got.accepted {
+			accepted++
+			if acceptedRequestID == "" {
+				acceptedRequestID = got.requestID
+			}
+		}
+	}
+	require.Equal(s.T(), 3, accepted, "原子上限只能接受 3 笔")
+	require.NotEmpty(s.T(), acceptedRequestID, "至少应有一笔请求被接受")
+	total, err := cache.ReservedUserBalanceTotal(ctx, scope)
+	require.NoError(s.T(), err)
+	require.InDelta(s.T(), 0.30, total, 1e-9)
+
+	// Replaying the same request must not add another 0.10.
+	var replayAccepted bool
+	total, replayAccepted, err = cache.TryReserveUserBalance(ctx, scope, acceptedRequestID, 0.10, 0.30, 10*time.Minute)
+	require.NoError(s.T(), err)
+	require.True(s.T(), replayAccepted)
+	require.InDelta(s.T(), 0.30, total, 1e-9)
+	require.Equal(s.T(), int64(1), rdb.Exists(ctx, billingReservedItemKey(scope, acceptedRequestID)).Val())
+}
+
 // TestReserveDoesNotRenewAggregateTTLOnLaterReserves 是"聚合键 TTL 不得被反复续期"的
 // 回归测试（对应真实的"账号在封底之上被永久锁死"故障）。
 //

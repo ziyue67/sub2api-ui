@@ -681,14 +681,33 @@ func multimodalPayloadKeyIsBinary(body []byte, valueStart int, key string) bool 
 	if !multimodalPayloadKeys[key] {
 		return false
 	}
-	if key != "data" {
+	if key == "image_url" {
+		return true
+	}
+	if key == "data" {
+		parent := jsonParentKeyBefore(body, valueStart)
+		if parent == "" {
+			return true
+		}
+		return multimodalDataParentKeys[parent]
+	}
+
+	// `url` and `file_data` are generic fields in many APIs. Only treat them as
+	// media payloads when their object context identifies a media block, or when
+	// the value is explicitly a data URI. This prevents arbitrary high-entropy
+	// text in generic fields from receiving the tiny fixed media allowance.
+	if precededByBase64Marker(body, valueStart) {
 		return true
 	}
 	parent := jsonParentKeyBefore(body, valueStart)
-	if parent == "" {
-		return true
+	switch key {
+	case "url":
+		return parent == "image_url" || parent == "input_image" || parent == "input_audio" || parent == "image" || parent == "audio"
+	case "file_data":
+		return parent == "input_file" || parent == "file" || parent == "document"
+	default:
+		return false
 	}
-	return multimodalDataParentKeys[parent]
 }
 
 // requestSpendJSONBacktrackBudget 是键名回溯的字节预算。

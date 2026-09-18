@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -176,6 +177,31 @@ var (
 			redis.call('PEXPIRE', KEYS[1], ARGV[2])
 		end
 		return newVal
+	`)
+
+	// tryReserveBalanceScript 把“累加预留 + 上限判定”合并成一次 Redis 原子操作。
+	// 只有新总额不超过 maxTotal 时才落凭据并刷新 TTL；被拒绝的请求不写任何键，
+	// 因而既不会制造需要二次回滚的窗口，也不会用拒绝流量给历史残留续命。
+	// 接受的新请求会刷新聚合键 TTL，避免持续短请求下聚合键先于仍有效的凭据过期。
+	tryReserveBalanceScript = redis.NewScript(`
+		local existing = redis.call('GET', KEYS[2])
+		if existing ~= false then
+			redis.call('PEXPIRE', KEYS[2], ARGV[3])
+			redis.call('PEXPIRE', KEYS[1], ARGV[3])
+			local current = redis.call('GET', KEYS[1])
+			if current == false then
+				return {'-1', '0'}
+			end
+			return {'1', current}
+		end
+		local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+		local newVal = current + tonumber(ARGV[1])
+		if newVal > tonumber(ARGV[2]) + 1e-12 then
+			return {'0', tostring(current)}
+		end
+		redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[3])
+		redis.call('SET', KEYS[1], tostring(newVal), 'PX', ARGV[3])
+		return {'1', tostring(newVal)}
 	`)
 
 	// releaseBalanceScript 原子地归还一笔在途预留，**且只归还属于本请求的那一笔**。
@@ -385,6 +411,32 @@ func (c *billingCache) ReserveUserBalance(ctx context.Context, scope string, req
 		return 0, err
 	}
 	return parseReservedBalanceReply(reply)
+}
+
+// TryReserveUserBalance 仅在聚合预留不超过 maxTotal 时原子建立本笔凭据。
+func (c *billingCache) TryReserveUserBalance(ctx context.Context, scope string, requestID string, amount, maxTotal float64, ttl time.Duration) (float64, bool, error) {
+	if amount < 0 || maxTotal < 0 || math.IsNaN(amount) || math.IsNaN(maxTotal) || math.IsInf(amount, 0) || math.IsInf(maxTotal, 0) {
+		return 0, false, fmt.Errorf("reserve amount and limit must be nonnegative, got amount=%v limit=%v", amount, maxTotal)
+	}
+	if scope == "" || requestID == "" {
+		return 0, false, fmt.Errorf("reserve scope and requestID must not be empty")
+	}
+	reply, err := tryReserveBalanceScript.Run(ctx, c.rdb,
+		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
+		amount, maxTotal, reservationTTLMillis(ttl)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, false, err
+	}
+	parts, ok := reply.([]any)
+	if !ok || len(parts) != 2 {
+		return 0, false, fmt.Errorf("unexpected atomic reservation reply %T: %v", reply, reply)
+	}
+	accepted := fmt.Sprint(parts[0]) == "1"
+	if fmt.Sprint(parts[0]) == "-1" {
+		return 0, false, errors.New("reservation receipt exists without aggregate total")
+	}
+	total, err := parseReservedBalanceReply(parts[1])
+	return total, accepted, err
 }
 
 // ReleaseUserBalanceReservation 原子地归还"本请求"占用的在途预留。
