@@ -102,9 +102,10 @@ func (s *BillingReservationSuite) TestTryReserveIsAtomicAndIdempotent() {
 	require.InDelta(s.T(), 0.30, total, 1e-9)
 
 	// Replaying the same request must not add another 0.10.
-	total, accepted, err := cache.TryReserveUserBalance(ctx, scope, "atomic-0", 0.10, 0.30, 10*time.Minute)
+	var replayAccepted bool
+	total, replayAccepted, err := cache.TryReserveUserBalance(ctx, scope, "atomic-0", 0.10, 0.30, 10*time.Minute)
 	require.NoError(s.T(), err)
-	require.True(s.T(), accepted)
+	require.True(s.T(), replayAccepted)
 	require.InDelta(s.T(), 0.30, total, 1e-9)
 	require.Equal(s.T(), int64(1), rdb.Exists(ctx, billingReservedItemKey(scope, "atomic-0")).Val())
 }
