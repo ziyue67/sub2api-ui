@@ -73,6 +73,7 @@ func (s *BillingReservationSuite) TestTryReserveIsAtomicAndIdempotent() {
 	const workers = 8
 	start := make(chan struct{})
 	type result struct {
+		requestID string
 		total    float64
 		accepted bool
 		err      error
@@ -83,31 +84,36 @@ func (s *BillingReservationSuite) TestTryReserveIsAtomicAndIdempotent() {
 		go func() {
 			<-start
 			total, accepted, err := cache.TryReserveUserBalance(ctx, scope, requestID, 0.10, 0.30, 10*time.Minute)
-			results <- result{total: total, accepted: accepted, err: err}
+			results <- result{requestID: requestID, total: total, accepted: accepted, err: err}
 		}()
 	}
 	close(start)
 
 	accepted := 0
+	var acceptedRequestID string
 	for i := 0; i < workers; i++ {
 		got := <-results
 		require.NoError(s.T(), got.err)
 		if got.accepted {
 			accepted++
+			if acceptedRequestID == "" {
+				acceptedRequestID = got.requestID
+			}
 		}
 	}
 	require.Equal(s.T(), 3, accepted, "原子上限只能接受 3 笔")
+	require.NotEmpty(s.T(), acceptedRequestID, "至少应有一笔请求被接受")
 	total, err := cache.ReservedUserBalanceTotal(ctx, scope)
 	require.NoError(s.T(), err)
 	require.InDelta(s.T(), 0.30, total, 1e-9)
 
 	// Replaying the same request must not add another 0.10.
 	var replayAccepted bool
-	total, replayAccepted, err = cache.TryReserveUserBalance(ctx, scope, "atomic-0", 0.10, 0.30, 10*time.Minute)
+	total, replayAccepted, err = cache.TryReserveUserBalance(ctx, scope, acceptedRequestID, 0.10, 0.30, 10*time.Minute)
 	require.NoError(s.T(), err)
 	require.True(s.T(), replayAccepted)
 	require.InDelta(s.T(), 0.30, total, 1e-9)
-	require.Equal(s.T(), int64(1), rdb.Exists(ctx, billingReservedItemKey(scope, "atomic-0")).Val())
+	require.Equal(s.T(), int64(1), rdb.Exists(ctx, billingReservedItemKey(scope, acceptedRequestID)).Val())
 }
 
 // TestReserveDoesNotRenewAggregateTTLOnLaterReserves 是"聚合键 TTL 不得被反复续期"的
