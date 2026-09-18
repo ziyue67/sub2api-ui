@@ -184,3 +184,23 @@ func TestEstimateRequestInputTokensUpperBound_DataKeyNeedsParentContext(t *testi
 	require.Greater(t, plain, 0)
 	require.Less(t, plain, 200_000, "普通英文文本不应被判为稠密")
 }
+
+func TestEstimateRequestInputTokensUpperBound_GenericURLAndFileDataStayDense(t *testing.T) {
+	t.Parallel()
+
+	raw := make([]byte, 900000)
+	for i := range raw {
+		raw[i] = byte(i*47 + 13)
+	}
+	blob := base64.StdEncoding.EncodeToString(raw)
+
+	genericURL := EstimateRequestInputTokensUpperBound([]byte(`{"payload":{"url":"` + blob + `"}}`))
+	genericFile := EstimateRequestInputTokensUpperBound([]byte(`{"payload":{"file_data":"` + blob + `"}}`))
+	require.Greater(t, genericURL, 1_000_000, "通用 url 字段不能套用图片固定额度")
+	require.Greater(t, genericFile, 1_000_000, "通用 file_data 字段不能套用图片固定额度")
+
+	mediaURL := EstimateRequestInputTokensUpperBound([]byte(`{"image":{"url":"` + blob + `"}}`))
+	mediaFile := EstimateRequestInputTokensUpperBound([]byte(`{"input_file":{"file_data":"` + blob + `"}}`))
+	require.Less(t, mediaURL, 10_000, "媒体对象中的 url 仍应按多模态块估算")
+	require.Less(t, mediaFile, 10_000, "媒体对象中的 file_data 仍应按多模态块估算")
+}

@@ -96,3 +96,33 @@ func checkSelectedGroupRouteEligibility(c *gin.Context, billing *service.Billing
 		service.QuotaPlatform(c.Request.Context(), apiKey),
 	)
 }
+
+// recheckSelectedGroupRouteEligibility replaces the reservation created for the
+// previous route with one priced and scoped for the newly selected route.
+func recheckSelectedGroupRouteEligibility(
+	c *gin.Context,
+	billing *service.BillingCacheService,
+	apiKey *service.APIKey,
+	subscription *service.UserSubscription,
+	worstSpend float64,
+	slot *service.BillingReservationSlot,
+) error {
+	if c == nil || billing == nil || apiKey == nil {
+		return nil
+	}
+	if slot != nil {
+		slot.Release(c.Request.Context())
+		slot.ResetForRetry()
+	}
+	opts := make([]service.BillingEligibilityOption, 0, 2)
+	if worstSpend > 0 {
+		opts = append(opts, service.WithMaxRequestSpend(worstSpend))
+	}
+	if slot != nil {
+		opts = append(opts, service.WithBalanceReservation(slot))
+	}
+	return billing.CheckBillingEligibility(
+		c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription,
+		service.QuotaPlatform(c.Request.Context(), apiKey), opts...,
+	)
+}

@@ -698,7 +698,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				} else if switched {
 					subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
 					if switchErr == nil {
-						switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+						worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body)
+						switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription, worstSpend, &balanceReservation)
 					}
 					if switchErr != nil {
 						reqLog.Warn("openai.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -732,7 +733,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else if switched {
 				subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
 				if switchErr == nil {
-					switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+					worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body)
+					switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription, worstSpend, &balanceReservation)
 				}
 				if switchErr != nil {
 					reqLog.Warn("openai.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -986,7 +988,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						} else if switched {
 							subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
 							if switchErr == nil {
-								switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+								worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body)
+								switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription, worstSpend, &balanceReservation)
 							}
 							if switchErr != nil {
 								reqLog.Warn("openai.group_route_subscription_load_failed", zap.Error(switchErr))

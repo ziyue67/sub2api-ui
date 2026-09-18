@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,6 +146,10 @@ type balanceExhaustionStore interface {
 type billingReservationStore interface {
 	ReserveUserBalance(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) (float64, error)
 	ReleaseUserBalanceReservation(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) error
+}
+
+type atomicBillingReservationStore interface {
+	TryReserveUserBalance(ctx context.Context, scope string, requestID string, amount, maxTotal float64, ttl time.Duration) (float64, bool, error)
 }
 
 // billingReservationRenewer 是预留的**可选**能力：为长请求续期预留。
@@ -334,6 +339,19 @@ func (s *BillingReservationSlot) Release(ctx context.Context) {
 // 避免"结算还没扣钱、预留先还回去"的超额放行窗口。
 func (s *BillingReservationSlot) ReleaseOnExit(ctx context.Context) {
 	s.release(ctx, true)
+}
+
+// ResetForRetry allows a handler to reuse the slot after a route switch. The old
+// reservation must be released first; settling slots are never reset.
+func (s *BillingReservationSlot) ResetForRetry() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == billingReservationReleased {
+		s.state = billingReservationIdle
+	}
 }
 
 func (s *BillingReservationSlot) release(ctx context.Context, exitOnly bool) {
@@ -1515,7 +1533,8 @@ func (s *BillingCacheService) balanceReservation() (billingReservationStore, boo
 //   - 预留后封底护栏不成立：立即回滚预留并返回 ErrInsufficientBalance（403）。
 func (s *BillingCacheService) reserveRequestSpend(ctx context.Context, userID int64, balance float64, maxRequestSpend float64, slot *BillingReservationSlot) error {
 	scope := balanceReservationScope(userID)
-	return s.reserveSpendWithGuard(ctx, scope, maxRequestSpend, slot, func(reservedAfter float64) error {
+	maxReserved := s.inflightReservationBudget(ctx, balance, maxRequestSpend)
+	return s.reserveSpendWithGuard(ctx, scope, maxRequestSpend, maxReserved, slot, func(reservedAfter float64) error {
 		if s.inflightReservationAllowed(ctx, balance, reservedAfter, maxRequestSpend) {
 			return nil
 		}
@@ -1525,6 +1544,18 @@ func (s *BillingCacheService) reserveRequestSpend(ctx context.Context, userID in
 			userID, balance, reservedAfter, s.minimumBalanceReserve(), s.inflightReservationBudgetMultiplier(ctx))
 		return ErrInsufficientBalance
 	}, BillingRejectReservationGuard)
+}
+
+func (s *BillingCacheService) inflightReservationBudget(ctx context.Context, balance, maxRequestSpend float64) float64 {
+	spendable := balance - s.minimumBalanceReserve()
+	if spendable < 0 {
+		spendable = 0
+	}
+	budget := spendable * s.inflightReservationBudgetMultiplier(ctx)
+	if budget < maxRequestSpend {
+		budget = maxRequestSpend
+	}
+	return budget
 }
 
 // defaultInflightReservationBudgetMultiplier 是在途预留聚合闸门的默认预算倍数。
@@ -1576,14 +1607,7 @@ func (s *BillingCacheService) inflightReservationBudgetMultiplier(ctx context.Co
 // 预算至少放行一笔：否则倍数退化时第一笔会被自己的预留挡住。
 func (s *BillingCacheService) inflightReservationAllowed(ctx context.Context, balance, reservedAfter, maxRequestSpend float64) bool {
 	reserve := s.minimumBalanceReserve()
-	spendable := balance - reserve
-	if spendable < 0 {
-		spendable = 0
-	}
-	budget := spendable * s.inflightReservationBudgetMultiplier(ctx)
-	if budget < maxRequestSpend {
-		budget = maxRequestSpend
-	}
+	budget := s.inflightReservationBudget(ctx, balance, maxRequestSpend)
 	if reservedAfter <= budget {
 		return true
 	}
@@ -1608,6 +1632,7 @@ func (s *BillingCacheService) reserveSpendWithGuard(
 	ctx context.Context,
 	scope string,
 	amount float64,
+	maxTotal float64,
 	slot *BillingReservationSlot,
 	guard func(reservedAfter float64) error,
 	rejectReason BillingPreflightRejectReason,
@@ -1620,6 +1645,28 @@ func (s *BillingCacheService) reserveSpendWithGuard(
 		return nil
 	}
 	requestID := newBillingReservationRequestID()
+	if atomicStore, atomicOK := store.(atomicBillingReservationStore); atomicOK {
+		reservedAfter, accepted, err := atomicStore.TryReserveUserBalance(ctx, scope, requestID, amount, maxTotal, billingReservationTTL)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			RecordBillingReservationFailOpen()
+			logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed: %v", scope, err)
+			return nil
+		}
+		if !accepted {
+			RecordBillingReservationRejected()
+			if rejectReason != "" {
+				RecordBillingPreflightReject(rejectReason)
+			}
+			return guard(reservedAfter + amount)
+		}
+		slot.bind(store, scope, requestID, amount)
+		slot.startHeartbeat()
+		RecordBillingReservationReserved()
+		return nil
+	}
 	reservedAfter, err := store.ReserveUserBalance(ctx, scope, requestID, amount, billingReservationTTL)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -1706,7 +1753,8 @@ func (s *BillingCacheService) reserveSubscriptionSpend(ctx context.Context, user
 		return nil
 	}
 	scope := subscriptionReservationScope(userID, group.ID)
-	return s.reserveSpendWithGuard(ctx, scope, maxRequestSpend, slot, func(reservedAfter float64) error {
+	maxReserved := subscriptionReservationBudget(group, subData)
+	return s.reserveSpendWithGuard(ctx, scope, maxRequestSpend, maxReserved, slot, func(reservedAfter float64) error {
 		if err := subscriptionLimitExceeded(group, subData, reservedAfter); err != nil {
 			logger.LegacyPrintf("service.billing_cache",
 				"billing preflight rejected user=%d group=%d (subscription inflight reservation): reserved=%.6f would exceed limit",
@@ -1715,6 +1763,22 @@ func (s *BillingCacheService) reserveSubscriptionSpend(ctx context.Context, user
 		}
 		return nil
 	}, "")
+}
+
+func subscriptionReservationBudget(group *Group, subData *subscriptionCacheData) float64 {
+	// Redis Lua receives this value as a string; +Inf is not portable across
+	// Redis/Lua versions, so keep the no-limit sentinel finite.
+	budget := math.MaxFloat64
+	if group.HasDailyLimit() {
+		budget = math.Min(budget, math.Max(0, *group.DailyLimitUSD-subData.DailyUsage))
+	}
+	if group.HasWeeklyLimit() {
+		budget = math.Min(budget, math.Max(0, *group.WeeklyLimitUSD-subData.WeeklyUsage))
+	}
+	if group.HasMonthlyLimit() {
+		budget = math.Min(budget, math.Max(0, *group.MonthlyLimitUSD-subData.MonthlyUsage))
+	}
+	return budget
 }
 
 // checkSubscriptionEligibility 检查订阅模式资格，并返回订阅缓存数据。
