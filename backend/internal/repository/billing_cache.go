@@ -46,10 +46,28 @@ const (
 	subCacheInvalidateChannel    = "subscription:cache:invalidate"
 	billingCacheTTL              = 5 * time.Minute
 	billingCacheJitter           = 30 * time.Second
+	// apiKeyQuotaUsedLedgerKeyPrefix 是 API Key 额度「已结算用量」共享账本的键前缀。
+	//
+	// 为什么需要它：API Key 总额度（api_key.quota）的准入读的是鉴权缓存里的 quota_used
+	// 快照（L1 默认 15s / L2 默认 300s），而结算只在 DB 里原子递增 quota_used
+	// （usage_billing_repo 的 incrementUsageBillingAPIKeyQuota）。在快照过期前，
+	// 预检看到的「已用额度」是**冻结**的旧值：等此前放行的请求陆续结算并归还完在途预留，
+	// 聚合预留归零而快照里的 quota_used 仍是旧值，于是同一个 key 可以在一个快照周期内
+	// 把额度重复放行一遍（≈ 一个完整额度上限的超发）。
+	//
+	// 本账本把「结算提交后的 DB 真值」写进 Redis（单调不减），准入取
+	// max(鉴权快照 quota_used, 账本)，使已用额度不再随快照冻结。账本值恒 ≤ DB 真值
+	// （写入的就是 DB 的 RETURNING 结果），因此只会让准入更保守，不会放行超出
+	// DB 已用额度的请求。
+	apiKeyQuotaUsedLedgerKeyPrefix = "billing:apikey_quota_used:"
 	// balanceExhaustedMarkerTTL 必须 >= 余额缓存的最长存活时间（billingCacheTTL），
 	// 否则标记先过期、而余额缓存里仍留着偏高的旧值，预检又会被放行。
 	balanceExhaustedMarkerTTL = billingCacheTTL + time.Minute
 	rateLimitCacheTTL         = 7 * 24 * time.Hour // 7 days matches the longest window
+	// apiKeyQuotaUsedLedgerTTL 是共享账本的存活时间：只需覆盖「结算提交 → 下一次鉴权
+	// 缓存回源读到同一份 DB 真值」的最长时延（L2 默认 300s），取 30 分钟留足余量。
+	// 过期后账本归零，最坏退化为修复前行为（靠快照 + 在途预留把关）。
+	apiKeyQuotaUsedLedgerTTL = 30 * time.Minute
 
 	// billingBalanceGenerationKeyPrefix 是余额缓存的**变动代号**键前缀。
 	//
@@ -74,6 +92,25 @@ const (
 	rateLimitWindow5h = 5 * time.Hour
 	rateLimitWindow1d = 24 * time.Hour
 	rateLimitWindow7d = 7 * 24 * time.Hour
+
+	// billingSubGenerationKeyPrefix 是订阅缓存的**变动代号**键前缀（与余额缓存的
+	// billing:balance_gen 同构，审计 R9/R10）。
+	//
+	// 它解决的是订阅缓存的同一类竞态：缓存是"未命中回源 + 异步写回"，读取方从 DB 读到
+	// usage 到真正写回缓存之间有窗口；若窗口内发生了结算（同步把 Redis usage 累加），
+	// 迟到的旧快照会把累加结果**覆盖回偏小值** —— 预检随即按偏小的用量放行，
+	// 订阅限额被重复消耗（与 API Key 额度冻结快照同构）。
+	//
+	// 办法与余额一致：每次订阅用量变动递增一个代号；读取方在**发起 DB 读取之前**取一份
+	// 代号，写回时只有代号未变才发布。比较的是同一条 Redis 上的单调计数，
+	// 天然免疫多实例时钟偏移（不用时间戳比较）。
+	billingSubGenerationKeyPrefix = "billing:sub_gen:"
+	// subscriptionGenerationTTL 是代号键的存活时间：只需覆盖"DB 读取 + 写回"的最大时延
+	// （回源超时 + 队列等待），取 10 分钟与余额代号一致；过期后两侧同读 '0'，
+	// 最坏退化为"不设防"（与修复前行为一致）。
+	subscriptionGenerationTTL = 10 * time.Minute
+	// subscriptionGenerationTTLSeconds 是上面 TTL 的秒数形式（脚本参数用秒）。
+	subscriptionGenerationTTLSeconds = int(subscriptionGenerationTTL / time.Second)
 )
 
 // jitteredTTL 返回带随机抖动的 TTL，防止缓存雪崩
@@ -117,9 +154,21 @@ func billingReservedItemKey(scope, requestID string) string {
 	return billingReservedItemKeyPrefix + scope + ":" + requestID
 }
 
+// apiKeyQuotaUsedLedgerKey generates the Redis key holding an API key's settled
+// quota_used high-water mark (see apiKeyQuotaUsedLedgerKeyPrefix).
+func apiKeyQuotaUsedLedgerKey(apiKeyID int64) string {
+	return fmt.Sprintf("%s%d", apiKeyQuotaUsedLedgerKeyPrefix, apiKeyID)
+}
+
 // billingSubKey generates the Redis key for subscription cache.
 func billingSubKey(userID, groupID int64) string {
 	return fmt.Sprintf("%s%d:%d", billingSubKeyPrefix, userID, groupID)
+}
+
+// billingSubGenerationKey generates the Redis key for a subscription cache generation
+// counter (bumped on every usage mutation; used to discard stale回源 snapshots).
+func billingSubGenerationKey(userID, groupID int64) string {
+	return fmt.Sprintf("%s%d:%d", billingSubGenerationKeyPrefix, userID, groupID)
 }
 
 const (
@@ -365,6 +414,76 @@ var (
 		redis.call('HINCRBYFLOAT', KEYS[1], 'weekly_usage', cost)
 		redis.call('HINCRBYFLOAT', KEYS[1], 'monthly_usage', cost)
 		redis.call('EXPIRE', KEYS[1], ARGV[2])
+		redis.call('INCR', KEYS[2])
+		redis.call('EXPIRE', KEYS[2], ARGV[3])
+		return 1
+	`)
+
+	// invalidateSubCacheScript 失效订阅缓存，并同时递增变动代号。
+	//
+	// 必须递增代号的原因与余额缓存（审计 R9）相同：删除之后，一个在删除之前发起 DB
+	// 读取、尚未落盘的旧快照仍可能被发布回缓存；如果那份快照的 usage 偏小，
+	// 预检会在整个 TTL 内按偏小的用量放行。
+	//
+	// KEYS[1] = billing:sub:<userID>:<groupID>，KEYS[2] = billing:sub_gen:<userID>:<groupID>
+	// ARGV[1] = 代号 TTL（秒）
+	invalidateSubCacheScript = redis.NewScript(`
+		redis.call('INCR', KEYS[2])
+		redis.call('EXPIRE', KEYS[2], ARGV[1])
+		redis.call('DEL', KEYS[1])
+		return 1
+	`)
+
+	// publishSubCacheScript 是订阅缓存回填的**条件写回**（按"变动代号"，与余额缓存的
+	// publishBalanceScript 同构）：只有代号仍等于读取方在 DB 读取之前取到的值时，
+	// 才允许把整条快照（含 usage 绝对值）发布进缓存。
+	//
+	// 为什么必须有这道闸：订阅缓存是"未命中回源 + 异步写回"。读取方在 T0 从 DB 读到
+	// usage=5 并在 T2 才落盘；若 T1 有结算同步把缓存累加为 7（或 T1 时缓存键还不存在、
+	// 那次累加被守卫跳过 —— 此时增量只在 DB），T2 的旧快照就会把 usage=5 **覆盖**回去，
+	// 预检随即按偏小的用量放行：订阅限额被重复消耗。
+	//
+	// 代号（KEYS[2]）在每次用量变动时由 updateSubUsageScript / 失效路径递增，
+	// 因此"读取期间发生过变动"必然表现为代号不等，这份旧快照必须丢弃；
+	// 下一次读取回源 DB 真值自愈。
+	//
+	// 返回值：1 = 已发布，0 = 期间有变动，快照被丢弃（不是错误）。
+	//
+	// KEYS[1] = billing:sub:<userID>:<groupID>，KEYS[2] = billing:sub_gen:<userID>:<groupID>
+	// ARGV[1] = TTL（毫秒），ARGV[2] = 读取方取到的代号，ARGV[3] = 代号 TTL（秒），
+	// 其余为快照字段值
+	publishSubCacheScript = redis.NewScript(`
+		local gen = redis.call('GET', KEYS[2])
+		if gen == false then
+			gen = '0'
+		end
+		if gen ~= ARGV[2] then
+			return 0
+		end
+		redis.call('HSET', KEYS[1],
+			'status', ARGV[4],
+			'expires_at', ARGV[5],
+			'daily_usage', ARGV[6],
+			'weekly_usage', ARGV[7],
+			'monthly_usage', ARGV[8],
+			'version', ARGV[9])
+		redis.call('PEXPIRE', KEYS[1], ARGV[1])
+		redis.call('EXPIRE', KEYS[2], ARGV[3])
+		return 1
+	`)
+
+	// setAPIKeyQuotaUsedLedgerScript 以**单调高水位**方式发布 API Key 已用额度：
+	// 只有新值大于存量时才写入，因此并发/乱序的结算不会把账本写小（写小 = 放行超额）。
+	// 值缺失时按 0 处理（键不存在或已过期）。
+	//
+	// KEYS[1] = billing:apikey_quota_used:<keyID>
+	// ARGV[1] = 结算后的 quota_used（DB RETURNING 结果），ARGV[2] = TTL（毫秒）
+	setAPIKeyQuotaUsedLedgerScript = redis.NewScript(`
+		local current = redis.call('GET', KEYS[1])
+		if current ~= false and tonumber(current) >= tonumber(ARGV[1]) then
+			return 0
+		end
+		redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 		return 1
 	`)
 
@@ -501,6 +620,11 @@ func (c *billingCache) activateReservationFallback(ctx context.Context, ttl time
 	if store == nil {
 		return
 	}
+	// 先把 Redis 账本上仍存活的在途预留搬进 DB 账本，再抬升共享窗口。
+	// 顺序很重要：窗口一旦生效，其它实例会在 1s 内切到 DB 账本；若此时存量预留
+	// 还没导入，它们就不在 DB 账本的求和里 —— 同一份额度被两本账各算一遍，
+	// 等于把"一个预算"重复放行（PR#19 引入 DB 兜底账本时遗留的双账本缺口）。
+	c.importRedisReservationsIntoDatabase(ctx, store)
 	activateCtx, cancel := reservationDetachedContext(ctx, billingReservationDBOperationTimeout)
 	defer cancel()
 	if err := store.activateFallbackWindow(activateCtx, ttl); err != nil {
@@ -514,6 +638,37 @@ func (c *billingCache) activateReservationFallback(ctx context.Context, ttl time
 	c.fallbackProbeAt = now
 	c.fallbackProbeUntil = now.Add(normalizedBillingReservationTTL(ttl))
 	c.fallbackProbeMu.Unlock()
+}
+
+// importRedisReservationsIntoDatabase 把 Redis 侧存活的预留凭据导入 DB 兜底账本。
+//
+// 失败语义：导入失败**不阻塞**窗口抬升（可用性优先 —— 否则 Redis 故障会直接变成
+// 全站 503），但必须计数 + ALERT：此时 DB 账本缺少存量预留，护栏会高估可用额度，
+// 最坏把"一个预算"重复放行。该残余风险有界（存量预留随 TTL 自然过期，窗口长度
+// 也覆盖这段时间），且只会在"Redis 读写同时故障"时出现。
+func (c *billingCache) importRedisReservationsIntoDatabase(ctx context.Context, store *dbReservationStore) {
+	if c == nil || store == nil {
+		return
+	}
+	scanCtx, cancel := reservationDetachedContext(ctx, billingReservationDBOperationTimeout)
+	defer cancel()
+	receipts, err := c.scanRedisReservationReceipts(scanCtx)
+	if err != nil {
+		service.RecordBillingReservationFallbackImportError()
+		log.Printf("Warning: scan redis reservations before DB fallback failed (existing in-flight reservations stay uncounted): %v", err)
+		return
+	}
+	if len(receipts) == 0 {
+		service.RecordBillingReservationFallbackImported(0)
+		return
+	}
+	imported, err := store.importRedisReservationReceipts(scanCtx, receipts)
+	if err != nil {
+		service.RecordBillingReservationFallbackImportError()
+		log.Printf("Warning: import %d redis reservations into DB fallback ledger failed (imported=%d): %v", len(receipts), imported, err)
+		return
+	}
+	service.RecordBillingReservationFallbackImported(imported)
 }
 
 func (c *billingCache) tryReserveDatabase(ctx context.Context, scope, requestID string, amount, maxTotal float64, ttl time.Duration) (float64, bool, error) {
@@ -1002,7 +1157,6 @@ func (c *billingCache) SetSubscriptionCache(ctx context.Context, userID, groupID
 	}
 
 	key := billingSubKey(userID, groupID)
-
 	fields := map[string]any{
 		subFieldStatus:       data.Status,
 		subFieldExpiresAt:    data.ExpiresAt.Unix(),
@@ -1011,7 +1165,6 @@ func (c *billingCache) SetSubscriptionCache(ctx context.Context, userID, groupID
 		subFieldMonthlyUsage: data.MonthlyUsage,
 		subFieldVersion:      data.Version,
 	}
-
 	pipe := c.rdb.Pipeline()
 	pipe.HSet(ctx, key, fields)
 	pipe.Expire(ctx, key, jitteredTTL())
@@ -1019,19 +1172,92 @@ func (c *billingCache) SetSubscriptionCache(ctx context.Context, userID, groupID
 	return err
 }
 
+// SubscriptionGeneration 返回订阅缓存当前的"变动代号"，供回源路径在**发起 DB 读取之前**
+// 取一份快照，再交给 SetSubscriptionCacheIfGeneration 做条件发布（与余额缓存同构）。
+//
+// 读不到（键不存在）时返回 "0"，与发布脚本对缺失代号的归一化一致。
+func (c *billingCache) SubscriptionGeneration(ctx context.Context, userID, groupID int64) (string, error) {
+	val, err := c.rdb.Get(ctx, billingSubGenerationKey(userID, groupID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "0", nil
+		}
+		return "", err
+	}
+	return val, nil
+}
+
+// SetSubscriptionCacheIfGeneration 只在订阅缓存的变动代号仍等于 generation 时发布快照。
+//
+// 代号不一致意味着"读取方发起 DB 读取之后发生过用量变动"（结算同步累加 / 缓存失效），
+// 此时快照可能偏高（窗口重置等）也可能偏低（少了新结算的用量），一律不发布：
+// 下一次读取回源真值，自愈。返回 published=false 不代表错误，调用方不需要处理。
+//
+// generation 为空串（未取到代号 / 轻量 stub 装配）时退回无条件发布，与修复前一致。
+func (c *billingCache) SetSubscriptionCacheIfGeneration(ctx context.Context, userID, groupID int64, data *service.SubscriptionCacheData, generation string) (bool, error) {
+	if generation == "" {
+		return true, c.SetSubscriptionCache(ctx, userID, groupID, data)
+	}
+	if data == nil {
+		return false, nil
+	}
+	reply, err := publishSubCacheScript.Run(ctx, c.rdb,
+		[]string{billingSubKey(userID, groupID), billingSubGenerationKey(userID, groupID)},
+		jitteredTTL().Milliseconds(),
+		generation,
+		subscriptionGenerationTTLSeconds,
+		data.Status,
+		data.ExpiresAt.Unix(),
+		data.DailyUsage,
+		data.WeeklyUsage,
+		data.MonthlyUsage,
+		data.Version,
+	).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return false, err
+	}
+	return fmt.Sprint(reply) == "1", nil
+}
+
 func (c *billingCache) UpdateSubscriptionUsage(ctx context.Context, userID, groupID int64, cost float64) error {
+	_, err := c.UpdateSubscriptionUsageApplied(ctx, userID, groupID, cost)
+	return err
+}
+
+// UpdateSubscriptionUsageApplied 与 UpdateSubscriptionUsage 语义相同，但把脚本返回值
+// 暴露出来：applied=false 表示缓存键不存在，这次累加被**跳过**（静默、无错误）。
+//
+// 跳过时的增量只存在于 DB（如果结算已经写了 DB）；调用方必须失效缓存，
+// 否则预检会在 TTL 内继续用偏小的快照放行 —— 而这正是"预留已归还、usage 仍旧"的
+// 超发窗口。见 SyncSubscriptionUsageAfterSettlement。
+func (c *billingCache) UpdateSubscriptionUsageApplied(ctx context.Context, userID, groupID int64, cost float64) (bool, error) {
 	key := billingSubKey(userID, groupID)
-	_, err := updateSubUsageScript.Run(ctx, c.rdb, []string{key}, cost, int(jitteredTTL().Seconds())).Result()
+	// 同步递增变动代号（KEYS[2]）：累加与"作废在途快照"是同一个事实，分开做会留下
+	// "加了用量但没作废"的窗口，迟到的旧快照就能把累加覆盖回偏小值。
+	reply, err := updateSubUsageScript.Run(ctx, c.rdb,
+		[]string{key, billingSubGenerationKey(userID, groupID)},
+		cost,
+		int(jitteredTTL().Seconds()),
+		subscriptionGenerationTTLSeconds,
+	).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		log.Printf("Warning: update subscription usage cache failed for user %d group %d: %v", userID, groupID, err)
-		return err
+		return false, err
 	}
-	return nil
+	return fmt.Sprint(reply) == "1", nil
 }
 
 func (c *billingCache) InvalidateSubscriptionCache(ctx context.Context, userID, groupID int64) error {
 	key := billingSubKey(userID, groupID)
-	return c.rdb.Del(ctx, key).Err()
+	// 失效同样递增代号：删除后仍可能在途的旧快照必须作废，否则它会把刚删掉的
+	// 偏小值（或旧值）重新发布回来（与余额缓存的 invalidateBalanceScript 同理）。
+	_, err := invalidateSubCacheScript.Run(ctx, c.rdb,
+		[]string{key, billingSubGenerationKey(userID, groupID)},
+		subscriptionGenerationTTLSeconds).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	return nil
 }
 
 func (c *billingCache) PublishSubscriptionCacheInvalidation(ctx context.Context, cacheKey string) error {
@@ -1125,9 +1351,17 @@ func (c *billingCache) SetAPIKeyRateLimit(ctx context.Context, keyID int64, data
 }
 
 func (c *billingCache) UpdateAPIKeyRateLimitUsage(ctx context.Context, keyID int64, cost float64) error {
+	_, err := c.UpdateAPIKeyRateLimitUsageApplied(ctx, keyID, cost)
+	return err
+}
+
+// UpdateAPIKeyRateLimitUsageApplied 与 UpdateAPIKeyRateLimitUsage 语义相同，但暴露
+// 脚本返回值：applied=false 表示限流缓存键不存在、这次累加被跳过（静默、无错误）。
+// 调用方必须失效缓存让下一次预检回源 DB 真值，否则限流窗口会按偏小的用量放行。
+func (c *billingCache) UpdateAPIKeyRateLimitUsageApplied(ctx context.Context, keyID int64, cost float64) (bool, error) {
 	key := billingRateLimitKey(keyID)
 	now := time.Now().Unix()
-	_, err := updateRateLimitUsageScript.Run(ctx, c.rdb, []string{key},
+	reply, err := updateRateLimitUsageScript.Run(ctx, c.rdb, []string{key},
 		cost,
 		int(rateLimitCacheTTL.Seconds()),
 		now,
@@ -1137,9 +1371,9 @@ func (c *billingCache) UpdateAPIKeyRateLimitUsage(ctx context.Context, keyID int
 	).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		log.Printf("Warning: update rate limit usage cache failed for api key %d: %v", keyID, err)
-		return err
+		return false, err
 	}
-	return nil
+	return fmt.Sprint(reply) == "1", nil
 }
 
 func (c *billingCache) InvalidateAPIKeyRateLimit(ctx context.Context, keyID int64) error {
@@ -1317,11 +1551,24 @@ func userPlatformQuotaDirtyMember(userID int64, platform string) string {
 }
 
 func (c *billingCache) IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration, markDirty bool) error {
+	_, err := c.IncrUserPlatformQuotaUsageCacheApplied(ctx, userID, platform, cost, ttl, markDirty)
+	return err
+}
+
+// IncrUserPlatformQuotaUsageCacheApplied 与 IncrUserPlatformQuotaUsageCache 语义相同，
+// 但把 Lua 脚本的返回值暴露出来：applied=false 表示**这次累加被跳过**
+// （key 不存在，或 entry 是旧 schema —— 脚本两道守卫都会静默 return 0）。
+//
+// 为什么必须暴露：跳过时增量只在内存里算过一次就消失了。此前调用方只看 error，
+// 于是"缓存键缺失导致的静默丢增量"永远不可观测，也永远没有 DB 兜底 ——
+// usage 会永久偏小（尤其是 flusher 模式下，缺的这笔连 DB 都不会写）。
+// 服务层据此走 DB 同步兜底 + 失效缓存，见 IncrementUserPlatformQuotaUsage。
+func (c *billingCache) IncrUserPlatformQuotaUsageCacheApplied(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration, markDirty bool) (bool, error) {
 	member := ""
 	if markDirty {
 		member = userPlatformQuotaDirtyMember(userID, platform)
 	}
-	_, err := c.rdb.Eval(ctx, updateUserPlatformQuotaUsageScript,
+	reply, err := c.rdb.Eval(ctx, updateUserPlatformQuotaUsageScript,
 		[]string{userPlatformQuotaCacheKey(userID, platform), userPlatformQuotaDirtySetKey()},
 		strconv.FormatFloat(cost, 'f', -1, 64),
 		int(ttl.Seconds()),
@@ -1329,10 +1576,13 @@ func (c *billingCache) IncrUserPlatformQuotaUsageCache(ctx context.Context, user
 		member,
 		userPlatformQuotaDirtyTTLSeconds,
 	).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return err
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return false, nil
+		}
+		return false, err
 	}
-	return nil
+	return fmt.Sprint(reply) == "1", nil
 }
 
 // parseUserPlatformQuotaDirtyMember 将脏集成员字符串 "userID:platform" 解析为

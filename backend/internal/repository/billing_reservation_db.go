@@ -36,6 +36,81 @@ func newDBReservationStore(db *sql.DB) *dbReservationStore {
 	return &dbReservationStore{db: db}
 }
 
+// redisReservationReceipt 是"Redis 账本上仍存活的一笔在途预留"的快照，
+// 用于切到 DB 兜底账本时把它们**搬进** DB（见 importRedisReservationReceipts）。
+type redisReservationReceipt struct {
+	Scope     string
+	RequestID string
+	Amount    float64
+	ExpiresAt time.Time
+}
+
+// importRedisReservationReceipts 把 Redis 账本上仍存活的在途预留登记进 DB 兜底账本。
+//
+// 为什么必须做：切到 DB 账本时，此前放行的请求已经在 Redis 里占了额度，但 DB 账本
+// 对它们一无所知。若直接按 DB 账本判定，同一份额度会被两本账各算一遍
+// （少算 = 超额放行，最坏可达"一个完整预算"的重复放行）。导入后 DB 账本就是
+// "Redis 存量 + 后续新增"的完整视图，两个账本的语义重新对齐。
+//
+// 幂等性：按主键 (user_id/scope, request_id) 判重，行已存在时不重复累加金额。
+// 调用方可能在多实例上并发导入，主键保证每笔只记一次。
+func (s *dbReservationStore) importRedisReservationReceipts(ctx context.Context, receipts []redisReservationReceipt) (imported int, err error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("db reservation store unavailable")
+	}
+	if len(receipts) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, receipt := range receipts {
+		if receipt.RequestID == "" || receipt.Scope == "" || receipt.Amount <= 0 {
+			continue
+		}
+		expiresAt := receipt.ExpiresAt
+		if expiresAt.IsZero() {
+			expiresAt = time.Now().Add(billingReservationFallbackDefaultRowTTL)
+		}
+		if !expiresAt.After(time.Now()) {
+			// 已过期：Redis 侧的 TTL 自愈会回收它，不需要（也不应该）导入。
+			continue
+		}
+		if userID, ok := reservationUserIDFromScope(receipt.Scope); ok {
+			res, execErr := tx.ExecContext(ctx, `
+				INSERT INTO billing_balance_reservations (user_id, request_id, amount, expires_at)
+				VALUES ($1, $2, $3, $4)
+				ON CONFLICT (user_id, request_id) DO NOTHING
+			`, userID, receipt.RequestID, receipt.Amount, expiresAt)
+			if execErr != nil {
+				return imported, execErr
+			}
+			if affected, rowsErr := res.RowsAffected(); rowsErr == nil && affected > 0 {
+				imported++
+			}
+			continue
+		}
+		res, execErr := tx.ExecContext(ctx, `
+			INSERT INTO billing_scope_reservations (scope, request_id, amount, expires_at)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (scope, request_id) DO NOTHING
+		`, receipt.Scope, receipt.RequestID, receipt.Amount, expiresAt)
+		if execErr != nil {
+			return imported, execErr
+		}
+		if affected, rowsErr := res.RowsAffected(); rowsErr == nil && affected > 0 {
+			imported++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return imported, err
+	}
+	return imported, nil
+}
+
 // reservationUserIDFromScope 把预留 scope 解析成 userID。
 //
 // 钱包模式的 scope 是纯数字 userID，使用 billing_balance_reservations；其它 scope

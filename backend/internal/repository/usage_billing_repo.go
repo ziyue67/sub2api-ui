@@ -211,11 +211,15 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	// （"quota reflects the real consumption"）；复审 H10 曾建议改为按实收，评估后
 	// 判定为产品语义选择而非缺陷，保持原样。
 	if cmd.APIKeyQuotaCost > 0 {
-		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
+		exhausted, quotaUsed, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
 		if err != nil {
 			return err
 		}
 		result.APIKeyQuotaExhausted = exhausted
+		// 提交后的 DB 真值：调用方用它把"已用额度"发布到共享高水位账本，
+		// 使鉴权快照（L1 15s / L2 300s）过期之前预检也能看到最新已用额度
+		// （见 service.APIKeyQuotaUsedLedger 与 reserveAPIKeyQuotaSpend）。
+		result.APIKeyQuotaUsed = &quotaUsed
 	}
 
 	if cmd.APIKeyRateLimitCost > 0 {
@@ -663,8 +667,17 @@ func userExistsForBilling(ctx context.Context, tx *sql.Tx, userID int64) (bool, 
 	return true, nil
 }
 
-func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
-	var exhausted bool
+// incrementUsageBillingAPIKeyQuota 在计费事务内原子递增 quota_used 并返回
+// (本次是否刚跨过额度上限, 递增后的 quota_used)。
+//
+// 返回递增后的真值是为了让调用方把它发布到 API Key 已用额度的共享高水位账本：
+// 鉴权缓存里的 quota_used 是快照（L1 15s / L2 300s），在快照过期前它是冻结的，
+// 只看快照会让同一份额度被重复放行（见 billing_cache.go 的 apiKeyQuotaUsedLedgerKeyPrefix）。
+func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, float64, error) {
+	var (
+		exhausted bool
+		quotaUsed float64
+	)
 	err := tx.QueryRowContext(ctx, `
 		UPDATE api_keys
 		SET quota_used = quota_used + $1,
@@ -678,15 +691,15 @@ func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID 
 			END,
 			updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
-		RETURNING quota > 0 AND quota_used >= quota AND quota_used - $1 < quota
-	`, amount, apiKeyID, service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).Scan(&exhausted)
+		RETURNING quota > 0 AND quota_used >= quota AND quota_used - $1 < quota, quota_used
+	`, amount, apiKeyID, service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).Scan(&exhausted, &quotaUsed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, service.ErrAPIKeyNotFound
+		return false, 0, service.ErrAPIKeyNotFound
 	}
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
-	return exhausted, nil
+	return exhausted, quotaUsed, nil
 }
 
 func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKeyID int64, cost float64) error {

@@ -280,8 +280,10 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	//   - 失败仅记 ALERT log + counter，不阻断主扣费流程
 	if !p.IsSubscriptionBill && p.Platform != "" && cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(billingCtx, p.User.ID, p.Platform) {
-			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, cost.ActualCost)
-			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
+			// handledByDB=true：缓存累加被跳过或 Redis 写失败，本函数已把这笔 cost
+			// 同步写进 DB（否则该增量在 flusher 模式下会永久丢失）。
+			handledByDB := deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, cost.ActualCost)
+			if !handledByDB && (deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled) {
 				// 降级路径:flusher 未启用时保留原有同步直写 DB
 				if err := deps.userPlatformQuotaRepo.IncrementUsageWithReset(billingCtx, p.User.ID, p.Platform, cost.ActualCost, time.Now().UTC()); err != nil {
 					userPlatformQuotaDBIncrLegacyErrorTotal.Add(1)
@@ -488,9 +490,45 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
 		}
 	}
+	publishAPIKeyQuotaUsedLedger(billingCtx, p, deps, result)
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
 	return true, nil
+}
+
+// publishAPIKeyQuotaUsedLedger 把本次结算提交后的 quota_used 真值发布到共享高水位账本。
+//
+// 为什么必须发布：API Key 总额度的准入（reserveAPIKeyQuotaSpend）读的是鉴权缓存里的
+// quota_used 快照（L1 15s / L2 300s），而结算只递增 DB。快照过期前它是冻结的旧值：
+// 等此前放行的请求陆续结算并归还完在途预留，聚合预留归零而快照仍旧，同一个 key 就能
+// 在一个快照周期内把剩余额度重复放行一遍。账本（单调不减，值恒 ≤ DB 真值）让准入取
+// max(快照, 账本)，从而在快照过期前也能看到已结算用量。
+//
+// 失败兜底：写账本失败时失效该 key 的鉴权缓存，让下一次预检回源到 DB 真值
+// （结算已提交），并计数 + ALERT 暴露给 ops。
+func publishAPIKeyQuotaUsedLedger(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
+	if p == nil || p.APIKey == nil || result == nil || deps == nil {
+		return
+	}
+	if result.APIKeyQuotaUsed == nil {
+		// nil：本次没有触碰该 key 的额度。
+		return
+	}
+	// 注：已耗尽（APIKeyQuotaExhausted）时**同样要发布** —— 账本里的 used >= quota 会让
+	// 后续预检即使拿到尚未失效的鉴权快照也立刻判拒，与"失效鉴权缓存"互为兜底。
+	store := APIKeyQuotaUsedLedgerReader()
+	if store == nil {
+		return
+	}
+	if err := store.SetAPIKeyQuotaUsedLedger(ctx, p.APIKey.ID, *result.APIKeyQuotaUsed); err != nil {
+		RecordBillingAPIKeyQuotaLedgerWriteError()
+		logger.LegacyPrintf("service.gateway",
+			"ALERT: publish api key quota used ledger failed key=%d used=%f: %v (invalidating auth cache, next preflight reads DB truth)",
+			p.APIKey.ID, *result.APIKeyQuotaUsed, err)
+		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey.Key != "" {
+			invalidator.InvalidateAuthCacheByKey(ctx, p.APIKey.Key)
+		}
+	}
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
@@ -500,14 +538,18 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	if p.IsSubscriptionBill {
 		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
-			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
+			// 同步写（而不是异步入队）：handler 在结算任务返回后立刻 defer Release 归还
+			// 在途预留，若用量还躺在异步队列里，就会出现"预留已归零、usage 仍是旧值"，
+			// 下一批并发请求会重新拿到一整份剩余额度再次放行。
+			deps.billingCacheService.SyncSubscriptionUsageAfterSettlement(ctx, p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
 		}
 	} else if p.Cost.ActualCost > 0 && p.User != nil {
 		syncBalanceCacheAfterDeduction(ctx, p, deps, result)
 	}
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
-		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, p.Cost.ActualCost)
+		// 同理：限流预检优先读 Redis 窗口用量，异步累加会让限流被穿透。
+		deps.billingCacheService.SyncAPIKeyRateLimitUsageAfterSettlement(ctx, p.APIKey.ID, p.Cost.ActualCost)
 	}
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
@@ -521,8 +563,10 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	//   - flusher_enabled=true:不直写 DB,由 flusher 异步批量刷（markDirty 已在 IncrementUserPlatformQuotaUsage 内部完成）
 	if !p.IsSubscriptionBill && p.Platform != "" && p.Cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(ctx, p.User.ID, p.Platform) {
-			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
-			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
+			// handledByDB=true：增量已被同步写进 DB（缓存累加被跳过 / Redis 写失败），
+			// 不能再走下面的异步直写，否则双记。
+			handledByDB := deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
+			if !handledByDB && (deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled) {
 				// 降级路径:flusher 未启用时保留原有异步直写 DB
 				dbCtx, dbCancel := detachUpstreamContext(ctx)
 				userID, platform, cost := p.User.ID, p.Platform, p.Cost.ActualCost

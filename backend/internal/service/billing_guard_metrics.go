@@ -98,6 +98,11 @@ var (
 	billingReservationFallbackActivatedTotal   atomic.Int64
 	billingReservationFallbackActivateErrTotal atomic.Int64
 	billingReservationFallbackProbeErrTotal    atomic.Int64
+	// 切到 DB 兜底账本前把 Redis 存量预留搬进 DB 的结果：
+	// imported = 成功搬运的笔数（护栏语义对齐的直接证据）；err = 搬运失败
+	// （DB 账本缺少存量预留，护栏会高估可用额度，必须排查）。
+	billingReservationFallbackImportedTotal  atomic.Int64
+	billingReservationFallbackImportErrTotal atomic.Int64
 )
 
 // 复核与降级计数。这些是"护栏静默失效"的直接证据面。
@@ -109,6 +114,17 @@ var (
 	billingPrecheckUnavailableTotal         atomic.Int64
 	billingSubscriptionReservationTotal     atomic.Int64
 	billingSubscriptionReserveFailOpenTotal atomic.Int64
+	// "结算后的用量必须立即可见"系列：订阅 / API Key 限流用量改为结算内同步落缓存，
+	// API Key 额度另加"已结算用量"共享高水位账本（见 apiKeyQuotaUsedLedgerStore）。
+	// 三者只要失败就会让预检在一段时间内看到偏小的用量 —— 即额度可被重复放行，
+	// 因此失败次数必须可观测（恒为 0 才是健康）。
+	billingSubscriptionUsageSyncErrTotal  atomic.Int64
+	billingAPIKeyRateLimitSyncErrTotal    atomic.Int64
+	billingAPIKeyQuotaLedgerReadErrTotal  atomic.Int64
+	billingAPIKeyQuotaLedgerWriteErrTotal atomic.Int64
+	// 账本高水位**高于**鉴权快照的次数：即"快照已过期、护栏靠账本兜住"的实证。
+	// 它不为 0 是正常的（说明护栏在起作用）；持续为 0 说明鉴权缓存很短命或账本未生效。
+	billingAPIKeyQuotaLedgerStaleRescueTotal atomic.Int64
 )
 
 // RecordBillingPreflightReject 记录一次余额预检拒绝及其原因。
@@ -186,6 +202,9 @@ type BillingGuardStats struct {
 	ReservationFallbackActivated   int64 `json:"reservation_fallback_activated"`
 	ReservationFallbackActivateErr int64 `json:"reservation_fallback_activate_error"`
 	ReservationFallbackProbeErr    int64 `json:"reservation_fallback_probe_error"`
+	// 切账本时从 Redis 搬运到的存量预留笔数 / 搬运失败次数。
+	ReservationFallbackImported  int64 `json:"reservation_fallback_imported"`
+	ReservationFallbackImportErr int64 `json:"reservation_fallback_import_error"`
 
 	// DB 复核与降级。
 	RecheckDBReads              int64 `json:"recheck_db_reads"`
@@ -195,6 +214,13 @@ type BillingGuardStats struct {
 	PrecheckUnavailable         int64 `json:"precheck_unavailable"`
 	SubscriptionReservation     int64 `json:"subscription_reservation"`
 	SubscriptionReserveFailOpen int64 `json:"subscription_reservation_fail_open"`
+
+	// 结算后用量即时可见性（失败 = 预检可能短暂看到偏小用量）。
+	SubscriptionUsageSyncError   int64 `json:"subscription_usage_sync_error"`
+	APIKeyRateLimitSyncError     int64 `json:"api_key_rate_limit_sync_error"`
+	APIKeyQuotaLedgerReadError   int64 `json:"api_key_quota_ledger_read_error"`
+	APIKeyQuotaLedgerWriteError  int64 `json:"api_key_quota_ledger_write_error"`
+	APIKeyQuotaLedgerStaleRescue int64 `json:"api_key_quota_ledger_stale_rescue"`
 
 	// 派生判据。
 	Healthy              bool     `json:"healthy"`
@@ -239,6 +265,8 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 		ReservationFallbackActivated:   billingReservationFallbackActivatedTotal.Load(),
 		ReservationFallbackActivateErr: billingReservationFallbackActivateErrTotal.Load(),
 		ReservationFallbackProbeErr:    billingReservationFallbackProbeErrTotal.Load(),
+		ReservationFallbackImported:    billingReservationFallbackImportedTotal.Load(),
+		ReservationFallbackImportErr:   billingReservationFallbackImportErrTotal.Load(),
 
 		RecheckDBReads:              billingRecheckDBReadsTotal.Load(),
 		RecheckFailClosed:           billingRecheckFailClosedTotal.Load(),
@@ -247,6 +275,12 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 		PrecheckUnavailable:         billingPrecheckUnavailableTotal.Load(),
 		SubscriptionReservation:     billingSubscriptionReservationTotal.Load(),
 		SubscriptionReserveFailOpen: billingSubscriptionReserveFailOpenTotal.Load(),
+
+		SubscriptionUsageSyncError:   billingSubscriptionUsageSyncErrTotal.Load(),
+		APIKeyRateLimitSyncError:     billingAPIKeyRateLimitSyncErrTotal.Load(),
+		APIKeyQuotaLedgerReadError:   billingAPIKeyQuotaLedgerReadErrTotal.Load(),
+		APIKeyQuotaLedgerWriteError:  billingAPIKeyQuotaLedgerWriteErrTotal.Load(),
+		APIKeyQuotaLedgerStaleRescue: billingAPIKeyQuotaLedgerStaleRescueTotal.Load(),
 	}
 
 	// 护栏失效类信号：非 0 即说明防线在这些条件下没有生效，需要排查。
@@ -277,6 +311,10 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 	if stats.ReservationFallbackActivateErr > 0 || stats.ReservationFallbackProbeErr > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
 			"DB 兜底窗口抬升或探测失败：跨实例账本一致性变弱（检查 DB 连接与迁移 240）")
+	}
+	if stats.ReservationFallbackImportErr > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"切 DB 兜底账本时未能把 Redis 存量预留搬进 DB：两本账会各算一遍同一份额度（最坏重复放行一个预算；检查 Redis 读与 DB 写）")
 	}
 	if stats.ReservationReleaseErr > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
@@ -309,6 +347,18 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 	if stats.PrecheckUnavailable > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
 			"部分请求无法给出最坏费用上界（无定价/依赖缺失），闸门未生效")
+	}
+	if stats.SubscriptionUsageSyncError > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"订阅用量同步落缓存失败：该笔结算的用量只能靠缓存失效 + DB 回源补齐（检查 Redis 写入）")
+	}
+	if stats.APIKeyRateLimitSyncError > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"API Key 限流用量同步落缓存失败：限流窗口可能短暂按偏小用量放行（检查 Redis 写入）")
+	}
+	if stats.APIKeyQuotaLedgerReadError > 0 || stats.APIKeyQuotaLedgerWriteError > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"API Key 已用额度账本读写失败：该 key 的额度校验可能退回过期快照（检查 Redis 可用性）")
 	}
 	stats.Healthy = len(stats.DegradedSignals) == 0
 
@@ -386,6 +436,23 @@ func RecordBillingReservationFallbackActivationError() {
 // RecordBillingReservationFallbackProbeError 记录一次共享兜底窗口探测失败。
 func RecordBillingReservationFallbackProbeError() { billingReservationFallbackProbeErrTotal.Add(1) }
 
+// RecordBillingReservationFallbackImported 记录切账本时从 Redis 搬运的存量预留笔数。
+// 非零即证明"两本账语义已对齐"，是修复生效的直接证据。
+func RecordBillingReservationFallbackImported(count int) {
+	if count <= 0 {
+		return
+	}
+	billingReservationFallbackImportedTotal.Add(int64(count))
+}
+
+// RecordBillingReservationFallbackImportError 记录一次"存量预留搬运失败"。
+//
+// 出现即说明 DB 账本缺少切换前已放行的预留，护栏会在故障期高估可用额度
+// （最坏重复放行一个预算）。必须排查 Redis 读与 DB 写。
+func RecordBillingReservationFallbackImportError() {
+	billingReservationFallbackImportErrTotal.Add(1)
+}
+
 // RecordBillingRecheckDBRead 记录一次预检的 DB 真值回源。
 func RecordBillingRecheckDBRead() { billingRecheckDBReadsTotal.Add(1) }
 
@@ -409,6 +476,32 @@ func RecordBillingSubscriptionReservation() { billingSubscriptionReservationTota
 
 // RecordBillingSubscriptionReserveFailOpen 记录一次订阅模式预留 fail-open。
 func RecordBillingSubscriptionReserveFailOpen() { billingSubscriptionReserveFailOpenTotal.Add(1) }
+
+// RecordBillingSubscriptionUsageSyncError 记录一次"结算后订阅用量同步落缓存失败"。
+//
+// 出现即说明本次结算的用量没能写进 Redis，只能靠缓存失效 + DB 回源补齐；
+// 若 Redis 同时不可用，预检会在缓存 TTL 内看到偏小的订阅用量（额度可被重复放行）。
+func RecordBillingSubscriptionUsageSyncError() { billingSubscriptionUsageSyncErrTotal.Add(1) }
+
+// RecordBillingAPIKeyRateLimitSyncError 记录一次"结算后 API Key 限流用量同步落缓存失败"。
+func RecordBillingAPIKeyRateLimitSyncError() { billingAPIKeyRateLimitSyncErrTotal.Add(1) }
+
+// RecordBillingAPIKeyQuotaLedgerReadError 记录一次"读取 API Key 已用额度账本失败"。
+//
+// 读取失败时准入退回只用鉴权快照（方向偏松），因此这是护栏降级信号，须排查 Redis。
+func RecordBillingAPIKeyQuotaLedgerReadError() { billingAPIKeyQuotaLedgerReadErrTotal.Add(1) }
+
+// RecordBillingAPIKeyQuotaLedgerWriteError 记录一次"发布 API Key 已用额度账本失败"。
+//
+// 写入失败意味着该 key 的下一次预检可能继续用旧快照判定（额度可在快照 TTL 内被重复
+// 放行）；调用方会同时失效该 key 的鉴权缓存来兜底，但失败本身必须可观测。
+func RecordBillingAPIKeyQuotaLedgerWriteError() { billingAPIKeyQuotaLedgerWriteErrTotal.Add(1) }
+
+// RecordBillingAPIKeyQuotaLedgerStaleRescue 记录一次"账本高水位领先鉴权快照"。
+//
+// 这不是故障，而是本修复生效的直接证据：说明鉴权快照已经过期，是账本把已用额度
+// 拉了回来（否则这一批请求会按冻结的旧 quota_used 重复放行）。
+func RecordBillingAPIKeyQuotaLedgerStaleRescue() { billingAPIKeyQuotaLedgerStaleRescueTotal.Add(1) }
 
 // BillingGuardRuntimeInfo 返回护栏的静态运行参数。
 //
