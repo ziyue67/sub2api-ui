@@ -10,6 +10,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -26,6 +27,11 @@ const (
 	captureBatchImageHoldSQL      = `(?s)UPDATE users\s+SET balance = balance\s+\+ CASE WHEN \$1 > \$2 THEN \$1 - \$2 ELSE 0 END\s+- CASE WHEN \$2 > \$1 THEN \$2 - \$1 ELSE 0 END,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$3 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
 	releaseBatchImageHoldSQL      = `(?s)UPDATE users\s+SET balance = balance \+ \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
 )
+
+// debtBalanceDeductSQL matches deductBalanceToDebtSQL (billing.settlement_debt_mode):
+// the wallet row is locked for every non-deleted user and the balance is decremented
+// without a lower bound, so the wallet may end up negative (debt).
+const debtBalanceDeductSQL = `(?s)WITH target AS \(\s+SELECT id, balance\s+FROM users\s+WHERE id = \$2 AND deleted_at IS NULL\s+FOR UPDATE\s+\), updated AS \(\s+UPDATE users AS u\s+SET balance = target\.balance - \$1,\s+updated_at = NOW\(\)\s+FROM target\s+WHERE u\.id = target\.id\s+RETURNING target\.balance AS previous_balance, u\.balance AS new_balance\s+\)\s+SELECT previous_balance, new_balance FROM updated`
 
 func TestDeductUsageBillingBalance_FullDeductionWhenWalletCoversCost(t *testing.T) {
 	ctx := context.Background()
@@ -158,6 +164,128 @@ func TestApplyUsageBillingEffects_PartialCollectionReportsShortfall(t *testing.T
 	require.InDelta(t, 0.55, result.BalanceShortfall, 0.000001)
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestDeductUsageBillingBalanceWithMode_DebtModePushesWalletNegative 锁死
+// billing.settlement_debt_mode 的核心语义（对照 new-api 的 decreaseUserQuota）：钱包付不满时
+// 全额入账、余额扣成负数（欠款），差额不再记为 write-off，由下一次充值抵扣。
+func TestDeductUsageBillingBalanceWithMode_DebtModePushesWalletNegative(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	// 钱包 0.30、成本 0.75、reserve 0.10：债务模式不再夹到 floor，直接扣成 -0.45。
+	mock.ExpectQuery(debtBalanceDeductSQL).
+		WithArgs(0.75, int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"previous_balance", "new_balance"}).AddRow(0.30, -0.45))
+	mock.ExpectCommit()
+
+	deduction, err := deductUsageBillingBalanceWithMode(ctx, tx, 42, 0.75, 0.10, true)
+	require.NoError(t, err)
+	require.InDelta(t, -0.45, deduction.NewBalance, 0.000001)
+	require.InDelta(t, 0.75, deduction.Collected, 0.000001)
+	require.Zero(t, deduction.Shortfall)
+	require.False(t, deduction.PartiallyCollected())
+	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestDeductUsageBillingBalanceWithMode_FloorModeStillClamps 锁死零值安全：开关关闭（默认）时
+// 必须继续走封底 SQL，余额不得变负。
+func TestDeductUsageBillingBalanceWithMode_FloorModeStillClamps(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery(floorBalanceDeductSQL).
+		WithArgs(0.75, int64(42), 0.10).
+		WillReturnRows(sqlmock.NewRows([]string{"previous_balance", "new_balance"}).AddRow(0.30, 0.10))
+	mock.ExpectCommit()
+
+	deduction, err := deductUsageBillingBalanceWithMode(ctx, tx, 42, 0.75, 0.10, false)
+	require.NoError(t, err)
+	require.InDelta(t, 0.10, deduction.NewBalance, 0.000001)
+	require.InDelta(t, 0.20, deduction.Collected, 0.000001)
+	require.InDelta(t, 0.55, deduction.Shortfall, 0.000001)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestDeductUsageBillingBalanceWithMode_DebtModeUserNotFound：债务模式下无返回行只可能是
+// 用户不存在，且不需要额外的 EXISTS 查询（谓词与 SQL 相同）。
+func TestDeductUsageBillingBalanceWithMode_DebtModeUserNotFound(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery(debtBalanceDeductSQL).
+		WithArgs(10.0, int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"previous_balance", "new_balance"}))
+	mock.ExpectRollback()
+
+	_, err = deductUsageBillingBalanceWithMode(ctx, tx, 42, 10, 0.10, true)
+	require.ErrorIs(t, err, service.ErrUserNotFound)
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestApplyUsageBillingEffects_DebtModeKeepsFullCost 锁死仓库接线：开关打开时统一结算路径走
+// 债务 SQL，NewBalance 为负、BalanceShortfall 为 0（usage_log.actual_cost 保持真实成本）。
+func TestApplyUsageBillingEffects_DebtModeKeepsFullCost(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery(debtBalanceDeductSQL).
+		WithArgs(0.75, int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"previous_balance", "new_balance"}).AddRow(0.30, -0.45))
+	mock.ExpectCommit()
+
+	result := &service.UsageBillingApplyResult{Applied: true}
+	err = (&usageBillingRepository{minimumBalanceReserve: 0.10, settlementDebtMode: true}).applyUsageBillingEffects(ctx, tx, &service.UsageBillingCommand{
+		UserID:      42,
+		BalanceCost: 0.75,
+	}, result)
+	require.NoError(t, err)
+	require.NotNil(t, result.NewBalance)
+	require.InDelta(t, -0.45, *result.NewBalance, 0.000001)
+	require.InDelta(t, 0.75, result.BalanceCollected, 0.000001)
+	require.Zero(t, result.BalanceShortfall)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestNewUsageBillingRepository_ReadsBillingConfig 锁死配置接线：避免“开着债务模式却仍走封底”
+// 这类静默失效，同时保证不传 cfg（旧装配/测试）时零值安全。
+func TestNewUsageBillingRepository_ReadsBillingConfig(t *testing.T) {
+	repo := NewUsageBillingRepository(nil, nil, &config.Config{Billing: config.BillingConfig{
+		MinimumBalanceReserve: 0.25,
+		SettlementDebtMode:    true,
+	}})
+	impl, ok := repo.(*usageBillingRepository)
+	require.True(t, ok)
+	require.InDelta(t, 0.25, impl.minimumBalanceReserve, 1e-9)
+	require.True(t, impl.settlementDebtMode)
+
+	legacy, ok := NewUsageBillingRepository(nil, nil).(*usageBillingRepository)
+	require.True(t, ok)
+	require.False(t, legacy.settlementDebtMode)
 }
 
 func TestDeductUsageBillingBalance_ReturnsUserNotFoundWhenNoUserUpdated(t *testing.T) {

@@ -377,6 +377,34 @@ func TestLoadKeepsExplicitMinimumBalanceReserveValues(t *testing.T) {
 	}
 }
 
+func TestLoadSettlementDebtModeDefaultsToWriteOff(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("CONFIG_FILE", "")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.False(t, cfg.Billing.SettlementDebtMode,
+		"billing.settlement_debt_mode 默认必须为 false（封底核销，零值安全）")
+}
+
+func TestLoadSettlementDebtModeFromFileAndEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	configFile := filepath.Join(t.TempDir(), "debt-mode.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("billing:\n  settlement_debt_mode: true\n"), 0o600))
+	t.Setenv("CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Billing.SettlementDebtMode, "显式开启债务模式必须能被加载")
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("BILLING_SETTLEMENT_DEBT_MODE", "true")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Billing.SettlementDebtMode, "环境变量 BILLING_SETTLEMENT_DEBT_MODE 也必须生效")
+}
+
 func TestLoadRejectsNonFiniteBillingValues(t *testing.T) {
 	// NaN / ±Inf 能通过所有 `< 0` 判断，却会让护栏静默失效（详见 Validate 注释）：
 	// reserve=NaN → 封底/最坏费用/DB 复核全部不触发，结算 SQL 变成"永不匹配"；

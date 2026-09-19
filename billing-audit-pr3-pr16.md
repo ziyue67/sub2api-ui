@@ -5,7 +5,8 @@
 - 审计区间：`2c1982301..f7a45e28b`（PR #3 → #16），本轮重点复核新增的 PR #15 / #16 并对全区间收敛
 - 参考实现：`QuantumNous/new-api` @ `b0bf258`（浅克隆于本机临时目录，仅作对照，未改其代码）
 - 前序报告：`billing-audit-pr3-pr11.md`（v1）、`billing-audit-pr3-pr12.md`（v2）、`billing-audit-pr3-pr14.md`（PR #14 收敛）
-- 本轮性质：**增量复审 + 修复**。复审发现 2 条并发超额通道，已按 new-api 的思路实现修复并附单测
+- 本轮性质：**增量复审 + 修复**。复审发现 2 条并发超额通道（F1/F2），已按 new-api 的思路修复；
+  随后把与 new-api 的两处实质差距（F3 Redis 故障回落 DB、F4 债务 vs 核销）也补齐（F4 为默认关闭的开关）
 
 本轮实测（Windows + Go 工具链，均为实跑）：
 
@@ -13,10 +14,10 @@
 | --- | --- |
 | `go build ./...` | ✅ |
 | `go vet -tags=unit ./internal/...` | ✅（无输出） |
-| `go test -tags=unit -count=1 ./internal/service/...` | ✅ 195.1s |
-| `go test -tags=unit -count=1 ./internal/config/...` | ✅ 2.0s |
-| `go test -tags=unit -count=1 ./internal/handler/...` | ✅（handler 38.6s / admin 0.8s / dto 0.3s / quotaview 0.3s） |
-| `go test -tags=unit -count=1 ./internal/repository/...` | ❌ 3 个用例（**与本次改动无关，环境性**，见 §7） |
+| `go test -tags=unit -count=1 ./internal/service/...` | ✅ 193.5s（含 openai_ws_v2 3.7s） |
+| `go test -tags=unit -count=1 ./internal/config/...` | ✅ 3.0s |
+| `go test -tags=unit -count=1 ./internal/handler/...` | ✅（handler 40.6s / admin 1.2s / dto 0.4s / quotaview 0.4s） |
+| `go test -tags=unit -count=1 ./internal/repository/...` | ❌ 仅 3 个 pg_dump 用例（**与本次改动无关，环境性**：Windows 无 POSIX `sh`，见 §7） |
 
 ## 0. 结论摘要
 
@@ -24,15 +25,16 @@
 | --- | --- | --- | --- |
 | **F1** | user × platform 日/周/月配额只有准入判定（用量在结算才累加），并发突发可超额消耗平台配额 | 高（额度失效、投诉/对账） | ✅ **本轮修复** |
 | **F2** | API Key 总额度（`api_key.quota`）同样只有准入判定，并发突发可让 `quota_used` 超出 `quota` | 中（钱照收，仅额度上限失效） | ✅ **本轮修复** |
-| **F3** | 预留写 Redis 失败时 `reserveSpendWithGuard` **fail-open**，并发原子性在 Redis 故障期间消失 | 中 | ⚠️ 未修复（new-api 有 DB 条件更新回落，见 §6.1） |
-| **F4** | 结算走"封底 + 差额核销（write-off）"，new-api 则允许余额扣成负数（记为债务） | 设计差异 | ⚠️ 有意保留，见 §6.2 |
+| **F3** | 预留写 Redis 失败时 `reserveSpendWithGuard` **fail-open**，并发原子性在 Redis 故障期间消失 | 中 | ✅ **本轮修复**（DB 预留表回落，见 §4.4） |
+| **F4** | 结算走"封底 + 差额核销（write-off）"，new-api 则允许余额扣成负数（记为债务） | 设计差异 | ✅ **本轮实现**为开关 `billing.settlement_debt_mode`（默认关，保持原行为，见 §4.5） |
 | **F5** | 预留凭据 TTL 过期后聚合总额仍偏高；长请求依赖心跳续期 | 低（保守方向） | ⚠️ 已知边界，已写入运维手册 |
 | **F6** | API Key 的 5h/1d/7d 限流窗口仍是"准入只读快照 + 结算才累加" | 低（限流非计费） | ⚠️ 记录，未修复 |
 
 **一句话**：PR #16 已经把"钱包余额 / 订阅限额"两条并发超卖通道堵死（原子预留 + 精确归还 + 多绑定槽位）；
 本轮把同类通道在 **平台配额** 与 **API Key 额度** 上补齐，使四条额度（钱包、订阅、平台配额、key 额度）
-在准入处语义一致：`已用 + Σ在途预留 ≤ 限额`。对 new-api 的对照显示，剩余的实质差距只有
-**Redis 故障时的 DB 回落**（F3）与 **债务 vs 核销**（F4）两项设计选择。
+在准入处语义一致：`已用 + Σ在途预留 ≤ 限额`。对 new-api 的对照显示，剩余的实质差距为
+**Redis 故障时的 DB 回落**（F3）与 **债务 vs 核销**（F4）：本轮两项均已实现（F3 默认生效；
+F4 是默认关闭的开关，保持既有上线行为不变）。
 
 ## 1. PR #3 → #16 演进
 
@@ -48,14 +50,15 @@ PR #16 引入的核心不变量：`balance − Σ在途预留 ≥ reserve`，且
 先后顺序发生时都成立；`BillingReservationSlot` 从"单绑定"升级为按凭据多绑定（`bind` 支持
 `idle→held` 与 `held→held`）。
 
-### 1.1 四层护栏（当前代码）
+### 1.1 五层护栏（当前代码）
 
 | 层 | 位置 | 作用 |
 | --- | --- | --- |
 | ① 准入阈值 + DB 真值复核带 | 转发前 | `balance <= reserve` 直接 403；贴近封底时 DB 复核；结算判定耗尽后写"钱包已耗尽"标记 |
 | ② 最坏费用闸门 | 转发前 | `balance >= reserve + 本次最坏费用`，付不满的请求不转发 |
 | ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，四类 scope 各自护栏（见 §5） |
-| ④ 结算封底 + 差额记账 | 结算 | `GREATEST(balance - amount, floor)`，差额记 write-off；永不为负 |
+| ④ 结算封底 + 差额记账 | 结算 | 默认 `GREATEST(balance - amount, floor)`，差额记 write-off；永不为负。`billing.settlement_debt_mode=true` 时改为全额入账、余额可为负（债务，充值抵扣） |
+| ⑤ Redis 故障回落 | 转发前 | Redis 写失败 → DB 预留表 `billing_reservations`（scope 级 advisory lock 串行化）继续做原子准入；只有 Redis 与 DB 都失败才 fail-open |
 
 ## 2. new-api 怎么解决"并发 + 超额"
 
@@ -72,7 +75,9 @@ PR #16 引入的核心不变量：`balance − Σ在途预留 ≥ reserve`，且
   预扣成功后若 `persistUserQuotaDelta` 失败，用 `cacheApplyUserQuotaDelta` **补偿回滚**。
 - `TryReserveTokenQuota`（L201-240）：同构；`unlimited` 的 token 跳过余额校验但仍记 `Remain/Used`。
 
-这正是 sub2api 现状（F3）缺失的那一环：**Redis 不可用时不是 fail-open，而是退化成 DB 条件更新**。
+这正是 sub2api 原先（F3）缺失的那一环：**Redis 不可用时不是 fail-open，而是退化成 DB 条件更新**。
+本轮已按同一思路实现（见 §4.4）：因为 sub2api 的预留是 TTL 凭据（需要精确退还/续期），回落不是直接
+改余额，而是写一张带 `expires_at` 的 `billing_reservations` 表并在 scope 级串行化下校验聚合上限。
 
 ### 2.2 生命周期：preConsume → Settle(delta) → Refund
 
@@ -90,8 +95,11 @@ PR #16 引入的核心不变量：`balance − Σ在途预留 ≥ reserve`，且
 
 `model/user.go`：`DecreaseUserQuota`（L1380）→ `decreaseUserQuota`（L1397-1403）执行
 无下限的 `quota = quota - ?`。也就是说 new-api 在"预扣不足但请求已完成"时把差额留在账上成为
-**债务/负余额**，由后续充值抵扣；sub2api 选择"结算封底 + 差额核销（write-off）+ 打耗尽标记"，
-两者都能防住"白嫖"，差别在**账务口径**：new-api 追偿、sub2api 止损 + 记账。
+**债务/负余额**，由后续充值抵扣；sub2api 默认选择"结算封底 + 差额核销（write-off）+ 打耗尽
+标记"，两者都能防住"白嫖"，差别在**账务口径**：new-api 追偿、sub2api 止损 + 记账。
+
+本轮把两种口径都做成可实现项：默认仍是核销（历史线上问题 `usage_log.actual_cost = 0` 就是核销
+缺失造成的），新增 `billing.settlement_debt_mode=true` 可切到 new-api 的债务口径（见 §4.5）。
 
 ## 3. 对照表
 
@@ -103,8 +111,8 @@ PR #16 引入的核心不变量：`balance − Σ在途预留 ≥ reserve`，且
 | 平台配额 | ✅ 本轮新增 scope=`upq:<user>:<platform>` | 无对应概念（new-api 无"用户×平台"维度） |
 | API Key 额度 | ✅ 本轮新增 scope=`apikey:<id>`（key 额度与钱包并行计费） | token 额度预留（`RemainQuota`/`UsedQuota`） |
 | 长请求保护 | 预留 TTL 10min + 心跳（TTL/3）续期 | 无 TTL（预扣是真实扣减，不需续期） |
-| 结算差异 | 封底 + 差额核销（write-off），余额永不为负 | 允许负余额（债务），后续抵扣 |
-| 故障降级 | Redis 写失败 → fail-open（记录指标） | Redis 失败 → DB 条件更新（保持原子性） |
+| 结算差异 | 默认封底 + 差额核销（write-off，余额永不为负）；`settlement_debt_mode=true` 时与 new-api 一致：全额入账、允许负余额（债务），后续充值抵扣 | 允许负余额（债务），后续抵扣 |
+| 故障降级 | Redis 写失败 → **DB 预留表回落**（`billing_reservations`，advisory lock 串行化）保持原子性；Redis+DB 都失败才 fail-open（记录指标） | Redis 失败 → DB 条件更新（保持原子性） |
 
 ## 4. 本轮修复
 
@@ -116,7 +124,7 @@ PR #16 引入的核心不变量：`balance − Σ在途预留 ≥ reserve`，且
   - `limitExceeded(inFlight)`：复用订阅的边界语义（`usage >= limit` 或 `usage + inFlight > limit` 即拒），
     并附带 `window_resets_at` metadata。
 - `loadUserPlatformQuotaEligibility` 由"只回 error"改为**同时返回判定用的快照**，使"判定依据"和"预留依据"
-  来自同一次缓存读（避免快照漂移）；Redis 故障 / DB 故障 / ctx 取消仍 fail-open。
+  来自同一次缓存读（避免快照漂移）；Redis 故障时按 §4.4 回落 DB 预留表，ctx 取消仍 fail-open。
 - 新增 `reserveUserPlatformQuotaSpend`（scope=`upq:<userID>:<platform>`），走与余额/订阅同一套
   `reserveSpendWithGuard` 原子语义。
 - `BillingReservationSlot` 升级为**多绑定**：同一次请求可同时持有"钱包 + 平台配额"（订阅模式下为
@@ -152,39 +160,93 @@ PR #16 引入的核心不变量：`balance − Σ在途预留 ≥ reserve`，且
 预留金额用 nano 整数累积以复现 Redis `INCRBYFLOAT` 的十进制语义），并新增
 `atomicReservationCacheStub` 以覆盖生产用的原子预留分支（`TryReserveUserBalance`）。
 
+### 4.4 F3：Redis 故障时回落 DB 预留表（对齐 new-api 的 DB 条件更新）
+
+- 新增表 `billing_reservations(scope, request_id, amount, expires_at, created_at)`（migration `238`，
+  PK=`(scope, request_id)` 保证幂等，`expires_at` 上有索引）。
+- 新增 `repository.billingReservationDBStore`（`billing_reservation_db.go`）：
+  - `TryReserveUserBalance`：事务内 `pg_advisory_xact_lock(hashtext($scope))` 按 scope 串行化 →
+    清理/忽略过期行 → `SUM(amount)` 聚合现有预留 → `已用+在途+本笔 > maxTotal` 则拒绝 → 写入本笔凭据；
+  - `ReserveUserBalance`（无上限预算）、`ReleaseUserBalanceReservation`（只删自己的凭据，缺失返回
+    `ErrBillingReservationExpired`）、`RenewUserBalanceReservation`（心跳续期）。
+- `service.BillingCacheService` 新增可选依赖 `ReservationFallbackStore`（`SetReservationFallback`，由
+  `cmd/server/wire_gen.go` 装配），`reserveSpendWithGuard` 的两条 Redis 错误分支改为
+  "先试 DB 回落，DB 也失败才 fail-open"；回落成功的槽位照旧按凭据归还/续期，同一请求不会双计。
+- 不装配回落 store 时行为与修复前完全一致（fail-open），保持测试/降级部署的零值安全。
+- 边界：DB 回落只保証“准入预留”的原子性，结算扣费仍走原 `usage_billing` 事务；
+  回落期间多一次 DB 往返（仅在 Redis 故障时发生）。
+
+### 4.5 F4：债务 vs 核销做成开关 `billing.settlement_debt_mode`（默认关）
+
+- 新增配置 `billing.settlement_debt_mode`（`BillingConfig.SettlementDebtMode`，默认 `false`）：
+  - `false`（默认/零值安全）：保持封底核销 —— `GREATEST(balance - amount, floor)`，余额永不为负，
+    差额记 write-off 并计入 `settlement_shortfall_count`；
+  - `true`：债务模式 —— 全额入账、余额可扣成负数（欠款），`usage_log.actual_cost` 保持真实成本，
+    不再产生 write-off；对齐 new-api `model/user.go` 的 `decreaseUserQuota`（无下限扣减）。
+- 统一结算路径：新增 `deductBalanceToDebtSQL` / `deductBalanceToDebt` 与调度器
+  `deductUsageBillingBalanceWithMode`（`usage_billing_repo.go`，由 `r.settlementDebtMode` 选择）；
+  债务 SQL 同样用 `FOR UPDATE` 锁行，并发结算仍然串行化；无返回行=用户不存在（无“扣不动”分支）。
+- 降级（legacy）路径：`userRepository.DeductBalanceAllowNegative` + 服务端可选接口
+  `balanceDebtDeductor`（`gateway_usage_billing.go`），保证 repo=nil 的兜底路径与统一路径语义一致。
+- 两种模式都防白嫖：预检仍要求 `balance > reserve`（负余额用户下一次预检直接 403）。
+- 开启前需确认充值/催收流程能识别负余额用户（充值先抵扣欠款）。
+
+### 4.6 新增单测（F3/F4）
+
+| 用例 | 锁死的行为 |
+| --- | --- |
+| `TestReserveRequestSpend_FallsBackToDBWhenRedisUnavailable` | Redis 写失败时改用 DB 回落预留，不再 fail-open |
+| `TestReserveRequestSpend_FallbackRejectIsFailClosed` | 回落 store 达到上限时拒绝（fail-closed），不是放行 |
+| `TestDeductUsageBillingBalanceWithMode_DebtModePushesWalletNegative` | 债务模式全额入账：0.30 扣 0.75 → `-0.45`，`Shortfall==0` |
+| `TestDeductUsageBillingBalanceWithMode_FloorModeStillClamps` | 开关关闭时仍走封底 SQL（零值安全） |
+| `TestDeductUsageBillingBalanceWithMode_DebtModeUserNotFound` | 债务模式无返回行=用户不存在，且不需额外 EXISTS 查询 |
+| `TestApplyUsageBillingEffects_DebtModeKeepsFullCost` | 仓库接线：债务模式 `NewBalance<0`、`BalanceShortfall==0` |
+| `TestNewUsageBillingRepository_ReadsBillingConfig` | 配置接线：不传 cfg 时零值安全（照旧封底） |
+| `TestLoadSettlementDebtModeDefaultsToWriteOff` / `TestLoadSettlementDebtModeFromFileAndEnv` | 默认 `false`；YAML 与环境变量都可显式开启 |
+| `TestGatewayServiceRecordUsage_LegacyFallbackDebtModeKeepsFullCost` | legacy 兜底路径在债务模式下不走封底、全额入账 |
+
 ## 5. 文档同步
 
 `docs/BILLING_ZERO_OVERSHOOT.md`（运维手册）更新：
 
 - §1 增加第 4 类表现（平台配额 / API Key 额度只有准入判定）；
 - §2 第 ③ 层改写为"四类 scope"（钱包 / 订阅 / 平台配额 / key 额度），并说明多绑定槽位与整槽回滚；
-- §6 增补 API Key 额度预留与 Redis 故障 fail-open 两条边界说明（含 new-api 的对照方向）。
+- §2 第 ④ 层补充 `settlement_debt_mode` 债务模式，并新增第 ⑤ 层（Redis 故障回落 DB 预留）；
+- §3 配置表新增 `settlement_debt_mode`；
+- §6 把 API Key 额度预留、Redis 故障回落、债务模式三条边界改为现状描述（含 new-api 的对照）。
 
-## 6. 未修复项与优先级
+## 6. 已修复项与剩余边界
 
-### 6.1 F3：Redis 故障时预留 fail-open（建议优先）
+### 6.1 F3：Redis 故障时预留 fail-open → 已修复（DB 回落）
 
-现状：`reserveSpendWithGuard` 在 Redis 写失败时记 `RecordBillingReservationFailOpen()` 并放行该请求，
-护栏退化为"余额快照 + 最坏费用闸门 + 结算封底"。new-api 的做法（`quota_reserve.go:144-199`）是：
+现状：`reserveSpendWithGuard` 遇 Redis 写失败时先尝试 DB 回落预留（`billing_reservations`，
+scope 级 `pg_advisory_xact_lock` 串行化 + 过期行清理 + `SUM(amount)` 聚合校验），成功则语义与
+Redis 路径一致；**只有 Redis 与 DB 都失败**时才记 `RecordBillingReservationFailOpen()` 放行。
+对照 new-api（`quota_reserve.go:144-199`）的差距已收敛：它用 `UPDATE ... WHERE quota >= ?` 条件
+更新，sub2api 用"预留表 + 聚合上限"达到同样的跨请求原子性（因为 sub2api 的预留是 TTL 凭据，
+不能直接扣余额，否则退还/续期语义会变成真实资金变动）。
 
-1. Redis 失败 / 未命中 → **DB 条件更新**（`UPDATE ... WHERE quota >= ?`），失败即"额度不足"，
-   保持跨请求的原子性；
-2. 预扣成功但持久化失败 → 补偿回滚（`cacheApplyUserQuotaDelta`），不留悬挂额度。
+剩余边界：
 
-sub2api 要照做需要一张"在途预留"表（或复用 batch image hold 表）承载 scope/requestID/amount/expires_at，
-并按 scope 聚合校验；建议按以下顺序推进：
+1. Redis 与 DB **同时**不可用时仍为 fail-open（必现的降级选择：完全 fail-closed 会让全站中断）；
+   此时 `billing_reservation_fail_open_total` 会增长，应当告警。
+2. DB 回落期间多一次数据库往返（仅在 Redis 故障时发生）。
+3. 结算扣费仍走原有 `usage_billing` 事务，DB 回落只覆盖准入侧的在途预留。
 
-1. 先对**钱包**实现 DB 回落（余额是坏账的直接来源）；
-2. 再扩展到订阅/平台配额/key 额度（同一张表，不同 scope 前缀）；
-3. 没有 DB 回落时，至少把 fail-open 降级为**按用户维度串行化**（同一用户的预留走单飞），
-   或对"故障期间"的请求收紧最坏费用闸门。
+### 6.2 F4：债务 vs 核销 → 已实现为开关（默认保持核销）
 
-### 6.2 F4：债务 vs 核销
+`billing.settlement_debt_mode` 默认 `false`（封底核销，与历史行为逐位一致）；置 `true` 后结算
+全额入账、余额可为负（债务），由后续充值抵扣，对齐 new-api `decreaseUserQuota`。
+**追偿能力**差异由开关交给业务选择：需要“先服务后追偿”时打开，并配套负余额可识别的充值/催收
+流程；对账口径也随之变化（不再有 write-off 差额，`actual_cost` 等于真实成本）。
 
-sub2api 的 `deductBalanceToFloorSQL` 保证余额不为负，差额记 write-off；new-api 允许负余额。
-两者都能防"白嫖"，但**追偿能力**不同：若业务希望"先服务后追偿"，可以把封底差额写成一笔
-`user_debt`（负余额或独立账目）而不是核销，代价是对账与催收流程要配套。**当前默认保持核销**，
-因为本仓库的历史线上问题（`usage_log.actual_cost = 0`）正是核销缺失导致的。
+剩余边界：
+
+1. **batch image hold**（`/images/batches`）仍按 `balance >= hold + reserve` 预冻结，不产生欠款；
+   债务模式不影响该路径（冻结是预扣，不存在“收不满”）。
+2. 未接入护栏的入口（Gemini 文本、embeddings、异步图片、实时语音、视频等）在债务模式下同样会
+   把超额部分记成欠款而不是核销，但“预检缺位 → 未识别耗尽”的窗口仍然存在（见手册 §6）。
+3. 负余额对**下游对账/报表**是新的取值域，切换前需确认 BI/导出不会把负余额当成异常数据丢弃。
 
 ### 6.3 其他
 
@@ -197,13 +259,16 @@ sub2api 的 `deductBalanceToFloorSQL` 保证余额不为负，差额记 write-of
 
 | 命令 | 结果 |
 | --- | --- |
-| `go build ./...` | ✅ 通过 |
+| `go build ./...` | ✅ 通过（F3/F4 落地后重跑） |
 | `go vet -tags=unit ./internal/...` | ✅ 无输出 |
 | `go test -tags=unit -count=1 -run "Test(PlatformQuotaReservation|APIKeyQuotaReservation|BillingReservationSlot|ReserveRequestSpend|SubscriptionReservation|ReleaseReservation)" ./internal/service/` | ✅ `ok ... 0.60s` |
-| `go test -tags=unit -count=1 ./internal/service/...` | ✅ 195.1s（含 openai_ws_v2 3.5s） |
-| `go test -tags=unit -count=1 ./internal/config/...` | ✅ 2.0s |
-| `go test -tags=unit -count=1 ./internal/handler/...` | ✅ handler 38.6s / admin 0.8s / dto 0.3s / quotaview 0.3s |
-| `go test -tags=unit -count=1 ./internal/repository/...` | ❌ 3 个 pg_dump 用例：`exec: "sh": executable file not found in %PATH%`（Windows 无 POSIX `sh`，**与本次改动无关**，基线同样失败） |
+| `go test -tags=unit -count=1 -run "DebtMode|ReadsBillingConfig|FloorModeStillClamps" ./internal/repository/` | ✅ 5/5 PASS（债务模式负余额、封底零值安全、无用户、仓库接线、配置接线） |
+| `go test -tags=unit -count=1 -run "TestLoadSettlementDebtMode" ./internal/config/` | ✅ 2/2 PASS（默认 false；YAML/环境变量可开启） |
+| `go test -tags=unit -count=1 -run "TestGatewayServiceRecordUsage_LegacyFallback" ./internal/service/` | ✅ `ok ... 0.427s`（legacy 封底/债务/耗尽三例） |
+| `go test -tags=unit -count=1 ./internal/service/...` | ✅ `ok ... 193.543s`（含 openai_ws_v2 3.705s） |
+| `go test -tags=unit -count=1 ./internal/config/...` | ✅ `ok ... 3.024s` |
+| `go test -tags=unit -count=1 ./internal/handler/...` | ✅ handler 40.575s / admin 1.200s / dto 0.410s / quotaview 0.426s |
+| `go test -tags=unit -count=1 ./internal/repository/...` | ❌ 仅 3 个 pg_dump 用例：`TestPgDumperHoldsMigrationLockThroughReaderClose` / `...ReleasesMigrationLockWhenProcessFails` / `...ReportsUnlockFailureAndDiscardsConnection`（`exec: "sh": executable file not found in %PATH%`，Windows 无 POSIX `sh`，**与本次改动无关**，基线同样失败） |
 
 **未运行**：`-tags=integration`（需要真 PG/Redis，testcontainers）、前端 `vitest`/`vue-tsc`、
 生产压测、`golangci-lint`。第 4.1 节的生产路径（Lua `TryReserveUserBalance`）由仓库层集成测试
@@ -214,6 +279,18 @@ sub2api 的 `deductBalanceToFloorSQL` 保证余额不为负，差额记 write-of
 | 文件 | 变更 |
 | --- | --- |
 | `backend/internal/service/billing_cache_service.go` | 新增 `userPlatformQuotaReservationScope` / `apiKeyQuotaReservationScope` / `reserveUserPlatformQuotaSpend` / `reserveAPIKeyQuotaSpend`；`BillingReservationSlot` 多绑定；`CheckBillingEligibility` 三条 scope 串联与整槽回滚；平台配额快照化 |
-| `backend/internal/service/billing_cache_service_reservation_test.go` | 按 scope 记账的预留桩 + 原子预留桩；新增 8 个用例（平台配额 5 + key 额度 3） |
-| `docs/BILLING_ZERO_OVERSHOOT.md` | 四类 scope 的护栏说明与新增边界条目 |
+| `backend/internal/service/billing_cache_service_reservation_test.go` | 按 scope 记账的预留桩 + 原子预留桩；新增 8 个用例（平台配额 5 + key 额度 3）+ F3 回落 2 个用例 |
+| `backend/internal/repository/billing_reservation_db.go`（新增） | DB 回落预留仓储：scope 级 `pg_advisory_xact_lock` 串行化 + 过期清理 + `SUM(amount)` 聚合校验；提供 `Reserve` / `TryReserve` / `Release` / `Renew` |
+| `backend/migrations/238_billing_reservations.sql`（新增） | `billing_reservations(scope, request_id, amount, expires_at, created_at)` + 过期索引 |
+| `backend/internal/service/billing_cache_service.go` | 新增 `ReservationFallbackStore` 接口、`SetReservationFallback` 与 `reserveWithFallbackStore`；`reserveSpendWithGuard` 两条 Redis 错误分支改为“先试 DB 回落” |
+| `backend/internal/config/config.go` | 新增 `BillingConfig.SettlementDebtMode`（`billing.settlement_debt_mode`，默认 false）+ viper 默认值 |
+| `backend/internal/repository/usage_billing_repo.go` | 新增 `deductBalanceToDebtSQL` / `deductBalanceToDebt` / `deductUsageBillingBalanceWithMode`；仓库字段 `settlementDebtMode` 由配置注入 |
+| `backend/internal/repository/user_repo.go` | 新增 `DeductBalanceAllowNegative`（legacy 路径的债务扣款） |
+| `backend/internal/service/gateway_usage_billing.go` | 新增可选接口 `balanceDebtDeductor`；legacy 兜底路径在债务模式下改走债务扣款 |
+| `backend/cmd/server/wire_gen.go` | 装配 `BillingCacheService.SetReservationFallback(repository.NewBillingReservationDBStore(db))` |
+| `backend/internal/repository/usage_billing_repo_unit_test.go` | 新增债务模式 4 个用例（负余额/封底零值/无用户/仓库接线） |
+| `backend/internal/config/config_test.go` | 新增债务模式默认值 + YAML/环境变量加载用例 |
+| `backend/internal/service/gateway_record_usage_test.go` | 新增 legacy 债务路径用例 |
+| `docs/BILLING_ZERO_OVERSHOOT.md` | 五层护栏（含 DB 回落与债务模式）、新增 `settlement_debt_mode` 配置行与边界说明 |
+| `billing-audit-pr3-pr16.md` | 本报告 |
 | `billing-audit-pr3-pr16.md` | 本报告 |
