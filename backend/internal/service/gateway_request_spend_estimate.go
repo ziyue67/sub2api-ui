@@ -365,7 +365,19 @@ const requestSpendDenseTokensPerByte = 1
 func inlineBinaryPayloadStats(body []byte) (binaryBytes int, denseBytes int, blobs int) {
 	for _, run := range findBase64Runs(body, requestSpendMinInlineBinaryRun) {
 		payload := body[run.start:run.end]
-		if multimodalPayloadKeyIsBinary(body, run.start, jsonKeyBefore(body, run.start)) {
+		key := jsonKeyBefore(body, run.start)
+		if multimodalPayloadKeyIsBinary(body, run.start, key) {
+			binaryBytes += len(payload)
+			blobs++
+			continue
+		}
+		// 灰区（通用 `url`/`file_data` 键、父键不足以确证媒体）：口径取
+		// max(稠密, 1 块固定额度)。稠密费率是 1 token/字节，因此"块额度不低于按字节
+		// 折算"等价于 `len(payload) <= requestSpendImageTokenAllowance`：命中即按块计，
+		// 否则回落稠密。两个方向都不会低于任一单独口径 —— 既不像 N4 那样把真实媒体
+		// 降级成稠密，也不像 R1 那样把短负载从固定额度下拉到按字节折算。
+		if multimodalPayloadKeyContextAmbiguous(body, run.start, key) &&
+			len(payload) <= requestSpendImageTokenAllowance {
 			binaryBytes += len(payload)
 			blobs++
 			continue
@@ -674,8 +686,26 @@ var multimodalDataParentKeys = map[string]bool{
 	"input_audio": true, // OpenAI:    {"input_audio":{"data":…}}
 }
 
-// multimodalPayloadKeyIsBinary 判定 valueStart 处的 base64 串是否应按"多模态二进制
-// 负载"折算（每块固定 allowance）。`data` 键额外要求父键上下文（审计 N4）；父键无法
+// multimodalMediaParentKeys 是允许把**通用键名**（`url` / `file_data`）解释为媒体
+// 负载的父键白名单。这两个键在各类 API 里都太常见，只靠键名判定会把任意长文本
+// 当成图片（审计 N4 的反方向：同一份内容因键名不同相差 737 倍）。
+var multimodalMediaParentKeys = map[string]map[string]bool{
+	"url": {
+		"image_url":   true, // OpenAI Responses: {"input":[{"image_url":…}]} 对象形态
+		"input_image": true, // Responses:        {"input":[{"input_image":{…}}]}
+		"input_audio": true,
+		"image":       true,
+		"audio":       true,
+	},
+	"file_data": {
+		"input_file": true,
+		"file":       true,
+		"document":   true,
+	},
+}
+
+// multimodalPayloadKeyIsBinary 判定 valueStart 处的 base64 串是否**确证**为"多模态
+// 二进制负载"（每块固定 allowance）。`data` 键额外要求父键上下文（审计 N4）；父键无法
 // 确证时保持既有行为（仍按多模态），以免把真实图片降级成稠密口径而误 403。
 func multimodalPayloadKeyIsBinary(body []byte, valueStart int, key string) bool {
 	if !multimodalPayloadKeys[key] {
@@ -699,15 +729,26 @@ func multimodalPayloadKeyIsBinary(body []byte, valueStart int, key string) bool 
 	if precededByBase64Marker(body, valueStart) {
 		return true
 	}
-	parent := jsonParentKeyBefore(body, valueStart)
-	switch key {
-	case "url":
-		return parent == "image_url" || parent == "input_image" || parent == "input_audio" || parent == "image" || parent == "audio"
-	case "file_data":
-		return parent == "input_file" || parent == "file" || parent == "document"
-	default:
+	return multimodalMediaParentKeys[key][jsonParentKeyBefore(body, valueStart)]
+}
+
+// multimodalPayloadKeyContextAmbiguous 判断 `url` / `file_data` 这类**通用键名**上的
+// base64 串是否落在"父键不足以确证是媒体"的灰区。
+//
+// 命中灰区时的口径是 max(稠密, 1 块固定额度)（见 inlineBinaryPayloadStats）：
+// 通用键名既可能是媒体（上游按图片计费，与字节数无关），也可能只是普通长文本
+// （上游按文本分词 ≈1 token/字节）。**只取单一口径必然在某个尺寸上低估**——
+// 这就是审计 R1 实测到的交叉点：固定额度 1600 token 与按字节折算在原始 ~1.6KB 处
+// 相交，PR#16 只把 >1.6KB 的一侧改对了，512B–1.6KB 一侧反而从 1627 掉到 695（−57%）。
+func multimodalPayloadKeyContextAmbiguous(body []byte, valueStart int, key string) bool {
+	if key != "url" && key != "file_data" {
 		return false
 	}
+	// 带显式 `;base64,` 标记的串已被确证为媒体负载，不在灰区。
+	if precededByBase64Marker(body, valueStart) {
+		return false
+	}
+	return !multimodalMediaParentKeys[key][jsonParentKeyBefore(body, valueStart)]
 }
 
 // requestSpendJSONBacktrackBudget 是键名回溯的字节预算。

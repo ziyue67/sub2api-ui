@@ -88,6 +88,10 @@ var (
 	billingReservationExpiredReleaseTotal atomic.Int64
 	billingReservationRenewTotal          atomic.Int64
 	billingReservationRenewErrTotal       atomic.Int64
+	// Redis 侧的预留后端不可用、改由 DB（billing_balance_reservations）兜底的次数。
+	// 非零即代表正在降级运行：准入仍受护栏保护，但单用户吞吐被行锁串行化。
+	billingReservationDBFallbackTotal    atomic.Int64
+	billingReservationDBFallbackErrTotal atomic.Int64
 )
 
 // 复核与降级计数。这些是"护栏静默失效"的直接证据面。
@@ -167,6 +171,9 @@ type BillingGuardStats struct {
 	ReservationExpiredRelease     int64 `json:"reservation_expired_release"`
 	ReservationRenew              int64 `json:"reservation_renew"`
 	ReservationRenewError         int64 `json:"reservation_renew_error"`
+	// DB 兜底：Redis 预留后端不可用时的降级准入次数（与失败次数）。
+	ReservationDBFallback    int64 `json:"reservation_db_fallback"`
+	ReservationDBFallbackErr int64 `json:"reservation_db_fallback_error"`
 
 	// DB 复核与降级。
 	RecheckDBReads              int64 `json:"recheck_db_reads"`
@@ -212,6 +219,8 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 		ReservationExpiredRelease:     billingReservationExpiredReleaseTotal.Load(),
 		ReservationRenew:              billingReservationRenewTotal.Load(),
 		ReservationRenewError:         billingReservationRenewErrTotal.Load(),
+		ReservationDBFallback:         billingReservationDBFallbackTotal.Load(),
+		ReservationDBFallbackErr:      billingReservationDBFallbackErrTotal.Load(),
 
 		RecheckDBReads:              billingRecheckDBReadsTotal.Load(),
 		RecheckFailClosed:           billingRecheckFailClosedTotal.Load(),
@@ -230,6 +239,14 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 	if stats.ReservationFailOpen > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
 			"在途预留 fail-open：Redis 预留失败时并发护栏静默失效（检查 Redis 可用性）")
+	}
+	if stats.ReservationDBFallback > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"在途预留正在走 DB 兜底：Redis 预留后端不可用，准入改由 billing_balance_reservations 行锁串行化（护栏仍在，但单用户吞吐下降；检查 Redis 可用性）")
+	}
+	if stats.ReservationDBFallbackErr > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"DB 预留兜底也失败：该笔退回 fail-open，并发护栏失效（同时检查 Redis 与 PostgreSQL）")
 	}
 	if stats.ReservationReleaseErr > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
@@ -308,6 +325,18 @@ func RecordBillingReservationRenew() { billingReservationRenewTotal.Add(1) }
 
 // RecordBillingReservationRenewError 记录一次续期失败（非"凭据已过期"）。
 func RecordBillingReservationRenewError() { billingReservationRenewErrTotal.Add(1) }
+
+// RecordBillingReservationDBFallback 记录一次"Redis 预留后端不可用、改由 DB 兜底"的准入。
+//
+// 出现即代表正在降级运行：护栏仍然成立（余额不会被并发击穿），但同一用户的准入被
+// 数据库行锁串行化，吞吐显著下降。运维应据此排查 Redis 可用性。
+func RecordBillingReservationDBFallback() { billingReservationDBFallbackTotal.Add(1) }
+
+// RecordBillingReservationDBFallbackError 记录一次"DB 兜底也失败"。
+//
+// 这是比 FailOpen 更严重的信号：它意味着 Redis 与 PostgreSQL 同时不可用，该笔请求
+// 退回 fail-open（无预留放行）。
+func RecordBillingReservationDBFallbackError() { billingReservationDBFallbackErrTotal.Add(1) }
 
 // RecordBillingRecheckDBRead 记录一次预检的 DB 真值回源。
 func RecordBillingRecheckDBRead() { billingRecheckDBReadsTotal.Add(1) }

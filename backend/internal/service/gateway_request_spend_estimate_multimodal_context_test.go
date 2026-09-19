@@ -204,3 +204,67 @@ func TestEstimateRequestInputTokensUpperBound_GenericURLAndFileDataStayDense(t *
 	require.Less(t, mediaURL, 10_000, "媒体对象中的 url 仍应按多模态块估算")
 	require.Less(t, mediaFile, 10_000, "媒体对象中的 file_data 仍应按多模态块估算")
 }
+
+// 本文件同时锁死审计 R1：`url` / `file_data` 与 `data` 一样是通用键名。
+// PR#16 之前它们一律按 1 块固定额度折算（实测 ≈1627）；PR#16 改成"只有父键命中媒体
+// 白名单或值前带 `;base64,` 标记才算多模态块，否则回落稠密/文本"。方向正确（堵住
+// 自定义字段里的长文本被按图片低估），但**两个口径在 base64 串长约 1.6KB 处相交**：
+// 以字节折算低于块额度的区间里，改动后反而比改动前更低（实测 500B 处 1627 → 695，
+// −57%），也就是"堵住一个方向的低估、又打开另一个方向的低估"。
+//
+// 修复后的口径 = max(稠密, 1 块固定额度)：按字节折算更高就用稠密，否则用块额度，
+// 因此对任一尺寸都不低于两个口径中的较大者。
+func TestEstimateRequestInputTokensUpperBound_GenericMediaKeysNeverBelowBothFloors(t *testing.T) {
+	t.Parallel()
+
+	blobOf := func(n int) string {
+		raw := make([]byte, n)
+		for i := range raw {
+			raw[i] = byte(i*47 + 13) // 伪随机高熵，确保被判为 base64 而不是低熵文本
+		}
+		return base64.StdEncoding.EncodeToString(raw)
+	}
+
+	// 覆盖交叉点两侧：500/512 落在 min 处，1400/2000 落在 max 处。
+	for _, rawLen := range []int{500, 512, 700, 1000, 1400, 2000} {
+		blob := blobOf(rawLen)
+		floor := requestSpendImageTokenAllowance
+		if len(blob) < floor {
+			floor = len(blob) // max(稠密, 块额度) 的较小者：稠密费率是 1 token/字节
+		}
+
+		gotURL := EstimateRequestInputTokensUpperBound([]byte(`{"payload":{"url":"` + blob + `"}}`))
+		require.GreaterOrEqual(t, gotURL, floor,
+			"通用 url 键的估算不得低于 max(稠密, 块额度) 的较小者（rawLen=%d, blobLen=%d）", rawLen, len(blob))
+
+		gotFile := EstimateRequestInputTokensUpperBound([]byte(`{"payload":{"file_data":"` + blob + `"}}`))
+		require.GreaterOrEqual(t, gotFile, floor,
+			"通用 file_data 键的估算不得低于 max(稠密, 块额度) 的较小者（rawLen=%d, blobLen=%d）", rawLen, len(blob))
+	}
+
+	// 交叉点以上必须回落稠密：串远超块额度时若仍按 1 块额度折算就是 R1 之前 PR#16 想堵的
+	// 那个低估方向（同一份内容按字节折算可达 737 倍）。
+	longBlob := blobOf(20000)
+	require.Greater(t, len(longBlob), requestSpendImageTokenAllowance)
+	require.Greater(t,
+		EstimateRequestInputTokensUpperBound([]byte(`{"payload":{"url":"`+longBlob+`"}}`)),
+		len(longBlob),
+		"通用 url 键上的超长串必须按稠密口径（1 token/字节）折算")
+	require.Greater(t,
+		EstimateRequestInputTokensUpperBound([]byte(`{"payload":{"file_data":"`+longBlob+`"}}`)),
+		len(longBlob),
+		"通用 file_data 键上的超长串必须按稠密口径（1 token/字节）折算")
+
+	// 确认是媒体负载的键不受 R1 修复影响：仍按 1 块固定额度。
+	for _, body := range []string{
+		`{"image":{"url":"` + longBlob + `"}}`,
+		`{"input_image":{"url":"` + longBlob + `"}}`,
+		`{"input_file":{"file_data":"` + longBlob + `"}}`,
+		`{"payload":{"url":"data:image/png;base64,` + longBlob + `"}}`,
+	} {
+		require.Less(t,
+			EstimateRequestInputTokensUpperBound([]byte(body)),
+			requestSpendImageTokenAllowance*2,
+			"确诊的媒体负载仍应按固定 allowance 折算，不能因 R1 修复被改成稠密")
+	}
+}

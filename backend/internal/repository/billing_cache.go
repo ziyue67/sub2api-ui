@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -49,6 +50,25 @@ const (
 	balanceExhaustedMarkerTTL = billingCacheTTL + time.Minute
 	rateLimitCacheTTL         = 7 * 24 * time.Hour // 7 days matches the longest window
 
+	// billingBalanceGenerationKeyPrefix 是余额缓存的**变动代号**键前缀。
+	//
+	// 它解决的是"回源写回把旧快照重新发布"这一竞态（审计 R9）：余额缓存是
+	// "未命中回源 + 异步写回"，而读取方从 DB 读到值到真正写回缓存之间可能发生结算扣费。
+	// 扣费会递减缓存，但如果此刻缓存键正好不存在（`deductBalanceScript` 直接返回 0、
+	// 不写任何值），随后落下的旧快照就会把**偏高**的余额重新发布出去，使预检在整个
+	// 缓存 TTL 内持续放行注定扣费失败的请求。
+	//
+	// 办法是给每次余额变动递增一个代号：读取方在**发起 DB 读取之前**取一份代号，
+	// 写回时只有代号未变才发布（见 publishBalanceScript）。用代号而不是时间戳是为了
+	// 免去多实例间的时钟偏移问题 —— 比较的是同一条 Redis 上的单调计数。
+	billingBalanceGenerationKeyPrefix = "billing:balance_gen:"
+	// balanceGenerationTTL 是代号键的存活时间。只需覆盖"DB 读取 + 写回"的最大时延
+	// （回源超时 3s + 队列等待），取 5 分钟与余额缓存同量级即可；过期后代号归零，
+	// 两侧同读 '0'，最坏退化为"不设防"，与修复前行为一致。
+	balanceGenerationTTL = 10 * time.Minute
+	// balanceGenerationTTLSeconds 是上面 TTL 的秒数形式（脚本参数用秒）。
+	balanceGenerationTTLSeconds = int(balanceGenerationTTL / time.Second)
+
 	// Rate limit window durations — must match service.RateLimitWindow* constants.
 	rateLimitWindow5h = 5 * time.Hour
 	rateLimitWindow1d = 24 * time.Hour
@@ -68,6 +88,12 @@ func jitteredTTL() time.Duration {
 // billingBalanceKey generates the Redis key for user balance cache.
 func billingBalanceKey(userID int64) string {
 	return fmt.Sprintf("%s%d", billingBalanceKeyPrefix, userID)
+}
+
+// billingBalanceGenerationKey generates the Redis key for a user's balance generation
+// counter (bumped on every balance mutation; used to discard stale回源 snapshots).
+func billingBalanceGenerationKey(userID int64) string {
+	return fmt.Sprintf("%s%d", billingBalanceGenerationKeyPrefix, userID)
 }
 
 // billingBalanceExhaustedKey generates the Redis key for the "wallet exhausted" marker.
@@ -119,7 +145,16 @@ const (
 )
 
 var (
+	// deductBalanceScript 递减余额缓存，并**同时递增变动代号**（KEYS[2]）。
+	//
+	// 代号必须在同一次脚本里递增：扣费与"作废在途快照"是同一个事实，分开做会留下
+	// "扣了费但没作废"的窗口（审计 R9）。
+	//
+	// KEYS[1] = billing:balance:<userID>，KEYS[2] = billing:balance_gen:<userID>
+	// ARGV[1] = 金额，ARGV[2] = 余额缓存 TTL（秒），ARGV[3] = 代号 TTL（秒）
 	deductBalanceScript = redis.NewScript(`
+		redis.call('INCR', KEYS[2])
+		redis.call('EXPIRE', KEYS[2], ARGV[3])
 		local current = redis.call('GET', KEYS[1])
 		if current == false then
 			return 0
@@ -127,6 +162,39 @@ var (
 		local newVal = tonumber(current) - tonumber(ARGV[1])
 		redis.call('SET', KEYS[1], newVal)
 		redis.call('EXPIRE', KEYS[1], ARGV[2])
+		return 1
+	`)
+
+	// publishBalanceScript 发布回源快照，但只在该快照"读到之后没有发生过余额变动"时
+	// 才落地：代号不一致说明读取方手里的值可能早于最近一次扣费/加钱，发布它会让预检
+	// 依据偏高的余额放行（审计 R9）。被拦下的写回不创建任何键 —— 下一次读取会回到
+	// DB 取真值，自愈。
+	//
+	// KEYS[1] = billing:balance:<userID>，KEYS[2] = billing:balance_gen:<userID>
+	// ARGV[1] = 余额，ARGV[2] = 余额缓存 TTL（毫秒），ARGV[3] = 读取方取到的代号
+	publishBalanceScript = redis.NewScript(`
+		local gen = redis.call('GET', KEYS[2])
+		if gen == false then
+			gen = '0'
+		end
+		if gen ~= ARGV[3] then
+			return 0
+		end
+		redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+		return 1
+	`)
+
+	// invalidateBalanceScript 失效余额缓存，并同时递增变动代号。
+	//
+	// 加钱（充值/兑换/返利/管理员调整）走这里：既删掉旧值，也让所有在途的旧快照作废，
+	// 避免"充值后又被扣费前的旧快照写回"。
+	//
+	// KEYS[1] = billing:balance:<userID>，KEYS[2] = billing:balance_gen:<userID>
+	// ARGV[1] = 代号 TTL（秒）
+	invalidateBalanceScript = redis.NewScript(`
+		redis.call('INCR', KEYS[2])
+		redis.call('EXPIRE', KEYS[2], ARGV[1])
+		redis.call('DEL', KEYS[1])
 		return 1
 	`)
 
@@ -183,25 +251,47 @@ var (
 	// 只有新总额不超过 maxTotal 时才落凭据并刷新 TTL；被拒绝的请求不写任何键，
 	// 因而既不会制造需要二次回滚的窗口，也不会用拒绝流量给历史残留续命。
 	// 接受的新请求会刷新聚合键 TTL，避免持续短请求下聚合键先于仍有效的凭据过期。
+	//
+	// 关于浮点格式化：Lua 的 `tostring()` 走 lua_number2str（%.14g），会把
+	// `0.1+0.2` 写成 `0.3`、静默丢掉低有效位，与 INCRBYFLOAT（17 位有效数字）
+	// 的口径不一致。聚合总额是多个金额相加的结果，因此显式用 %.17g 写回并返回，
+	// 与 release/renew 侧的 INCRBYFLOAT 保持同一精度（审计 R4）。
+	//
+	// KEYS[1] = billing:reserved:<scope>（聚合总额）
+	// KEYS[2] = billing:resv_item:<scope>:<requestID>（本笔凭据）
+	// ARGV[1] = 预留金额（USD，>0），ARGV[2] = 聚合上限（USD），ARGV[3] = TTL（毫秒）
 	tryReserveBalanceScript = redis.NewScript(`
 		local existing = redis.call('GET', KEYS[2])
 		if existing ~= false then
 			redis.call('PEXPIRE', KEYS[2], ARGV[3])
-			redis.call('PEXPIRE', KEYS[1], ARGV[3])
 			local current = redis.call('GET', KEYS[1])
 			if current == false then
-				return {'-1', '0'}
+				-- 凭据仍在、聚合键却已消失（被 maxmemory 淘汰，或某笔极小金额的归还
+				-- 触发了 newVal <= 1e-7 的 DEL 分支）。这不是"预留后端不可用"，而是
+				-- 状态不一致：旧实现返回 '-1'，被 Go 侧当成后端故障 → fail-open，本笔在
+				-- **完全没有预留**的情况下被放行（审计 R3）。这里改为以凭据金额重建聚合，
+				-- 恢复“凭据存在 ⇒ 聚合至少包含本笔”的不变量；金额以凭据为准，保证后续
+				-- release 能按凭据金额正确递减。
+				local rebuilt = tonumber(existing)
+				if rebuilt == nil or rebuilt <= 0 then
+					rebuilt = tonumber(ARGV[1])
+				end
+				local text = string.format('%.17g', rebuilt)
+				redis.call('SET', KEYS[1], text, 'PX', ARGV[3])
+				return {'1', text}
 			end
+			redis.call('PEXPIRE', KEYS[1], ARGV[3])
 			return {'1', current}
 		end
 		local current = tonumber(redis.call('GET', KEYS[1]) or '0')
 		local newVal = current + tonumber(ARGV[1])
 		if newVal > tonumber(ARGV[2]) + 1e-12 then
-			return {'0', tostring(current)}
+			return {'0', string.format('%.17g', current)}
 		end
+		local text = string.format('%.17g', newVal)
 		redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[3])
-		redis.call('SET', KEYS[1], tostring(newVal), 'PX', ARGV[3])
-		return {'1', tostring(newVal)}
+		redis.call('SET', KEYS[1], text, 'PX', ARGV[3])
+		return {'1', text}
 	`)
 
 	// releaseBalanceScript 原子地归还一笔在途预留，**且只归还属于本请求的那一笔**。
@@ -318,10 +408,26 @@ var (
 
 type billingCache struct {
 	rdb *redis.Client
+	// db 是**可选**的在途预留 DB 兜底句柄（nil = 不启用）。
+	//
+	// Redis 不可用时，预留能力的既有行为是 fail-open —— 本笔在完全没有预留的情况下
+	// 放行，并发准入护栏整层失效（docs/BILLING_ZERO_OVERSHOOT.md 的"已知边界"）。
+	// 有了它，准入会退化为一条带用户行锁的 DB 事务（见 dbReservationStore），
+	// 语义与 Redis 侧一致，只是吞吐被串行化。等价于 new-api 的 reserveUserQuotaDB。
+	db *sql.DB
 }
 
 func NewBillingCache(rdb *redis.Client) service.BillingCache {
 	return &billingCache{rdb: rdb}
+}
+
+// NewBillingCacheWithDB 构造带 DB 预留兜底的计费缓存。
+//
+// 与 NewBillingCache 的区别只有一个：Redis 侧的预留操作失败时，不再直接放弃
+// （让上层 fail-open），而是改用 billing_balance_reservations 上的事务做同样语义的
+// 原子准入。生产装配用这个构造函数；测试与降级装配可以继续用 NewBillingCache。
+func NewBillingCacheWithDB(rdb *redis.Client, db *sql.DB) service.BillingCache {
+	return &billingCache{rdb: rdb, db: db}
 }
 
 func (c *billingCache) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
@@ -338,9 +444,45 @@ func (c *billingCache) SetUserBalance(ctx context.Context, userID int64, balance
 	return c.rdb.Set(ctx, key, balance, jitteredTTL()).Err()
 }
 
+// BalanceGeneration 返回余额缓存当前的"变动代号"，供回源路径在**发起 DB 读取之前**取一份
+// 快照，再交给 SetUserBalanceIfGeneration 做条件发布（审计 R9）。
+//
+// 读不到（键不存在）时返回 "0"，与发布脚本对缺失代号的归一化一致。
+func (c *billingCache) BalanceGeneration(ctx context.Context, userID int64) (string, error) {
+	val, err := c.rdb.Get(ctx, billingBalanceGenerationKey(userID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "0", nil
+		}
+		return "", err
+	}
+	return val, nil
+}
+
+// SetUserBalanceIfGeneration 只在该用户余额的变动代号仍等于 generation 时发布快照。
+//
+// 代号不一致意味着"读取方发起 DB 读取之后发生过扣费/加钱"，此时快照可能偏高（也可能是
+// 加钱后的偏低值），一律不发布：下一次读取回源真值，自愈。返回 published=false 不代表
+// 错误，调用方不需要处理。
+func (c *billingCache) SetUserBalanceIfGeneration(ctx context.Context, userID int64, balance float64, generation string) (bool, error) {
+	if generation == "" {
+		// 没拿到代号（取代号失败/降级装配）：退回无条件发布，与修复前一致。
+		return true, c.SetUserBalance(ctx, userID, balance)
+	}
+	reply, err := publishBalanceScript.Run(ctx, c.rdb,
+		[]string{billingBalanceKey(userID), billingBalanceGenerationKey(userID)},
+		balance, jitteredTTL().Milliseconds(), generation).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return false, err
+	}
+	return fmt.Sprint(reply) == "1", nil
+}
+
 func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amount float64) error {
 	key := billingBalanceKey(userID)
-	_, err := deductBalanceScript.Run(ctx, c.rdb, []string{key}, amount, int(jitteredTTL().Seconds())).Result()
+	_, err := deductBalanceScript.Run(ctx, c.rdb,
+		[]string{key, billingBalanceGenerationKey(userID)},
+		amount, int(jitteredTTL().Seconds()), balanceGenerationTTLSeconds).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		log.Printf("Warning: deduct balance cache failed for user %d: %v", userID, err)
 		return err
@@ -349,8 +491,13 @@ func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amou
 }
 
 func (c *billingCache) InvalidateUserBalance(ctx context.Context, userID int64) error {
-	key := billingBalanceKey(userID)
-	return c.rdb.Del(ctx, key).Err()
+	_, err := invalidateBalanceScript.Run(ctx, c.rdb,
+		[]string{billingBalanceKey(userID), billingBalanceGenerationKey(userID)},
+		balanceGenerationTTLSeconds).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	return nil
 }
 
 // MarkUserBalanceExhausted 记录"该用户的钱包已经没有可花余额（已到 reserve 底线）"。
@@ -408,6 +555,17 @@ func (c *billingCache) ReserveUserBalance(ctx context.Context, scope string, req
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		amount, reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
+		// 与 TryReserveUserBalance 同源的 DB 兜底。这里没有预算上限（调用方会拿着返回值
+		// 自行做封底判定并在拒绝时归还），因此用 +Inf 让 DB 侧只做登记。
+		if store := newDBReservationStore(c.db); store != nil {
+			total, _, dbErr := store.tryReserveUserBalance(ctx, scope, requestID, amount, math.MaxFloat64, ttl)
+			if dbErr == nil {
+				service.RecordBillingReservationDBFallback()
+				return total, nil
+			}
+			service.RecordBillingReservationDBFallbackError()
+			log.Printf("Warning: db reservation fallback failed for scope %s: %v", scope, dbErr)
+		}
 		return 0, err
 	}
 	return parseReservedBalanceReply(reply)
@@ -425,18 +583,94 @@ func (c *billingCache) TryReserveUserBalance(ctx context.Context, scope string, 
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		amount, maxTotal, reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
+		// Redis 侧的预留后端不可用。既有行为是直接把错误抛回上层，而上层把它当作
+		// "预留后端故障 → fail-open"，本笔在**完全没有预留**的情况下被放行，
+		// 并发准入护栏整层失效（审计 R2）。
+		//
+		// 这里改为先走 DB 兜底：一条带用户行锁的事务，语义与 Redis 脚本一致
+		// （未过期预留总额 + 本笔 <= maxTotal 才登记），等价于 new-api 的
+		// reserveUserQuotaDB。兜底成功就不再 fail-open；只有兜底也失败才把原始
+		// Redis 错误抛回上层，让行为退化成修复前的 fail-open。
+		if store := newDBReservationStore(c.db); store != nil {
+			total, accepted, dbErr := store.tryReserveUserBalance(ctx, scope, requestID, amount, maxTotal, ttl)
+			if dbErr == nil {
+				service.RecordBillingReservationDBFallback()
+				return total, accepted, nil
+			}
+			service.RecordBillingReservationDBFallbackError()
+			log.Printf("Warning: db reservation fallback failed for scope %s: %v", scope, dbErr)
+		}
 		return 0, false, err
 	}
 	parts, ok := reply.([]any)
 	if !ok || len(parts) != 2 {
 		return 0, false, fmt.Errorf("unexpected atomic reservation reply %T: %v", reply, reply)
 	}
-	accepted := fmt.Sprint(parts[0]) == "1"
-	if fmt.Sprint(parts[0]) == "-1" {
-		return 0, false, errors.New("reservation receipt exists without aggregate total")
+	// 只认两种明确答复：'1' = 已接受并落凭据，'0' = 因超过上限被拒。
+	// 其它值（历史版本的 '-1'、脚本被替换、Lua 返回值异常）**按拒绝处理**而不是返回
+	// error：返回 error 会让调用方走 "预留后端不可用 → fail-open" 的分支，使本笔在
+	// 完全没有预留的情况下被放行。这里返回 accepted=false，交由调用方的 guard 再判
+	// 一次（fail-closed，方向保守）。审计 R3。
+	replyCode := fmt.Sprint(parts[0])
+	if replyCode != "0" && replyCode != "1" {
+		log.Printf("Warning: unexpected atomic reservation reply code %q for scope %s: %v", replyCode, scope, reply)
+		return 0, false, nil
 	}
+	accepted := replyCode == "1"
 	total, err := parseReservedBalanceReply(parts[1])
 	return total, accepted, err
+}
+
+// dbReservationOutcome 描述 DB 兜底对某笔预留的处理结果。
+type dbReservationOutcome int
+
+const (
+	// dbReservationNotApplicable：未配置兜底句柄，或该 scope 不支持 DB 兜底
+	// （订阅模式的 scope 形如 sub:<user>:<group>）。调用方维持原有的 Redis 语义。
+	dbReservationNotApplicable dbReservationOutcome = iota
+	// dbReservationHandled：本笔确实记在 DB 兜底里，且操作已完成。
+	dbReservationHandled
+	// dbReservationAbsent：兜底可用，但本笔不在其中（已过期/已归还）。
+	// 与 Redis 侧"凭据不存在"是同一个语义，因此归还/续期都按"已回收"处理。
+	dbReservationAbsent
+)
+
+// tryReleaseDBReservation 尝试在 DB 兜底里归还本笔预留。
+func (c *billingCache) tryReleaseDBReservation(ctx context.Context, scope, requestID string) (dbReservationOutcome, error) {
+	store := newDBReservationStore(c.db)
+	if store == nil {
+		return dbReservationNotApplicable, nil
+	}
+	if _, ok := reservationUserIDFromScope(scope); !ok {
+		return dbReservationNotApplicable, nil
+	}
+	err := store.releaseUserBalanceReservation(ctx, scope, requestID)
+	if err == nil {
+		return dbReservationHandled, nil
+	}
+	if errors.Is(err, service.ErrBillingReservationExpired) {
+		return dbReservationAbsent, nil
+	}
+	return dbReservationNotApplicable, err
+}
+
+// tryRenewDBReservation 尝试在 DB 兜底里续期本笔预留，语义同 tryReleaseDBReservation。
+func (c *billingCache) tryRenewDBReservation(ctx context.Context, scope, requestID string, ttl time.Duration) (dbReservationOutcome, error) {
+	store := newDBReservationStore(c.db)
+	if store == nil {
+		return dbReservationNotApplicable, nil
+	}
+	if _, ok := reservationUserIDFromScope(scope); !ok {
+		return dbReservationNotApplicable, nil
+	}
+	err := store.renewUserBalanceReservation(ctx, scope, requestID, ttl)
+	if err == nil {
+		return dbReservationHandled, nil
+	}
+	if errors.Is(err, service.ErrBillingReservationExpired) {
+		return dbReservationAbsent, nil
+	}
+	return dbReservationNotApplicable, err
 }
 
 // ReleaseUserBalanceReservation 原子地归还"本请求"占用的在途预留。
@@ -444,6 +678,10 @@ func (c *billingCache) TryReserveUserBalance(ctx context.Context, scope string, 
 // 与旧实现的关键差别：归还的前提是**本请求的凭据仍然存在**。凭据已随 TTL 过期时
 // 整体 no-op 并返回 ErrBillingReservationExpired —— 少了这道闸，晚到的归还会把
 // 同一 scope 后来那笔请求的预留一起扣掉，护栏被错误解除。
+//
+// DB 兜底带来一个额外分支：Redis 报告"凭据不存在"或 Redis 本身不可用时，本笔可能当初
+// 是记在 billing_balance_reservations 里的（Redis 故障期准入），因此还要去 DB 删一次。
+// 这个二次操作是**幂等**的，且只在 Redis 报错/报缺失时才发生，正常路径零额外开销。
 func (c *billingCache) ReleaseUserBalanceReservation(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) error {
 	if scope == "" || requestID == "" {
 		return nil
@@ -455,17 +693,43 @@ func (c *billingCache) ReleaseUserBalanceReservation(ctx context.Context, scope 
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		log.Printf("Warning: release balance reservation failed for scope %s: %v", scope, err)
-		return err
+		// Redis 不可用：本笔可能当初记在 DB 兜底里，二次尝试。兜底不可用/不支持该 scope 时
+		// 维持既有行为（返回 Redis 错误）。
+		switch outcome, dbErr := c.tryReleaseDBReservation(ctx, scope, requestID); outcome {
+		case dbReservationHandled:
+			return nil
+		case dbReservationAbsent:
+			return service.ErrBillingReservationExpired
+		default:
+			if dbErr != nil {
+				log.Printf("Warning: db reservation release failed for scope %s: %v", scope, dbErr)
+				return dbErr
+			}
+			log.Printf("Warning: release balance reservation failed for scope %s: %v", scope, err)
+			return err
+		}
 	}
-	if text, ok := reply.(string); ok && text == reservationReleaseExpiredReply {
-		return service.ErrBillingReservationExpired
+	if reservationReplyIsExpired(reply) {
+		// Redis 侧没有本笔凭据（TTL 自愈已回收）——但兜底可用时它也可能记在 DB 里。
+		switch outcome, dbErr := c.tryReleaseDBReservation(ctx, scope, requestID); outcome {
+		case dbReservationHandled:
+			return nil
+		case dbReservationAbsent:
+			return service.ErrBillingReservationExpired
+		default:
+			if dbErr != nil {
+				log.Printf("Warning: db reservation release failed for scope %s: %v", scope, dbErr)
+				return dbErr
+			}
+			// 兜底不可用或不支持该 scope：维持既有语义（凭据已随 TTL 回收）。
+			return service.ErrBillingReservationExpired
+		}
 	}
 	return nil
 }
 
 // RenewUserBalanceReservation 为**长请求**续期本笔预留（心跳）。凭据已过期/已归还时返回
-// ErrBillingReservationExpired，调用方据此停止心跳。
+// ErrBillingReservationExpired，调用方据此停止心跳。DB 兜底分支与归还同理。
 func (c *billingCache) RenewUserBalanceReservation(ctx context.Context, scope string, requestID string, ttl time.Duration) error {
 	if scope == "" || requestID == "" {
 		return nil
@@ -474,13 +738,47 @@ func (c *billingCache) RenewUserBalanceReservation(ctx context.Context, scope st
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		log.Printf("Warning: renew balance reservation failed for scope %s: %v", scope, err)
-		return err
+		switch outcome, dbErr := c.tryRenewDBReservation(ctx, scope, requestID, ttl); outcome {
+		case dbReservationHandled:
+			return nil
+		case dbReservationAbsent:
+			return service.ErrBillingReservationExpired
+		default:
+			if dbErr != nil {
+				log.Printf("Warning: db reservation renew failed for scope %s: %v", scope, dbErr)
+				return dbErr
+			}
+			log.Printf("Warning: renew balance reservation failed for scope %s: %v", scope, err)
+			return err
+		}
 	}
-	if text, ok := reply.(string); ok && text == "0" {
-		return service.ErrBillingReservationExpired
+	if reservationReplyIsMissing(reply) {
+		switch outcome, dbErr := c.tryRenewDBReservation(ctx, scope, requestID, ttl); outcome {
+		case dbReservationHandled:
+			return nil
+		case dbReservationAbsent:
+			return service.ErrBillingReservationExpired
+		default:
+			if dbErr != nil {
+				log.Printf("Warning: db reservation renew failed for scope %s: %v", scope, dbErr)
+				return dbErr
+			}
+			return service.ErrBillingReservationExpired
+		}
 	}
 	return nil
+}
+
+// reservationReplyIsExpired 判断归还脚本的回复是否为"本笔凭据已随 TTL 回收"。
+func reservationReplyIsExpired(reply any) bool {
+	text, ok := reply.(string)
+	return ok && text == reservationReleaseExpiredReply
+}
+
+// reservationReplyIsMissing 判断续期脚本的回复是否为"本笔凭据不存在"。
+func reservationReplyIsMissing(reply any) bool {
+	text, ok := reply.(string)
+	return ok && text == "0"
 }
 
 // ReservedUserBalanceTotal 只读返回该 scope 当前的在途预留总额（USD），供运维观测使用。

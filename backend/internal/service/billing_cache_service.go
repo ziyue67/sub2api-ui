@@ -102,6 +102,23 @@ type cacheWriteTask struct {
 	balance          float64
 	amount           float64
 	subscriptionData *subscriptionCacheData
+	// balanceGeneration 是**发起 DB 读取之前**取到的余额变动代号（审计 R9）。
+	// 只有它仍等于写入时的代号，余额快照才允许发布；否则说明读取方手里的值可能
+	// 早于最近一次扣费/加钱，发布它会让预检依据偏高的余额放行。
+	// 空串表示"未取到代号"（降级装配 / 轻量 stub 缓存），退回无条件发布。
+	balanceGeneration string
+}
+
+// balancePublishGuard 是余额缓存回源写回的**可选**能力：支持"读到余额之后没有发生过
+// 余额变动才发布"的条件写回（审计 R9）。
+//
+// 未实现该能力的缓存（测试用的轻量 stub、旧实现）自动降级为无条件写回，
+// 行为与修复前一致 —— 只降低防护强度，不会产生错误结果。
+type balancePublishGuard interface {
+	// BalanceGeneration 返回当前的余额变动代号（键不存在时归一化为 "0"）。
+	BalanceGeneration(ctx context.Context, userID int64) (string, error)
+	// SetUserBalanceIfGeneration 仅在代号未变时发布快照，返回是否发布成功。
+	SetUserBalanceIfGeneration(ctx context.Context, userID int64, balance float64, generation string) (bool, error)
 }
 
 // apiKeyRateLimitLoader defines the interface for loading rate limit data from DB.
@@ -529,7 +546,7 @@ func (s *BillingCacheService) cacheWriteWorker(ch <-chan cacheWriteTask) {
 		ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
 		switch task.kind {
 		case cacheWriteSetBalance:
-			s.setBalanceCache(ctx, task.userID, task.balance)
+			s.setBalanceCacheWithGeneration(ctx, task.userID, task.balance, task.balanceGeneration)
 		case cacheWriteSetSubscription:
 			s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
 		case cacheWriteUpdateSubscriptionUsage:
@@ -635,16 +652,21 @@ func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) 
 		loadCtx, cancel := context.WithTimeout(context.Background(), balanceLoadTimeout)
 		defer cancel()
 
+		// 变动代号必须在 DB 读取**之前**取：晚于读取取到的代号会把"读取期间发生的
+		// 扣费"一起掩盖掉，条件写回就失去意义（审计 R9）。
+		generation := s.balanceGenerationFor(loadCtx, userID)
+
 		balance, err := s.getUserBalanceFromDB(loadCtx, userID)
 		if err != nil {
 			return nil, err
 		}
 
-		// 异步建立缓存
+		// 异步建立缓存（条件写回：期间发生过余额变动就丢弃这份快照）
 		_ = s.enqueueCacheWrite(cacheWriteTask{
-			kind:    cacheWriteSetBalance,
-			userID:  userID,
-			balance: balance,
+			kind:              cacheWriteSetBalance,
+			userID:            userID,
+			balance:           balance,
+			balanceGeneration: generation,
 		})
 		return balance, nil
 	})
@@ -690,14 +712,45 @@ func (s *BillingCacheService) recheckUserBalanceFromDB(userID int64) (float64, e
 	return balance, nil
 }
 
-// setBalanceCache 设置余额缓存
-func (s *BillingCacheService) setBalanceCache(ctx context.Context, userID int64, balance float64) {
+// setBalanceCacheWithGeneration 发布余额缓存快照。
+//
+// generation 非空且底层缓存支持条件写回时，只有"读取方发起 DB 读取之后没有发生过
+// 余额变动"才真的发布；被拦下的写回不创建任何键，下一次读取回源真值自愈（审计 R9）。
+func (s *BillingCacheService) setBalanceCacheWithGeneration(ctx context.Context, userID int64, balance float64, generation string) {
 	if s.cache == nil {
+		return
+	}
+	if guard, ok := s.cache.(balancePublishGuard); ok && generation != "" {
+		published, err := guard.SetUserBalanceIfGeneration(ctx, userID, balance, generation)
+		if err != nil {
+			logger.LegacyPrintf("service.billing_cache", "Warning: conditional set balance cache failed for user %d: %v", userID, err)
+			return
+		}
+		if !published {
+			logger.LegacyPrintf("service.billing_cache",
+				"balance cache snapshot discarded for user %d: balance changed after the DB read (审计 R9)", userID)
+		}
 		return
 	}
 	if err := s.cache.SetUserBalance(ctx, userID, balance); err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: set balance cache failed for user %d: %v", userID, err)
 	}
+}
+
+// balanceGenerationFor 取一份"余额变动代号"，必须在**发起 DB 读取之前**调用。
+//
+// 能力不可用（轻量 stub / 旧实现）时返回空串，调用方退回无条件写回，与修复前一致。
+func (s *BillingCacheService) balanceGenerationFor(ctx context.Context, userID int64) string {
+	guard, ok := s.cache.(balancePublishGuard)
+	if !ok {
+		return ""
+	}
+	generation, err := guard.BalanceGeneration(ctx, userID)
+	if err != nil {
+		logger.LegacyPrintf("service.billing_cache", "Warning: read balance generation for user %d failed: %v", userID, err)
+		return ""
+	}
+	return generation
 }
 
 // DeductBalanceCache 扣减余额缓存（同步调用）
@@ -710,6 +763,10 @@ func (s *BillingCacheService) DeductBalanceCache(ctx context.Context, userID int
 
 // SetUserBalanceCache 同步覆写用户余额缓存（扣费后以 DB 事务结果为准写回，
 // 避免并发扣费下 Redis INCR 类操作产生负余额视图）。
+//
+// 这是**无条件**发布：只适用于"调用方手上的值就是刚提交的 DB 事务结果"的场景。
+// 回源/复核得到的快照不要用它 —— 那份值可能早于读取期间发生的扣费，必须走
+// setBalanceCacheWithGeneration 的条件写回（审计 R9）。
 func (s *BillingCacheService) SetUserBalanceCache(ctx context.Context, userID int64, balance float64) error {
 	if s.cache == nil {
 		return nil
@@ -1457,6 +1514,8 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 	}
 	if s.userRepo != nil && needsRecheck {
 		RecordBillingRecheckDBRead()
+		// 与回源写回同理：代号要在 DB 读取之前取（审计 R9）。
+		recheckGeneration := s.balanceGenerationFor(ctx, userID)
 		fresh, dbErr := s.recheckUserBalanceFromDB(userID)
 		if dbErr != nil {
 			// 无法确认真实余额时 fail-closed，避免继续白用上游。
@@ -1473,9 +1532,9 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 			return 0, ErrInsufficientBalance
 		}
 		// DB 真值仍可花：把缓存纠正为真值，消除旧快照带来的偏差。
-		if setErr := s.SetUserBalanceCache(ctx, userID, fresh); setErr != nil {
-			logger.LegacyPrintf("service.billing_cache", "Warning: refresh balance cache for user %d failed: %v", userID, setErr)
-		}
+		// 同样要带变动代号做条件写回：复核读值到写回之间若发生扣费，这份真值已经过期，
+		// 直接发布会把偏高的余额写回缓存（审计 R9）。
+		s.setBalanceCacheWithGeneration(ctx, userID, fresh, recheckGeneration)
 		if maxRequestSpend > 0 && fresh < required {
 			// 真值吃不下本次最坏费用：转发前拦截，避免上游成本发生后的坏账。
 			// 不打"钱包已耗尽"标记——小额请求仍可能付得起，标记会连带拦住它们。

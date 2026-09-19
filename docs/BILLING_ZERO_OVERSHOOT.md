@@ -26,11 +26,17 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 | --- | --- | --- | --- |
 | ① 准入阈值 + DB 真值复核带 | 转发前 | `balance <= reserve` 直接 403；`balance <= reserve + band` 时用 DB 真值复核；结算判定耗尽后写"钱包已耗尽"标记，预检命中即 403 | `checkBalanceEligibility` |
 | ② 最坏费用闸门 | 转发前 | 要求 `balance >= reserve + 本次最坏费用`，付不满的请求**不转发**，不产生上游成本 | `estimateRequestSpendUpperBound` |
-| ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，要求 `balance - Σ预留 >= reserve`，使准入成为跨请求的原子操作 | `reserveSpendWithGuard` |
+| ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，要求 `balance - Σ预留 >= reserve`，使准入成为跨请求的原子操作。**Redis 不可用时退化为 DB 兜底**（`billing_balance_reservations` + 用户行锁），护栏不失效 | `reserveSpendWithGuard` / `TryReserveUserBalance` |
 | ④ 结算封底 + 差额记账 | 结算 | `FOR UPDATE` 锁行后 `GREATEST(balance - amount, floor)`，差额记 write-off 并打耗尽标记；**永不为负** | `deductBalanceToFloorSQL` |
 
 核心不变量：`balance − Σ在途预留 ≥ reserve`，且它在"结算扣钱"与"归还预留"以任意
 先后顺序发生时都成立。
+
+**Redis 故障时的 DB 兜底**：第 ③ 层的预留正常记在 Redis（带 TTL 自愈）。Redis 侧预留
+操作失败时不再直接放行，而是改用 `billing_balance_reservations` 表做同样语义的原子准入：
+一条事务先 `SELECT ... FROM users WHERE id = $1 FOR UPDATE` 锁用户行（与结算路径锁序一致，
+不会死锁），清理本用户已过期的预留行，再判定"未过期预留总额 + 本笔 ≤ 预算"。
+代价是同一用户的准入被行锁串行化 —— 故障期优先保"不产生坏账"而不是吞吐。
 
 **订阅模式**（订阅计费）复用第 ③ 层：scope 为 `用户 × 分组`，护栏是
 `usage + Σ预留 < daily/weekly/monthly limit`，堵住"并发请求共用同一份用量快照、
@@ -92,6 +98,8 @@ GET /api/v1/admin/ops/billing-guard
 | --- | --- | --- |
 | `settlement_shortfall_count` | 仍在产生 write-off，预检口径有漏网 | 检查 `request_spend_min_output_tokens` / `default_max_output_tokens` 是否偏小 |
 | `reservation_fail_open` | Redis 预留失败 → 并发护栏**静默失效** | 检查 Redis 可用性与延迟 |
+| `reservation_db_fallback` | Redis 预留失败 → 已由 DB 兜底接住（**护栏仍成立**，但单用户准入被行锁串行化） | 检查 Redis 可用性；吞吐下降是该降级模式的预期代价 |
+| `reservation_db_fallback_error` | Redis 与 DB 兜底**同时失败** → 该笔退回 fail-open | 同时检查 Redis 与 PostgreSQL；这是最严重的降级信号 |
 | `reservation_release_error` | 预留归还失败 → 额度滞留到 TTL | 检查 Redis 写入与网络 |
 | `reservation_renew_error` | 续期失败 → 超长请求可能失去保护 | 同上 |
 | `reservation_abandoned` | 结算任务被 drop 语义丢弃 → 该笔未扣费 | 检查 usage_record worker 池容量与 drop 配置 |
@@ -143,6 +151,11 @@ GET /api/v1/admin/ops/billing-guard
    现在会拒绝 `NaN` / `±Inf`（`NaN` 曾能绕过所有 `< 0` 判断并让封底、最坏费用闸门与
    DB 复核静默失效，`+Inf` 会让预留闸门永久放开）。
 6. 配置变更后请用第 4.1 的端点确认 `runtime` 段与实际配置一致。
+7. **本次升级新增一张表 `billing_balance_reservations`**（迁移 `238_billing_balance_reservations.sql`），
+   用于 Redis 故障期的预留兜底。迁移随二进制内嵌并在启动时自动应用，无需手工执行；但
+   **回滚到旧版本前请确认旧版本不会因该表报错**（旧版本不引用它，可直接回滚）。
+   该表按 `(user_id, request_id)` 主键，行数上界是"同时在途的请求数"，并在每次准入时清理
+   本用户的过期行，不需要额外的清理任务。
 
 ## 6. 已知边界与未覆盖入口
 
@@ -163,17 +176,35 @@ GET /api/v1/admin/ops/billing-guard
 
 - **Gemini 文本生成**（`/v1beta` → `gemini_v1beta_handler.go`，走 `RecordUsage` 按余额计费）
 - **OpenAI embeddings**（`/v1/embeddings` → `openai_embeddings.go`，同样按余额计费）
-- **Anthropic 提示过长后的兜底分组重试**（`gateway_handler.go` 的 fallback group 分支）：
-  该笔按兜底分组的倍率结算，但准入只做基础阈值检查，没有最坏费用闸门
 - `/images/generations/async`、`/images/edits/async`、`/images/tasks/:id`
   （异步图片任务，`AsyncImage` handler）
-- Grok 平台图片：`/v1/images/generations` 在 Grok 分组下走 `GrokImages`（`grok_media.go`）
+- Grok 平台图片：`/v1/images/generations` 在 Grok 分组下走 `GrokImages`（`grok_media.go`）。
+  该入口的主链路只做基础阈值检查，**没有最坏费用闸门、也不建立在途预留**；只有"选号失败后
+  切换分组路由"这条支路在 PR#16 后补上了按新分组重估的最坏费用闸门
 - `/v1/live`、`/realtime/calls`（实时语音）、`/v1/realtime`、OpenAI Responses WebSocket
   长连接、Grok realtime audio WebSocket
 - 视频生成（按秒计费，`CalculateVideoCost`：接入点与图片同构，需按"时长上限 × 数量"另做上界）
 
+> 已从本清单移出：**Anthropic 提示过长后的兜底分组重试**（`gateway_handler.go` 的 fallback
+> group 分支）。PR#16 起该支路会按兜底分组重新估算最坏费用并**替换**旧分组的在途预留
+> （`recheckSelectedGroupRouteEligibility`），不再只做基础阈值检查。
+
 其他已知边界：
 
+- **Redis 不可用 ⇒ 预留降级为 DB 兜底**：`TryReserveUserBalance` 报错时改用
+  `billing_balance_reservations` 上的行锁事务做同语义的原子准入（护栏**不失效**，但单用户
+  吞吐被串行化）。只有兜底也失败（Redis 与 PostgreSQL 同时不可用）时才退回 fail-open
+  放行。订阅模式的 scope（`sub:<user>:<group>`）暂不支持 DB 兜底：该 scope 下的 Redis
+  故障仍会退回 fail-open，需要按"订阅限额"另做一套按窗口的 DB 预留。
+  监控指标：`reservation_db_fallback`（降级次数）、`reservation_db_fallback_error`（兜底也失败）。
+- **余额缓存的条件写回（防旧快照复活）**：余额缓存是"未命中回源 + 异步写回"，读取方从 DB
+  读到值到写回之间可能发生扣费。每次余额变动（扣费 / 加钱失效）会递增 `billing:balance_gen:<uid>`
+  代号；回源方在**发起 DB 读取之前**取一份代号，写回时只有代号未变才发布，否则丢弃这次写回
+  （下一次读取回源真值，自愈）。用代号而非时间戳是为了免去多实例时钟偏移问题。
+  代号键的 TTL 为 10 分钟，过期后退化为"不设防"，与修复前行为一致。
+- **预留后端返回无法解释的状态**：`tryReserveBalanceScript` 只认 `'1'`/`'0'` 两种答复，
+  其它值一律按**拒绝**处理（交给调用方的 guard 再判一次），不走 fail-open —— 避免"状态不一致"
+  被误当作"后端故障"从而在完全没有预留的情况下放行。
 - **预留 TTL 自愈**：预留默认 TTL 10 分钟，长请求由心跳（TTL/3）续期；若结算任务
   丢失且心跳已停止，额度最多滞留 10 分钟。
 - **凭据过期后的残留份额**：若某请求的预留凭据被 TTL 回收而聚合总额的自愈 TTL 尚未到，
@@ -190,6 +221,12 @@ GET /api/v1/admin/ops/billing-guard
   （OpenAI）才算多模态块；父键明确但不是上述之一（如 `{"payload":{"data":"…"}}`）
   时回落稠密/文本口径，父键无法确证（顶层 `data`、数组元素）时保持按多模态折算，
   以免把真实图片降级为稠密口径而误 403。
+  `url` / `file_data` 同属通用键名（`{"image":{"url":…}}` 是媒体，`{"payload":{"url":…}}`
+  就可能只是长文本），只有父键命中媒体白名单（`image_url`/`input_image`/`input_audio`/
+  `image`/`audio`、`input_file`/`file`/`document`）或值前带 `;base64,` 标记才算多模态块；
+  **落在灰区时口径取 `max(稠密, 1 块固定额度)`**：按字节折算（1 token/字节）高于块额度时
+  用稠密，否则用块额度。两种口径在原始约 1.6KB 处相交，只取其中之一必然在某一侧低估 ——
+  这正是审计 R1 实测到的交叉点（固定额度与按字节折算在 512B–1.6KB 一侧相差最多 2.3 倍）。
   **其它位置的 base64**（含没有
   任何 `;base64,` / `"data":"` 标记的裸长串，判定依据是长串前最近的 JSON 键名）按
   **1 token/字节** 稠密计（实测 20KB base64 被上游分词为 18907 token ≈ 0.92 token/字节，
