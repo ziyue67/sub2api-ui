@@ -176,6 +176,20 @@ func subscriptionReservationScope(userID, groupID int64) string {
 	return "sub:" + strconv.FormatInt(userID, 10) + ":" + strconv.FormatInt(groupID, 10)
 }
 
+// userPlatformQuotaReservationScope 是 user×platform 配额预留的 scope。
+// 与余额 scope（纯 userID）分离：同一用户在不同平台上的配额是独立额度，
+// 且与钱包余额是两套资源，不能混在同一个聚合键里。
+func userPlatformQuotaReservationScope(userID int64, platform string) string {
+	return "upq:" + strconv.FormatInt(userID, 10) + ":" + platform
+}
+
+// apiKeyQuotaReservationScope 是 API Key 总额度（api_key.quota）预留的 scope。
+// 额度挂在单个 key 上，与用户余额、订阅限额都是独立资源，必须各自聚合：
+// 同一个 key 的额度不能被钱包预留抵扣，反之亦然。
+func apiKeyQuotaReservationScope(apiKeyID int64) string {
+	return "apikey:" + strconv.FormatInt(apiKeyID, 10)
+}
+
 // billingReservationTTL 是在途预留的自愈 TTL：结算任务被丢弃 / 进程崩溃导致归还丢失时，
 // 预留最多存活这么久，不会把余额永久钉死。
 //
@@ -217,14 +231,21 @@ func newBillingReservationRequestID() string {
 //
 // 所有方法对 nil 接收者安全；Release / ReleaseOnExit 幂等，重复调用只归还一次。
 type BillingReservationSlot struct {
-	mu        sync.Mutex
+	mu       sync.Mutex
+	bindings []billingReservationBinding
+	state    billingReservationState
+	// heartbeat 非 nil 表示续期 goroutine 已启动；release 时 close 并置 nil。
+	heartbeat chan struct{}
+}
+
+// billingReservationBinding 是槽位里的一条预留凭据。一次请求可能同时在多个
+// scope 上占额度（余额模式下是用户余额 + 用户×平台配额），因此槽位按凭据
+// 多绑定：归还与续期都以"每条凭据"为最小单位，避免漏还其中一条。
+type billingReservationBinding struct {
 	store     billingReservationStore
 	scope     string
 	requestID string
 	amount    float64
-	state     billingReservationState
-	// heartbeat 非 nil 表示续期 goroutine 已启动；release 时 close 并置 nil。
-	heartbeat chan struct{}
 }
 
 // billingReservationState 描述槽位的归还状态机：idle → held →(settling)→ released。
@@ -241,23 +262,25 @@ const (
 	billingReservationReleased
 )
 
-// bind 绑定本次预留（service 内部使用）。只允许从 idle 迁移，防止重复绑定覆盖金额。
-//
-// requestID 是本次请求的预留凭据 ID：归还与续期都以它为唯一匹配键，缺了它就无法
-// 区分"这笔归还到底是谁的"，晚到的归还会吃掉同 scope 下别人的预留。
+// bind 绑定本次预留（service 内部使用）。state 允许 idle→held（首条绑定）与
+// held→held（同一请求追加第二个 scope），禁止在 settling/released 上再绑定。
 func (s *BillingReservationSlot) bind(store billingReservationStore, scope string, requestID string, amount float64) {
 	if s == nil || store == nil || amount <= 0 || scope == "" || requestID == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state != billingReservationIdle {
+	// requestID 是这条预留凭据的匹配键：归还与续期都以它为准，缺了它就无法
+	// 区分"这笔归还到底是谁的"，晚到的归还会吃掉同 scope 下别人的预留。
+	if s.state != billingReservationIdle && s.state != billingReservationHeld {
 		return
 	}
-	s.store = store
-	s.scope = scope
-	s.requestID = requestID
-	s.amount = amount
+	s.bindings = append(s.bindings, billingReservationBinding{
+		store:     store,
+		scope:     scope,
+		requestID: requestID,
+		amount:    amount,
+	})
 	s.state = billingReservationHeld
 }
 
@@ -271,16 +294,21 @@ func (s *BillingReservationSlot) startHeartbeat() {
 		return
 	}
 	s.mu.Lock()
-	if s.state != billingReservationHeld || s.store == nil || s.heartbeat != nil {
+	if s.state != billingReservationHeld || len(s.bindings) == 0 || s.heartbeat != nil {
 		s.mu.Unlock()
 		return
 	}
-	renewer, ok := s.store.(billingReservationRenewer)
-	if !ok {
+	renewable := false
+	for i := range s.bindings {
+		if _, ok := s.bindings[i].store.(billingReservationRenewer); ok {
+			renewable = true
+			break
+		}
+	}
+	if !renewable {
 		s.mu.Unlock()
 		return
 	}
-	scope, requestID := s.scope, s.requestID
 	done := make(chan struct{})
 	s.heartbeat = done
 	s.mu.Unlock()
@@ -293,25 +321,51 @@ func (s *BillingReservationSlot) startHeartbeat() {
 			case <-done:
 				return
 			case <-ticker.C:
-				renewCtx, cancel := context.WithTimeout(context.Background(), billingReservationReleaseTimeout)
-				err := renewer.RenewUserBalanceReservation(renewCtx, scope, requestID, billingReservationTTL)
-				cancel()
-				if err == nil {
-					RecordBillingReservationRenew()
-					continue
-				}
-				if errors.Is(err, ErrBillingReservationExpired) {
-					// 凭据已被 TTL 自愈回收（结算任务丢失 / 归还漏掉）：停止续期即可。
-					RecordBillingReservationExpiredRelease()
+				if !s.renewBindings() {
 					return
 				}
-				RecordBillingReservationRenewError()
-				logger.LegacyPrintf("service.billing_cache",
-					"ALERT: renew in-flight balance reservation failed for scope %s: %v", scope, err)
-				return
 			}
 		}
 	}()
+}
+
+// renewBindings 续期槽位里所有可续期的凭据。返回 false 表示心跳应停止：
+// 没有任何凭据续期成功（全部过期），或出现非过期错误（沿用单绑定时代的保守语义）。
+func (s *BillingReservationSlot) renewBindings() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	bindings := append([]billingReservationBinding(nil), s.bindings...)
+	s.mu.Unlock()
+	if len(bindings) == 0 {
+		return false
+	}
+	alive := false
+	for _, binding := range bindings {
+		renewer, ok := binding.store.(billingReservationRenewer)
+		if !ok {
+			continue
+		}
+		renewCtx, cancel := context.WithTimeout(context.Background(), billingReservationReleaseTimeout)
+		err := renewer.RenewUserBalanceReservation(renewCtx, binding.scope, binding.requestID, billingReservationTTL)
+		cancel()
+		if err == nil {
+			RecordBillingReservationRenew()
+			alive = true
+			continue
+		}
+		if errors.Is(err, ErrBillingReservationExpired) {
+			// 凭据已被 TTL 自愈回收（结算任务丢失 / 归还漏掉）：该条停止续期即可。
+			RecordBillingReservationExpiredRelease()
+			continue
+		}
+		RecordBillingReservationRenewError()
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: renew in-flight balance reservation failed for scope %s: %v", binding.scope, err)
+		return false
+	}
+	return alive
 }
 
 // HandOff 声明"本请求的归还责任移交给结算任务"：handler 收尾的 ReleaseOnExit 不再归还，
@@ -370,9 +424,9 @@ func (s *BillingReservationSlot) release(ctx context.Context, exitOnly bool) {
 		s.mu.Unlock()
 		return // idle / released：无事可做
 	}
-	store, scope, requestID, amount := s.store, s.scope, s.requestID, s.amount
+	bindings := s.bindings
 	heartbeat := s.heartbeat
-	s.store, s.scope, s.requestID, s.amount = nil, "", "", 0
+	s.bindings = nil
 	s.heartbeat = nil
 	s.state = billingReservationReleased
 	s.mu.Unlock()
@@ -382,7 +436,7 @@ func (s *BillingReservationSlot) release(ctx context.Context, exitOnly bool) {
 		close(heartbeat)
 	}
 
-	if store == nil || amount <= 0 || scope == "" || requestID == "" {
+	if len(bindings) == 0 {
 		return
 	}
 	if ctx == nil {
@@ -392,17 +446,22 @@ func (s *BillingReservationSlot) release(ctx context.Context, exitOnly bool) {
 	// Redis 写入会静默失败，把余额一直钉到 TTL 到期。
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), billingReservationReleaseTimeout)
 	defer cancel()
-	if err := store.ReleaseUserBalanceReservation(releaseCtx, scope, requestID, amount, billingReservationTTL); err != nil {
-		if errors.Is(err, ErrBillingReservationExpired) {
-			// 凭据已随 TTL 过期：这块额度已由自愈回收，本次归还被安全忽略。
-			RecordBillingReservationExpiredRelease()
-			return
+	for _, binding := range bindings {
+		if binding.store == nil || binding.amount <= 0 || binding.scope == "" || binding.requestID == "" {
+			continue
 		}
-		RecordBillingReservationReleaseError()
-		logger.LegacyPrintf("service.billing_cache", "ALERT: release in-flight balance reservation failed for scope %s: %v", scope, err)
-		return
+		if err := binding.store.ReleaseUserBalanceReservation(releaseCtx, binding.scope, binding.requestID, binding.amount, billingReservationTTL); err != nil {
+			if errors.Is(err, ErrBillingReservationExpired) {
+				// 凭据已随 TTL 过期：这块额度已由自愈回收，本次归还被安全忽略。
+				RecordBillingReservationExpiredRelease()
+				continue
+			}
+			RecordBillingReservationReleaseError()
+			logger.LegacyPrintf("service.billing_cache", "ALERT: release in-flight balance reservation failed for scope %s: %v", binding.scope, err)
+			continue
+		}
+		RecordBillingReservationReleased()
 	}
-	RecordBillingReservationReleased()
 }
 
 type subscriptionCacheInvalidationPubSub interface {
@@ -1131,6 +1190,8 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	var decisionBalance float64
 	// 订阅模式的用量快照：用于在途预留的限额护栏（复用同一次缓存读，避免快照漂移）。
 	var decisionSubData *subscriptionCacheData
+	// 余额模式下 user×platform 配额的用量/限额快照：同样用于在途预留。
+	var decisionPlatformQuota *userPlatformQuotaSnapshot
 
 	if isSubscriptionMode {
 		subData, err := s.checkSubscriptionEligibility(ctx, user.ID, group, subscription)
@@ -1148,9 +1209,11 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 
 	// user × platform quota 仅在 standard（余额）模式生效；订阅模式豁免
 	if !isSubscriptionMode {
-		if err := s.checkUserPlatformQuotaEligibility(ctx, user.ID, platform); err != nil {
+		platformQuota, err := s.loadUserPlatformQuotaEligibility(ctx, user.ID, platform)
+		if err != nil {
 			return err
 		}
+		decisionPlatformQuota = platformQuota
 	}
 
 	// Check API Key rate limits (applies to both billing modes)
@@ -1171,6 +1234,10 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	//   - 订阅模式：scope=用户×分组，护栏是 `usage + Σ预留 < 限额`（三个窗口任一超限即拒），
 	//     修掉"并发请求共用同一份用量快照、超额消耗订阅配额"的超卖。
 	// 放在最后一步：前面任何一步拒绝都无需回滚预留。
+	//   - 余额模式还追加 user×platform quota 预留（scope=用户×平台）：任一窗口
+	//     `usage + Σ预留` 越界即拒，堵住平台配额在并发下被超额消耗。
+	//   - 两种模式都追加 API Key 额度预留（scope=apikey:<id>）：`quota_used + Σ预留 > quota`
+	//     即拒，堵住同一个 key 的额度在并发下被超额消耗（参考 new-api 的 token 额度预留）。
 	if isSubscriptionMode {
 		if err := s.reserveSubscriptionSpend(ctx, user.ID, group, decisionSubData, eligibility.maxRequestSpend, eligibility.reservationSlot); err != nil {
 			return err
@@ -1179,6 +1246,23 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 		if err := s.reserveRequestSpend(ctx, user.ID, decisionBalance, eligibility.maxRequestSpend, eligibility.reservationSlot); err != nil {
 			return err
 		}
+		// 平台配额是同一请求的第二个 scope：余额预留已经绑定，平台预留失败时必须
+		// 回滚全部绑定，否则这笔被拒绝的请求会白占余额额度到 TTL。
+		if err := s.reserveUserPlatformQuotaSpend(ctx, user.ID, platform, decisionPlatformQuota, eligibility.maxRequestSpend, eligibility.reservationSlot); err != nil {
+			if eligibility.reservationSlot != nil {
+				eligibility.reservationSlot.Release(ctx)
+			}
+			return err
+		}
+	}
+
+	// API Key 总额度是同一请求可能追加的第三个 scope（余额/订阅两种模式都生效）：
+	// 前面的绑定已经落下，这里失败同样必须整槽回滚，否则被拒请求会白占额度到 TTL。
+	if err := s.reserveAPIKeyQuotaSpend(ctx, apiKey, eligibility.maxRequestSpend, eligibility.reservationSlot); err != nil {
+		if eligibility.reservationSlot != nil {
+			eligibility.reservationSlot.Release(ctx)
+		}
+		return err
 	}
 
 	return nil
@@ -1781,6 +1865,65 @@ func subscriptionReservationBudget(group *Group, subData *subscriptionCacheData)
 	return budget
 }
 
+// reserveUserPlatformQuotaSpend 为余额模式追加 user×platform 配额的在途预留：
+// 把本次最坏费用记入 user×platform 的预留总额，并要求三个窗口的
+// `usage + Σ预留` 都不越界。只在该 user×platform 配了至少一个 limit 时生效。
+//
+// 与订阅预留共用同一套 reserveSpendWithGuard 原子语义；scope 独立，因此余额
+// 护栏与平台配额护栏互不影响，但同一次请求会在槽位上持有两条凭据。
+func (s *BillingCacheService) reserveUserPlatformQuotaSpend(ctx context.Context, userID int64, platform string, quota *userPlatformQuotaSnapshot, maxRequestSpend float64, slot *BillingReservationSlot) error {
+	if quota == nil || platform == "" || !quota.hasLimit() {
+		return nil
+	}
+	scope := userPlatformQuotaReservationScope(userID, platform)
+	maxReserved := quota.reservationBudget()
+	return s.reserveSpendWithGuard(ctx, scope, maxRequestSpend, maxReserved, slot, func(reservedAfter float64) error {
+		if err := quota.limitExceeded(reservedAfter); err != nil {
+			logger.LegacyPrintf("service.billing_cache",
+				"billing preflight rejected user=%d platform=%s (platform quota inflight reservation): reserved=%.6f would exceed limit",
+				userID, platform, reservedAfter)
+			return err
+		}
+		return nil
+	}, "")
+}
+
+// reserveAPIKeyQuotaSpend 为 API Key 总额度（api_key.quota）追加在途预留：
+// 把本次最坏费用记入 scope=apikey:<id> 的预留总额，要求 `quota_used + Σ预留 <= quota`。
+// 两种计费模式（余额 / 订阅）都生效 —— key 额度与钱包、订阅是并行的三道额度。
+//
+// 参考 new-api 的 token 额度预留（model.TryReserveTokenQuota 同时动 RemainQuota 与
+// UsedQuota，Redis 不可用时回落 reserveTokenQuotaDB 的条件更新）：sub2api 的准入只读
+// 鉴权缓存里的 quota_used 快照，而 quota_used 要到结算路径
+// （APIKeyService.UpdateQuotaUsed）才原子递增，因此并发突发时 N 个请求会共用同一份
+// 快照一起穿过 `quota_used >= quota` 判定，使该 key 的 quota_used 超出 quota
+// （钱照收，额度上限失效）。把"已放行未结算"计入后，判定与余额/订阅预留同构。
+//
+// 未配置额度（quota <= 0 = 不限量）、无最坏费用上界或缓存不支持预留能力时静默 no-op，
+// 行为与修复前一致。
+func (s *BillingCacheService) reserveAPIKeyQuotaSpend(ctx context.Context, apiKey *APIKey, maxRequestSpend float64, slot *BillingReservationSlot) error {
+	if apiKey == nil || apiKey.ID <= 0 || apiKey.Quota <= 0 {
+		return nil
+	}
+	// 快照化：护栏闭包里不再读 apiKey，避免调用方并发改动同一对象造成判定漂移。
+	apiKeyID := apiKey.ID
+	limit := apiKey.Quota
+	used := apiKey.QuotaUsed
+	remaining := math.Max(0, limit-used)
+	scope := apiKeyQuotaReservationScope(apiKeyID)
+	return s.reserveSpendWithGuard(ctx, scope, maxRequestSpend, remaining, slot, func(reservedAfter float64) error {
+		// used >= limit 沿用既有拒绝边界（无预留时的 `quota_used >= quota`）；
+		// 第二项是并发维度：最坏情况全部花光也不得越过额度上限。
+		if used >= limit || used+reservedAfter > limit {
+			logger.LegacyPrintf("service.billing_cache",
+				"billing preflight rejected api_key=%d (quota inflight reservation): used=%.6f reserved=%.6f would exceed quota=%.6f",
+				apiKeyID, used, reservedAfter, limit)
+			return ErrAPIKeyQuotaExhausted
+		}
+		return nil
+	}, "")
+}
+
 // checkSubscriptionEligibility 检查订阅模式资格，并返回订阅缓存数据。
 //
 // 返回 subData 是为了让调用方能在放行前用同一份快照建立在途预留
@@ -1950,22 +2093,91 @@ func circuitStateString(state billingCircuitBreakerState) string {
 	}
 }
 
-// checkUserPlatformQuotaEligibility 在 standard 模式下检查 user × platform 日/周/月 quota。
+// userPlatformQuotaSnapshot 是一次预检读到的 user×platform 配额快照。
+// 返回快照（而不只是 error）是为了让调用方在放行前用同一次缓存读建立
+// 在途预留，避免"判定依据"与"预留依据"来自两份不同的用量快照。
+type userPlatformQuotaSnapshot struct {
+	dailyLimitUSD   *float64
+	weeklyLimitUSD  *float64
+	monthlyLimitUSD *float64
+
+	dailyUsageUSD   float64
+	weeklyUsageUSD  float64
+	monthlyUsageUSD float64
+
+	dailyWindowStart   *time.Time
+	weeklyWindowStart  *time.Time
+	monthlyWindowStart *time.Time
+}
+
+func (s *userPlatformQuotaSnapshot) hasLimit() bool {
+	return s != nil && (s.dailyLimitUSD != nil || s.weeklyLimitUSD != nil || s.monthlyLimitUSD != nil)
+}
+
+// reservationBudget 返回三个窗口中最小的剩余额度（未配置 limit 的窗口不参与）。
+func (s *userPlatformQuotaSnapshot) reservationBudget() float64 {
+	if s == nil {
+		return 0
+	}
+	budget := math.MaxFloat64
+	if s.dailyLimitUSD != nil {
+		budget = math.Min(budget, math.Max(0, *s.dailyLimitUSD-s.dailyUsageUSD))
+	}
+	if s.weeklyLimitUSD != nil {
+		budget = math.Min(budget, math.Max(0, *s.weeklyLimitUSD-s.weeklyUsageUSD))
+	}
+	if s.monthlyLimitUSD != nil {
+		budget = math.Min(budget, math.Max(0, *s.monthlyLimitUSD-s.monthlyUsageUSD))
+	}
+	return budget
+}
+
+// limitExceeded 判定"已用 + 在途预留"是否击穿任一窗口限额。
+// inFlight=0 时退化为既有 `usage >= limit` 的拒绝边界；inFlight>0 时要求
+// `usage + inFlight <= limit`，与订阅预留共用同一套边界语义。
+func (s *userPlatformQuotaSnapshot) limitExceeded(inFlight float64) error {
+	if s == nil {
+		return nil
+	}
+	if inFlight < 0 {
+		inFlight = 0
+	}
+	now := time.Now()
+	if s.dailyLimitUSD != nil && subscriptionWindowExceeded(s.dailyUsageUSD, *s.dailyLimitUSD, inFlight) {
+		return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
+	}
+	if s.weeklyLimitUSD != nil && subscriptionWindowExceeded(s.weeklyUsageUSD, *s.weeklyLimitUSD, inFlight) {
+		return withWindowResetsMetadata(ErrUserPlatformWeeklyQuotaExhausted, nextWeeklyReset(now))
+	}
+	if s.monthlyLimitUSD != nil && subscriptionWindowExceeded(s.monthlyUsageUSD, *s.monthlyLimitUSD, inFlight) {
+		return withWindowResetsMetadata(ErrUserPlatformMonthlyQuotaExhausted, nextMonthlyResetFrom(s.monthlyWindowStart, now))
+	}
+	return nil
+}
+
+// checkUserPlatformQuotaEligibility 是只需要"放行/拒绝"结论的薄封装。
+func (s *BillingCacheService) checkUserPlatformQuotaEligibility(ctx context.Context, userID int64, platform string) error {
+	_, err := s.loadUserPlatformQuotaEligibility(ctx, userID, platform)
+	return err
+}
+
+// loadUserPlatformQuotaEligibility 在 standard 模式下检查 user × platform 日/周/月 quota，
+// 并把判定用的用量/限额快照返回给调用方（供在途预留复用，见 reserveUserPlatformQuotaSpend）。
+//
 // 返回 nil = 允许；返回 ErrUserPlatform{Daily/Weekly/Monthly}QuotaExhausted = 拒绝（带 window_resets_at metadata）。
-// checkUserPlatformQuotaEligibility 检查用户在指定平台的 USD 配额。
 //
 // 流程（Redis-first / DB-fallback）：
 //  1. 先读 Redis cache；若命中且 SchemaVersion==1，直接用 entry 中的 limits 和 window_start 做校验，
 //     免除 DB 查询。
 //  2. cache MISS 或旧版 entry（SchemaVersion==0）→ 查 DB 回填完整 entry（含 limits/window_start）。
 //  3. Redis 故障（err != nil）→ fail-open，查 DB 做一次性检查，不回填。
-func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
+func (s *BillingCacheService) loadUserPlatformQuotaEligibility(
 	ctx context.Context,
 	userID int64,
 	platform string,
-) error {
+) (*userPlatformQuotaSnapshot, error) {
 	if platform == "" || s.userPlatformQuotaRepo == nil {
-		return nil
+		return nil, nil
 	}
 
 	// cache 未配置（如简化部署 / 单测路径）→ 直接走 DB 查询，避免 nil panic。
@@ -2048,16 +2260,18 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 			}
 			setCancel()
 		}
-		if entry.DailyLimitUSD != nil && dailyUsage >= *entry.DailyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
+		snapshot := &userPlatformQuotaSnapshot{
+			dailyLimitUSD:      entry.DailyLimitUSD,
+			weeklyLimitUSD:     entry.WeeklyLimitUSD,
+			monthlyLimitUSD:    entry.MonthlyLimitUSD,
+			dailyUsageUSD:      dailyUsage,
+			weeklyUsageUSD:     weeklyUsage,
+			monthlyUsageUSD:    monthlyUsage,
+			dailyWindowStart:   newDailyStart,
+			weeklyWindowStart:  newWeeklyStart,
+			monthlyWindowStart: newMonthlyStart,
 		}
-		if entry.WeeklyLimitUSD != nil && weeklyUsage >= *entry.WeeklyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformWeeklyQuotaExhausted, nextWeeklyReset(now))
-		}
-		if entry.MonthlyLimitUSD != nil && monthlyUsage >= *entry.MonthlyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformMonthlyQuotaExhausted, nextMonthlyResetFrom(entry.MonthlyWindowStart, now))
-		}
-		return nil
+		return snapshot, snapshot.limitExceeded(0)
 	}
 
 	// --- cache MISS、旧版 entry 或 Redis 故障 → 查 DB（singleflight 合并并发回源）---
@@ -2081,11 +2295,11 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 	case <-ctx.Done():
 		// 当前 caller 的 ctx 被取消：fail-open，不阻断 (此请求已无意义)。
 		logger.LegacyPrintf("service.billing_cache", "Warning: user platform quota check ctx cancelled user=%d platform=%s: %v (fail-open)", userID, platform, ctx.Err())
-		return nil
+		return nil, nil
 	}
 	if dbErr != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: load user platform quota failed user=%d platform=%s: %v (fail-open)", userID, platform, dbErr)
-		return nil
+		return nil, nil
 	}
 	rec, _ := v.(*UserPlatformQuotaRecord)
 	if rec == nil {
@@ -2116,7 +2330,7 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 			}
 			setCancel()
 		}
-		return nil
+		return nil, nil
 	}
 
 	now := time.Now()
@@ -2135,16 +2349,18 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 
 	// Redis 故障时 fail-open：不回填，直接用 DB 数据做一次性检查
 	if cacheErr != nil {
-		if rec.DailyLimitUSD != nil && dailyUsage >= *rec.DailyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
+		snapshot := &userPlatformQuotaSnapshot{
+			dailyLimitUSD:      rec.DailyLimitUSD,
+			weeklyLimitUSD:     rec.WeeklyLimitUSD,
+			monthlyLimitUSD:    rec.MonthlyLimitUSD,
+			dailyUsageUSD:      dailyUsage,
+			weeklyUsageUSD:     weeklyUsage,
+			monthlyUsageUSD:    monthlyUsage,
+			dailyWindowStart:   rec.DailyWindowStart,
+			weeklyWindowStart:  rec.WeeklyWindowStart,
+			monthlyWindowStart: rec.MonthlyWindowStart,
 		}
-		if rec.WeeklyLimitUSD != nil && weeklyUsage >= *rec.WeeklyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformWeeklyQuotaExhausted, nextWeeklyReset(now))
-		}
-		if rec.MonthlyLimitUSD != nil && monthlyUsage >= *rec.MonthlyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformMonthlyQuotaExhausted, nextMonthlyResetFrom(rec.MonthlyWindowStart, now))
-		}
-		return nil
+		return snapshot, snapshot.limitExceeded(0)
 	}
 
 	// cache MISS 或旧版 entry → 回填完整 entry（含 limits 和 window_start）
@@ -2172,16 +2388,18 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 		setCancel()
 	}
 
-	if rec.DailyLimitUSD != nil && dailyUsage >= *rec.DailyLimitUSD {
-		return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
+	snapshot := &userPlatformQuotaSnapshot{
+		dailyLimitUSD:      rec.DailyLimitUSD,
+		weeklyLimitUSD:     rec.WeeklyLimitUSD,
+		monthlyLimitUSD:    rec.MonthlyLimitUSD,
+		dailyUsageUSD:      dailyUsage,
+		weeklyUsageUSD:     weeklyUsage,
+		monthlyUsageUSD:    monthlyUsage,
+		dailyWindowStart:   rec.DailyWindowStart,
+		weeklyWindowStart:  rec.WeeklyWindowStart,
+		monthlyWindowStart: rec.MonthlyWindowStart,
 	}
-	if rec.WeeklyLimitUSD != nil && weeklyUsage >= *rec.WeeklyLimitUSD {
-		return withWindowResetsMetadata(ErrUserPlatformWeeklyQuotaExhausted, nextWeeklyReset(now))
-	}
-	if rec.MonthlyLimitUSD != nil && monthlyUsage >= *rec.MonthlyLimitUSD {
-		return withWindowResetsMetadata(ErrUserPlatformMonthlyQuotaExhausted, nextMonthlyResetFrom(rec.MonthlyWindowStart, now))
-	}
-	return nil
+	return snapshot, snapshot.limitExceeded(0)
 }
 
 // withWindowResetsMetadata 给 quota error 附加 window_resets_at metadata（RFC3339）。
