@@ -34,6 +34,11 @@ var errBillingCacheUnavailable = fmt.Errorf("billing cache unavailable")
 // 安全忽略"，绝不能因此去递减聚合总额（那会扣掉别人的预留）。
 var ErrBillingReservationExpired = fmt.Errorf("billing reservation already expired")
 
+// ErrReservationBackendsUnavailable 表示 Redis 预留账本不可用，且已装配的 DB
+// 兜底账本同样不可用。此时不能退回无预留的 fail-open，否则并发准入护栏会整层
+// 消失；服务层必须把它转成 ErrBillingServiceUnavailable（HTTP 503）。
+var ErrReservationBackendsUnavailable = errors.New("billing reservation backends unavailable")
+
 var (
 	ErrSubscriptionInvalid       = infraerrors.Forbidden("SUBSCRIPTION_INVALID", "subscription is invalid or expired")
 	ErrBillingServiceUnavailable = infraerrors.ServiceUnavailable("BILLING_SERVICE_ERROR", "Billing service temporarily unavailable. Please retry later.")
@@ -1671,8 +1676,9 @@ func (s *BillingCacheService) balanceReservation() (billingReservationStore, boo
 //
 // 失败语义：
 //   - slot == nil（调用方未挂预留槽位）或 maxRequestSpend <= 0（没有可用上界）：no-op；
-//   - 底层缓存不支持该能力 / Redis 故障：fail-open（打 ALERT + 计数），退回修复前行为，
-//     不让一次缓存抖动把全体用户拦在门外；
+//   - 底层缓存不支持该能力（降级/轻量测试装配）：no-op；
+//   - Redis 故障：首次切换到共享 DB 兜底账本；Redis 与 DB 都失败时 fail-closed（503），
+//     只有未装配 DB 能力的装配才退回旧的 fail-open；
 //   - 预留后封底护栏不成立：立即回滚预留并返回 ErrInsufficientBalance（403）。
 func (s *BillingCacheService) reserveRequestSpend(ctx context.Context, userID int64, balance float64, maxRequestSpend float64, slot *BillingReservationSlot) error {
 	scope := balanceReservationScope(userID)
@@ -1769,7 +1775,9 @@ func (s *BillingCacheService) inflightReservationAllowed(ctx context.Context, ba
 //
 // 失败语义：
 //   - slot == nil（调用方未挂预留槽位）或 amount <= 0（没有可用上界）：no-op；
-//   - 底层缓存不支持该能力 / Redis 故障：fail-open（打 ALERT + 计数），退回修复前行为；
+//   - 底层缓存不支持该能力（降级/轻量测试装配）：no-op；
+//   - Redis 故障：切到共享 DB 兜底；Redis 与 DB 都失败时 fail-closed（503），仅无 DB 装配
+//     的降级/测试场景保留旧 fail-open；
 //   - guard 判定不成立：回滚预留 + 计数，返回 guard 的错误。
 func (s *BillingCacheService) reserveSpendWithGuard(
 	ctx context.Context,
@@ -1794,6 +1802,11 @@ func (s *BillingCacheService) reserveSpendWithGuard(
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
+			if errors.Is(err, ErrReservationBackendsUnavailable) {
+				RecordBillingReservationFailClosed()
+				logger.LegacyPrintf("service.billing_cache", "ALERT: Redis and database reservation backends are unavailable for scope %s: %v", scope, err)
+				return ErrBillingServiceUnavailable.WithCause(err)
+			}
 			RecordBillingReservationFailOpen()
 			logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed: %v", scope, err)
 			return nil
@@ -1814,6 +1827,11 @@ func (s *BillingCacheService) reserveSpendWithGuard(
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
+		}
+		if errors.Is(err, ErrReservationBackendsUnavailable) {
+			RecordBillingReservationFailClosed()
+			logger.LegacyPrintf("service.billing_cache", "ALERT: Redis and database reservation backends are unavailable for scope %s: %v", scope, err)
+			return ErrBillingServiceUnavailable.WithCause(err)
 		}
 		RecordBillingReservationFailOpen()
 		logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed: %v", scope, err)

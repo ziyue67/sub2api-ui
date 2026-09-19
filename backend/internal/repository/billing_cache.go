@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -410,11 +411,18 @@ type billingCache struct {
 	rdb *redis.Client
 	// db 是**可选**的在途预留 DB 兜底句柄（nil = 不启用）。
 	//
-	// Redis 不可用时，预留能力的既有行为是 fail-open —— 本笔在完全没有预留的情况下
-	// 放行，并发准入护栏整层失效（docs/BILLING_ZERO_OVERSHOOT.md 的"已知边界"）。
-	// 有了它，准入会退化为一条带用户行锁的 DB 事务（见 dbReservationStore），
-	// 语义与 Redis 侧一致，只是吞吐被串行化。等价于 new-api 的 reserveUserQuotaDB。
+	// Redis 不可用时，准入会退化为 DB 事务（见 dbReservationStore）：钱包 scope 锁
+	// users 行，其它 scope 用 advisory transaction lock；语义与 Redis 侧一致。
+	// 正式装配中 Redis 与 DB 都失败会返回 sentinel 并由服务层 fail-closed（503）。
+	// 只有未装配 DB 的降级/测试装配才保留旧的 fail-open 行为。
 	db *sql.DB
+
+	// Shared DB-fallback window probe cache. The window is persisted in
+	// billing_reservation_fallback_state so every instance switches ledgers
+	// together; this local cache avoids one SELECT per reservation.
+	fallbackProbeMu    sync.Mutex
+	fallbackProbeAt    time.Time
+	fallbackProbeUntil time.Time
 }
 
 func NewBillingCache(rdb *redis.Client) service.BillingCache {
@@ -424,10 +432,105 @@ func NewBillingCache(rdb *redis.Client) service.BillingCache {
 // NewBillingCacheWithDB 构造带 DB 预留兜底的计费缓存。
 //
 // 与 NewBillingCache 的区别只有一个：Redis 侧的预留操作失败时，不再直接放弃
-// （让上层 fail-open），而是改用 billing_balance_reservations 上的事务做同样语义的
-// 原子准入。生产装配用这个构造函数；测试与降级装配可以继续用 NewBillingCache。
+// （让上层 fail-open），而是改用 DB 预留账本做同样语义的原子准入：
+// 钱包 scope 使用 billing_balance_reservations，其它 scope 使用
+// billing_scope_reservations。生产装配用这个构造函数；测试与降级装配可以继续用
+// NewBillingCache。
 func NewBillingCacheWithDB(rdb *redis.Client, db *sql.DB) service.BillingCache {
 	return &billingCache{rdb: rdb, db: db}
+}
+
+func reservationOperationContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func reservationProbeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return reservationDetachedContext(ctx, billingReservationFallbackProbeTimeout)
+}
+
+func reservationDetachedContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
+}
+
+// reservationFallbackWindowActive reports whether every instance must use the
+// database reservation ledger. The probe result is cached briefly so a healthy
+// Redis path does not add one database query per request.
+func (c *billingCache) reservationFallbackWindowActive(ctx context.Context) bool {
+	if c == nil || c.db == nil {
+		return false
+	}
+	now := time.Now()
+	c.fallbackProbeMu.Lock()
+	if !c.fallbackProbeAt.IsZero() && now.Sub(c.fallbackProbeAt) < billingReservationFallbackProbeInterval {
+		until := c.fallbackProbeUntil
+		c.fallbackProbeMu.Unlock()
+		return until.After(now)
+	}
+	c.fallbackProbeMu.Unlock()
+
+	store := newDBReservationStore(c.db)
+	if store == nil {
+		return false
+	}
+	probeCtx, cancel := reservationProbeContext(ctx)
+	defer cancel()
+	until, err := store.fallbackWindowUntil(probeCtx)
+	if err != nil {
+		service.RecordBillingReservationFallbackProbeError()
+		log.Printf("Warning: probe billing reservation fallback window failed: %v", err)
+		return false
+	}
+	c.fallbackProbeMu.Lock()
+	c.fallbackProbeAt = now
+	c.fallbackProbeUntil = until
+	c.fallbackProbeMu.Unlock()
+	return until.After(now)
+}
+
+func (c *billingCache) activateReservationFallback(ctx context.Context, ttl time.Duration) {
+	if c == nil || c.db == nil {
+		return
+	}
+	store := newDBReservationStore(c.db)
+	if store == nil {
+		return
+	}
+	activateCtx, cancel := reservationDetachedContext(ctx, billingReservationDBOperationTimeout)
+	defer cancel()
+	if err := store.activateFallbackWindow(activateCtx, ttl); err != nil {
+		service.RecordBillingReservationFallbackActivationError()
+		log.Printf("Warning: activate billing reservation fallback window failed: %v", err)
+	} else {
+		service.RecordBillingReservationFallbackActivated()
+	}
+	now := time.Now()
+	c.fallbackProbeMu.Lock()
+	c.fallbackProbeAt = now
+	c.fallbackProbeUntil = now.Add(normalizedBillingReservationTTL(ttl))
+	c.fallbackProbeMu.Unlock()
+}
+
+func (c *billingCache) tryReserveDatabase(ctx context.Context, scope, requestID string, amount, maxTotal float64, ttl time.Duration) (float64, bool, error) {
+	store := newDBReservationStore(c.db)
+	if store == nil {
+		return 0, false, fmt.Errorf("%w: database reservation store unavailable", service.ErrReservationBackendsUnavailable)
+	}
+	dbCtx, cancel := reservationOperationContext(ctx, billingReservationDBOperationTimeout)
+	defer cancel()
+	total, accepted, err := store.tryReserve(dbCtx, scope, requestID, amount, maxTotal, ttl)
+	if err != nil {
+		service.RecordBillingReservationDBFallbackError()
+		log.Printf("Warning: db reservation fallback failed for scope %s: %v", scope, err)
+		return 0, false, fmt.Errorf("%w: %v", service.ErrReservationBackendsUnavailable, err)
+	}
+	service.RecordBillingReservationDBFallback()
+	return total, accepted, nil
 }
 
 func (c *billingCache) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
@@ -551,20 +654,19 @@ func (c *billingCache) ReserveUserBalance(ctx context.Context, scope string, req
 	if requestID == "" {
 		return 0, fmt.Errorf("reserve requestID must not be empty")
 	}
+	if c.reservationFallbackWindowActive(ctx) {
+		total, _, err := c.tryReserveDatabase(ctx, scope, requestID, amount, math.MaxFloat64, ttl)
+		return total, err
+	}
 	reply, err := reserveBalanceScript.Run(ctx, c.rdb,
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		amount, reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		// 与 TryReserveUserBalance 同源的 DB 兜底。这里没有预算上限（调用方会拿着返回值
-		// 自行做封底判定并在拒绝时归还），因此用 +Inf 让 DB 侧只做登记。
-		if store := newDBReservationStore(c.db); store != nil {
-			total, _, dbErr := store.tryReserveUserBalance(ctx, scope, requestID, amount, math.MaxFloat64, ttl)
-			if dbErr == nil {
-				service.RecordBillingReservationDBFallback()
-				return total, nil
-			}
-			service.RecordBillingReservationDBFallbackError()
-			log.Printf("Warning: db reservation fallback failed for scope %s: %v", scope, dbErr)
+		service.RecordBillingReservationRedisFailure()
+		if c.db != nil {
+			c.activateReservationFallback(ctx, ttl)
+			total, _, dbErr := c.tryReserveDatabase(ctx, scope, requestID, amount, math.MaxFloat64, ttl)
+			return total, dbErr
 		}
 		return 0, err
 	}
@@ -579,26 +681,17 @@ func (c *billingCache) TryReserveUserBalance(ctx context.Context, scope string, 
 	if scope == "" || requestID == "" {
 		return 0, false, fmt.Errorf("reserve scope and requestID must not be empty")
 	}
+	if c.reservationFallbackWindowActive(ctx) {
+		return c.tryReserveDatabase(ctx, scope, requestID, amount, maxTotal, ttl)
+	}
 	reply, err := tryReserveBalanceScript.Run(ctx, c.rdb,
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		amount, maxTotal, reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		// Redis 侧的预留后端不可用。既有行为是直接把错误抛回上层，而上层把它当作
-		// "预留后端故障 → fail-open"，本笔在**完全没有预留**的情况下被放行，
-		// 并发准入护栏整层失效（审计 R2）。
-		//
-		// 这里改为先走 DB 兜底：一条带用户行锁的事务，语义与 Redis 脚本一致
-		// （未过期预留总额 + 本笔 <= maxTotal 才登记），等价于 new-api 的
-		// reserveUserQuotaDB。兜底成功就不再 fail-open；只有兜底也失败才把原始
-		// Redis 错误抛回上层，让行为退化成修复前的 fail-open。
-		if store := newDBReservationStore(c.db); store != nil {
-			total, accepted, dbErr := store.tryReserveUserBalance(ctx, scope, requestID, amount, maxTotal, ttl)
-			if dbErr == nil {
-				service.RecordBillingReservationDBFallback()
-				return total, accepted, nil
-			}
-			service.RecordBillingReservationDBFallbackError()
-			log.Printf("Warning: db reservation fallback failed for scope %s: %v", scope, dbErr)
+		service.RecordBillingReservationRedisFailure()
+		if c.db != nil {
+			c.activateReservationFallback(ctx, ttl)
+			return c.tryReserveDatabase(ctx, scope, requestID, amount, maxTotal, ttl)
 		}
 		return 0, false, err
 	}
@@ -625,8 +718,7 @@ func (c *billingCache) TryReserveUserBalance(ctx context.Context, scope string, 
 type dbReservationOutcome int
 
 const (
-	// dbReservationNotApplicable：未配置兜底句柄，或该 scope 不支持 DB 兜底
-	// （订阅模式的 scope 形如 sub:<user>:<group>）。调用方维持原有的 Redis 语义。
+	// dbReservationNotApplicable: no database fallback handle is configured.
 	dbReservationNotApplicable dbReservationOutcome = iota
 	// dbReservationHandled：本笔确实记在 DB 兜底里，且操作已完成。
 	dbReservationHandled
@@ -641,10 +733,7 @@ func (c *billingCache) tryReleaseDBReservation(ctx context.Context, scope, reque
 	if store == nil {
 		return dbReservationNotApplicable, nil
 	}
-	if _, ok := reservationUserIDFromScope(scope); !ok {
-		return dbReservationNotApplicable, nil
-	}
-	err := store.releaseUserBalanceReservation(ctx, scope, requestID)
+	err := store.release(ctx, scope, requestID)
 	if err == nil {
 		return dbReservationHandled, nil
 	}
@@ -660,10 +749,7 @@ func (c *billingCache) tryRenewDBReservation(ctx context.Context, scope, request
 	if store == nil {
 		return dbReservationNotApplicable, nil
 	}
-	if _, ok := reservationUserIDFromScope(scope); !ok {
-		return dbReservationNotApplicable, nil
-	}
-	err := store.renewUserBalanceReservation(ctx, scope, requestID, ttl)
+	err := store.renew(ctx, scope, requestID, ttl)
 	if err == nil {
 		return dbReservationHandled, nil
 	}
@@ -689,12 +775,28 @@ func (c *billingCache) ReleaseUserBalanceReservation(ctx context.Context, scope 
 	if amount <= 0 {
 		return nil
 	}
+	if c.reservationFallbackWindowActive(ctx) {
+		switch outcome, dbErr := c.tryReleaseDBReservation(ctx, scope, requestID); outcome {
+		case dbReservationHandled:
+			return nil
+		case dbReservationAbsent:
+			return service.ErrBillingReservationExpired
+		default:
+			if dbErr != nil {
+				return dbErr
+			}
+			return service.ErrBillingReservationExpired
+		}
+	}
 	reply, err := releaseBalanceScript.Run(ctx, c.rdb,
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		// Redis 不可用：本笔可能当初记在 DB 兜底里，二次尝试。兜底不可用/不支持该 scope 时
 		// 维持既有行为（返回 Redis 错误）。
+		if c.db != nil {
+			c.activateReservationFallback(ctx, ttl)
+		}
 		switch outcome, dbErr := c.tryReleaseDBReservation(ctx, scope, requestID); outcome {
 		case dbReservationHandled:
 			return nil
@@ -711,6 +813,9 @@ func (c *billingCache) ReleaseUserBalanceReservation(ctx context.Context, scope 
 	}
 	if reservationReplyIsExpired(reply) {
 		// Redis 侧没有本笔凭据（TTL 自愈已回收）——但兜底可用时它也可能记在 DB 里。
+		if c.db != nil {
+			c.activateReservationFallback(ctx, ttl)
+		}
 		switch outcome, dbErr := c.tryReleaseDBReservation(ctx, scope, requestID); outcome {
 		case dbReservationHandled:
 			return nil
@@ -734,10 +839,26 @@ func (c *billingCache) RenewUserBalanceReservation(ctx context.Context, scope st
 	if scope == "" || requestID == "" {
 		return nil
 	}
+	if c.reservationFallbackWindowActive(ctx) {
+		switch outcome, dbErr := c.tryRenewDBReservation(ctx, scope, requestID, ttl); outcome {
+		case dbReservationHandled:
+			return nil
+		case dbReservationAbsent:
+			return service.ErrBillingReservationExpired
+		default:
+			if dbErr != nil {
+				return dbErr
+			}
+			return service.ErrBillingReservationExpired
+		}
+	}
 	reply, err := renewBalanceScript.Run(ctx, c.rdb,
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		reservationTTLMillis(ttl)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
+		if c.db != nil {
+			c.activateReservationFallback(ctx, ttl)
+		}
 		switch outcome, dbErr := c.tryRenewDBReservation(ctx, scope, requestID, ttl); outcome {
 		case dbReservationHandled:
 			return nil
@@ -753,6 +874,9 @@ func (c *billingCache) RenewUserBalanceReservation(ctx context.Context, scope st
 		}
 	}
 	if reservationReplyIsMissing(reply) {
+		if c.db != nil {
+			c.activateReservationFallback(ctx, ttl)
+		}
 		switch outcome, dbErr := c.tryRenewDBReservation(ctx, scope, requestID, ttl); outcome {
 		case dbReservationHandled:
 			return nil

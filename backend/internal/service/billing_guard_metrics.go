@@ -92,6 +92,12 @@ var (
 	// 非零即代表正在降级运行：准入仍受护栏保护，但单用户吞吐被行锁串行化。
 	billingReservationDBFallbackTotal    atomic.Int64
 	billingReservationDBFallbackErrTotal atomic.Int64
+	// 双账本都不可用时的 fail-closed、Redis 故障切 DB、共享兜底窗口状态。
+	billingReservationRedisFailureTotal        atomic.Int64
+	billingReservationFailClosedTotal          atomic.Int64
+	billingReservationFallbackActivatedTotal   atomic.Int64
+	billingReservationFallbackActivateErrTotal atomic.Int64
+	billingReservationFallbackProbeErrTotal    atomic.Int64
 )
 
 // 复核与降级计数。这些是"护栏静默失效"的直接证据面。
@@ -175,6 +181,12 @@ type BillingGuardStats struct {
 	ReservationDBFallback    int64 `json:"reservation_db_fallback"`
 	ReservationDBFallbackErr int64 `json:"reservation_db_fallback_error"`
 
+	ReservationRedisFailure        int64 `json:"reservation_redis_failure"`
+	ReservationFailClosed          int64 `json:"reservation_fail_closed"`
+	ReservationFallbackActivated   int64 `json:"reservation_fallback_activated"`
+	ReservationFallbackActivateErr int64 `json:"reservation_fallback_activate_error"`
+	ReservationFallbackProbeErr    int64 `json:"reservation_fallback_probe_error"`
+
 	// DB 复核与降级。
 	RecheckDBReads              int64 `json:"recheck_db_reads"`
 	RecheckFailClosed           int64 `json:"recheck_fail_closed"`
@@ -222,6 +234,12 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 		ReservationDBFallback:         billingReservationDBFallbackTotal.Load(),
 		ReservationDBFallbackErr:      billingReservationDBFallbackErrTotal.Load(),
 
+		ReservationRedisFailure:        billingReservationRedisFailureTotal.Load(),
+		ReservationFailClosed:          billingReservationFailClosedTotal.Load(),
+		ReservationFallbackActivated:   billingReservationFallbackActivatedTotal.Load(),
+		ReservationFallbackActivateErr: billingReservationFallbackActivateErrTotal.Load(),
+		ReservationFallbackProbeErr:    billingReservationFallbackProbeErrTotal.Load(),
+
 		RecheckDBReads:              billingRecheckDBReadsTotal.Load(),
 		RecheckFailClosed:           billingRecheckFailClosedTotal.Load(),
 		RecheckSkippedNoUserRepo:    billingRecheckSkippedNoUserRepoTotal.Load(),
@@ -246,7 +264,19 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 	}
 	if stats.ReservationDBFallbackErr > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
-			"DB 预留兜底也失败：该笔退回 fail-open，并发护栏失效（同时检查 Redis 与 PostgreSQL）")
+			"DB 预留兜底也失败：正式装配会 fail-closed 返回 503；仅无 DB 能力的降级装配才 fail-open（同时检查 Redis 与 PostgreSQL）")
+	}
+	if stats.ReservationRedisFailure > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"Redis 预留不可用，已切换到 DB 兜底账本（护栏仍生效，但预留走 PostgreSQL；检查 Redis 可用性）")
+	}
+	if stats.ReservationFailClosed > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"Redis 与 DB 兜底同时不可用：预检 fail-closed，用户看到 503")
+	}
+	if stats.ReservationFallbackActivateErr > 0 || stats.ReservationFallbackProbeErr > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"DB 兜底窗口抬升或探测失败：跨实例账本一致性变弱（检查 DB 连接与迁移 240）")
 	}
 	if stats.ReservationReleaseErr > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
@@ -335,8 +365,26 @@ func RecordBillingReservationDBFallback() { billingReservationDBFallbackTotal.Ad
 // RecordBillingReservationDBFallbackError 记录一次"DB 兜底也失败"。
 //
 // 这是比 FailOpen 更严重的信号：它意味着 Redis 与 PostgreSQL 同时不可用，该笔请求
-// 退回 fail-open（无预留放行）。
+// 正式装配会由服务层转成 503；仅未装配 DB 兜底的降级/测试装配才会 fail-open。
 func RecordBillingReservationDBFallbackError() { billingReservationDBFallbackErrTotal.Add(1) }
+
+// RecordBillingReservationRedisFailure 记录一次 Redis 预留失败（即将切换到 DB 兜底）。
+// 与 FailOpen 的区别：它表示护栏已降级到 DB 但仍生效；FailOpen 表示护栏真正消失。
+func RecordBillingReservationRedisFailure() { billingReservationRedisFailureTotal.Add(1) }
+
+// RecordBillingReservationFailClosed 记录一次 Redis 与 DB 兜底都不可用的拒绝（503）。
+func RecordBillingReservationFailClosed() { billingReservationFailClosedTotal.Add(1) }
+
+// RecordBillingReservationFallbackActivated 记录一次本实例抬起共享 DB 兜底窗口。
+func RecordBillingReservationFallbackActivated() { billingReservationFallbackActivatedTotal.Add(1) }
+
+// RecordBillingReservationFallbackActivationError 记录一次共享兜底窗口抬升失败。
+func RecordBillingReservationFallbackActivationError() {
+	billingReservationFallbackActivateErrTotal.Add(1)
+}
+
+// RecordBillingReservationFallbackProbeError 记录一次共享兜底窗口探测失败。
+func RecordBillingReservationFallbackProbeError() { billingReservationFallbackProbeErrTotal.Add(1) }
 
 // RecordBillingRecheckDBRead 记录一次预检的 DB 真值回源。
 func RecordBillingRecheckDBRead() { billingRecheckDBReadsTotal.Add(1) }

@@ -3,7 +3,9 @@
 本文覆盖"余额模式后付费计费"的五层准入/结算护栏，说明**每个配置项的默认值、如何判断
 护栏是否真的在跑、以及升级时的注意事项**。适用代码：`backend/internal/service/billing_cache_service.go`、
 `backend/internal/service/gateway_request_spend_estimate.go`、`backend/internal/repository/billing_cache.go`、
-`backend/internal/repository/usage_billing_repo.go`。
+`backend/internal/repository/billing_reservation_db.go`、`backend/internal/repository/usage_billing_repo.go`；
+DB 兜底迁移为 `238_billing_balance_reservations.sql` / `239_billing_scope_reservations.sql` /
+`240_billing_reservation_fallback_state.sql`。
 
 ## 1. 问题背景
 
@@ -32,16 +34,28 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 | ② 最坏费用闸门 | 转发前 | 要求 `balance >= reserve + 本次最坏费用`，付不满的请求**不转发**，不产生上游成本 | `estimateRequestSpendUpperBound` |
 | ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，使准入成为跨请求的原子操作，四类额度各自一个 scope：钱包（scope=用户，`balance - Σ预留 >= reserve`）、订阅（scope=用户×分组，`usage + Σ预留 <= limit`）、user×platform 配额（scope=用户×平台，任一窗口 `usage + Σ预留 <= limit`）、API Key 总额度（scope=`apikey:<id>`，两种计费模式都生效，`quota_used + Σ预留 <= quota`）。一次请求可同时持有其中多条凭据；任一 scope 预留失败时整槽回滚 | `reserveSpendWithGuard` / `reserveSubscriptionSpend` / `reserveUserPlatformQuotaSpend` / `reserveAPIKeyQuotaSpend` |
 | ④ 结算封底 + 差额记账（默认） | 结算 | `FOR UPDATE` 锁行后 `GREATEST(balance - amount, floor)`，差额记 write-off 并打耗尽标记；**永不为负**。`billing.settlement_debt_mode=true` 时改为全额入账、余额可为负（欠款，充值抵扣） | `deductBalanceToFloorSQL` / `deductBalanceToDebtSQL` |
-| ⑤ Redis 故障回落 | 转发前 | Redis 写失败时改用 DB 预留表做原子准入（`billing_balance_reservations` + 用户行锁串行化、过期行清理、`SUM(amount)` 聚合校验）；**只有 Redis 与 DB 都失败**才 fail-open 并计数 `billing_reservation_fail_open` | `TryReserveUserBalance` / `dbReservationStore` |
+| ⑤ Redis 故障回落 | 转发前 | Redis 写失败时抬起跨实例共享的 DB 兜底窗口，并按 scope 切换账本：钱包用 `billing_balance_reservations` + `users FOR UPDATE`，订阅 / user×platform / API Key 用 `billing_scope_reservations` + advisory transaction lock。窗口生效期间所有实例统一走 DB，避免 Redis 与 DB 两本账同时放行。**Redis 与 DB 都失败时 fail-closed（503）**；只有未装配 DB 能力的降级/测试装配才保留 fail-open | `TryReserveUserBalance` / `dbReservationStore` / `reservationFallbackWindowActive` |
 
 核心不变量：`balance − Σ在途预留 ≥ reserve`，且它在"结算扣钱"与"归还预留"以任意
 先后顺序发生时都成立。
 
 **Redis 故障时的 DB 兜底**：第 ③ 层的预留正常记在 Redis（带 TTL 自愈）。Redis 侧预留
-操作失败时不再直接放行，而是改用 `billing_balance_reservations` 表做同样语义的原子准入：
-一条事务先 `SELECT ... FROM users WHERE id = $1 FOR UPDATE` 锁用户行（与结算路径锁序一致，
-不会死锁），清理本用户已过期的预留行，再判定"未过期预留总额 + 本笔 ≤ 预算"。
-代价是同一用户的准入被行锁串行化 —— 故障期优先保"不产生坏账"而不是吞吐。
+操作失败时不再直接放行，而是按 scope 改用 DB 账本做同样语义的原子准入：
+
+- **钱包 scope（纯 userID）**：`billing_balance_reservations` 事务先
+  `SELECT ... FROM users WHERE id = $1 FOR UPDATE` 锁用户行（与结算路径锁序一致），
+  清理已过期预留行，再判定"未过期总额 + 本笔 ≤ 预算"。
+- **订阅、user×platform、API Key scope**：`billing_scope_reservations` 事务使用
+  `pg_advisory_xact_lock(hashtextextended(scope, 0))` 按 scope 串行化，语义与 Redis Lua
+  一致（`sub:<user>:<group>`、`upq:<user>:<platform>`、`apikey:<id>`）。
+
+跨实例一致性由 `billing_reservation_fallback_state` 单行窗口保证：任一实例 Redis 故障时把
+`fallback_until` 抬到 `max(现值, now + 预留 TTL)`，其它实例最多在 1s 探测缓存后统一切到
+DB，绝不在窗口内混用两本账。窗口长度覆盖切换前已存在的 Redis 预留在 TTL 内全部过期。
+DB 兜底也失败时返回 `ErrReservationBackendsUnavailable`，服务层转成 HTTP 503（fail-closed）；
+仅未装配 DB 兜底的降级/测试装配才继续 fail-open。
+
+代价是故障期每个 scope 的准入被事务锁串行化 —— 优先保"不产生坏账"而不是吞吐。
 
 **订阅模式**（订阅计费）复用第 ③ 层：scope 为 `用户 × 分组`，护栏是
 `usage + Σ预留 < daily/weekly/monthly limit`，堵住"并发请求共用同一份用量快照、
@@ -116,9 +130,13 @@ GET /api/v1/admin/ops/billing-guard
 | 字段 | 非零意味着 | 处置 |
 | --- | --- | --- |
 | `settlement_shortfall_count` | 仍在产生 write-off，预检口径有漏网 | 检查 `request_spend_min_output_tokens` / `default_max_output_tokens` 是否偏小 |
-| `reservation_fail_open` | Redis 预留失败 → 并发护栏**静默失效** | 检查 Redis 可用性与延迟 |
-| `reservation_db_fallback` | Redis 预留失败 → 已由 DB 兜底接住（**护栏仍成立**，但单用户准入被行锁串行化） | 检查 Redis 可用性；吞吐下降是该降级模式的预期代价 |
-| `reservation_db_fallback_error` | Redis 与 DB 兜底**同时失败** → 该笔退回 fail-open | 同时检查 Redis 与 PostgreSQL；这是最严重的降级信号 |
+| `reservation_fail_open` | Redis 预留失败且**未装配 DB 兜底能力** → 并发护栏静默失效（仅轻量/降级装配才会出现） | 检查 Redis 与生产装配 |
+| `reservation_redis_failure` | Redis 预留失败，已切换到 DB 兜底账本（护栏仍生效） | 检查 Redis 可用性；持续增长说明故障未恢复 |
+| `reservation_fail_closed` | Redis 与 DB 兜底同时不可用 → 预检 fail-closed，用户看到 503 | 同时检查 Redis 与 PostgreSQL；这是最严重的降级信号 |
+| `reservation_db_fallback` | DB 兜底账本已接管本笔准入（**护栏仍成立**，scope 准入被事务锁串行化） | 检查 Redis 可用性；吞吐下降是该降级模式的预期代价 |
+| `reservation_db_fallback_error` | DB 兜底操作失败；正式装配会 fail-closed（503），无 DB 能力的降级装配才 fail-open | 同时检查 Redis 与 PostgreSQL 连接 |
+| `reservation_fallback_activated` | 本实例抬起共享 DB 兜底窗口 | 与 `reservation_redis_failure` 对照；持续增长说明 Redis 长期不可用 |
+| `reservation_fallback_activate_error` / `reservation_fallback_probe_error` | 兜底窗口抬升/探测失败 → 跨实例一致性变弱 | 检查数据库连接与迁移 `240` |
 | `reservation_release_error` | 预留归还失败 → 额度滞留到 TTL | 检查 Redis 写入与网络 |
 | `reservation_renew_error` | 续期失败 → 超长请求可能失去保护 | 同上 |
 | `reservation_abandoned` | 结算任务被 drop 语义丢弃 → 该笔未扣费 | 检查 usage_record worker 池容量与 drop 配置 |
@@ -170,11 +188,11 @@ GET /api/v1/admin/ops/billing-guard
    现在会拒绝 `NaN` / `±Inf`（`NaN` 曾能绕过所有 `< 0` 判断并让封底、最坏费用闸门与
    DB 复核静默失效，`+Inf` 会让预留闸门永久放开）。
 6. 配置变更后请用第 4.1 的端点确认 `runtime` 段与实际配置一致。
-7. **本次升级新增一张表 `billing_balance_reservations`**（迁移 `238_billing_balance_reservations.sql`），
-   用于 Redis 故障期的预留兜底。迁移随二进制内嵌并在启动时自动应用，无需手工执行；但
-   **回滚到旧版本前请确认旧版本不会因该表报错**（旧版本不引用它，可直接回滚）。
-   该表按 `(user_id, request_id)` 主键，行数上界是"同时在途的请求数"，并在每次准入时清理
-   本用户的过期行，不需要额外的清理任务。
+7. **本次升级新增三张表**：`billing_balance_reservations`（迁移 `238_*`，钱包 scope）、
+   `billing_scope_reservations`（迁移 `239_*`，订阅 / user×platform / API Key scope）与
+   `billing_reservation_fallback_state`（迁移 `240_*`，跨实例共享兜底窗口）。迁移随二进制
+   内嵌并在启动时自动应用，无需手工执行；但回滚到旧版本前请确认旧版本不会因这些表报错。
+   预留表行数上界是"同时在途的请求数"，每次准入/续期清理本 scope 的过期行，不需要额外清理任务。
 
 ## 6. 已知边界与未覆盖入口
 
@@ -210,12 +228,14 @@ GET /api/v1/admin/ops/billing-guard
 
 其他已知边界：
 
-- **Redis 不可用 ⇒ 预留降级为 DB 兜底**：`TryReserveUserBalance` 报错时改用
-  `billing_balance_reservations` 上的行锁事务做同语义的原子准入（护栏**不失效**，但单用户
-  吞吐被串行化）。只有兜底也失败（Redis 与 PostgreSQL 同时不可用）时才退回 fail-open
-  放行。订阅模式的 scope（`sub:<user>:<group>`）暂不支持 DB 兜底：该 scope 下的 Redis
-  故障仍会退回 fail-open，需要按"订阅限额"另做一套按窗口的 DB 预留。
-  监控指标：`reservation_db_fallback`（降级次数）、`reservation_db_fallback_error`（兜底也失败）。
+- **Redis 不可用 ⇒ 按 scope 降级为 DB 兜底**：`TryReserveUserBalance` 报错时先抬起共享
+  `billing_reservation_fallback_state` 窗口，钱包 scope 走 `billing_balance_reservations` 行锁事务，
+  订阅 / user×platform / API Key scope 走 `billing_scope_reservations` advisory-lock 事务（护栏
+  **不失效**，但对应 scope 的准入被串行化）。Redis 与 DB 同时失败时正式装配 fail-closed
+  返回 503；只有未装配 DB 能力的降级/测试装配才保留 fail-open。
+  监控：`reservation_redis_failure`、`reservation_fail_closed`、`reservation_fallback_activated`、
+  `reservation_fallback_activate_error` / `reservation_fallback_probe_error`、
+  `reservation_db_fallback`、`reservation_db_fallback_error`。
 - **余额缓存的条件写回（防旧快照复活）**：余额缓存是"未命中回源 + 异步写回"，读取方从 DB
   读到值到写回之间可能发生扣费。每次余额变动（扣费 / 加钱失效）会递增 `billing:balance_gen:<uid>`
   代号；回源方在**发起 DB 读取之前**取一份代号，写回时只有代号未变才发布，否则丢弃这次写回
@@ -281,14 +301,13 @@ GET /api/v1/admin/ops/billing-guard
 - **API Key 额度与钱包/订阅是并行额度**：同一次请求最多会持有三条预留凭据
   （钱包 + 平台配额 + key 额度，或订阅 + key 额度），归还/续期以凭据为单位；
   任一 scope 预留失败都会整槽回滚，不会留下占着额度的残留凭据。
-- **Redis 故障时的 DB 回落（第 ⑤ 层）**：Redis 写失败时不再直接放行，而是用
-  `billing_reservations` 表做回落预留（`pg_advisory_xact_lock` 按 scope 串行化、惰性清理过期行、
-  按 scope `SUM(amount)` 后比较上限），语义与 Redis 路径一致（含拒绝与整槽回滚）。
-  **只有 Redis 与 DB 都失败时**才 fail-open（记 `billing_reservation_fail_open_total`），
-  此时护栏退化为"余额快照 + 最坏费用闸门 + 结算封底/债务"。该指标一旦增长应当告警——
-  它意味着并发准入的原子性暂时不存在。与 new-api 的对照：new-api 回落为 `UPDATE ... WHERE quota >= ?`
-  条件更新（直接改额度）；sub2api 的 Redis 预留是 TTL 凭据（要支持精确退还与续期），因此回落同样
-  用“预留表 + 聚合上限”而不是直接扣余额。
+- **Redis 故障时的 DB 回落（第 ⑤ 层）**：Redis 写失败时不再直接放行，而是按 scope 使用
+  `billing_balance_reservations` 或 `billing_scope_reservations` 做回落预留，语义与 Redis 路径
+  一致（含拒绝与整槽回滚），并用 `billing_reservation_fallback_state` 保证所有实例在窗口内
+  统一切换账本。**Redis 与 DB 都失败时 fail-closed（503）**，只有未装配 DB 兜底的降级/测试
+  装配才 fail-open（记 `billing_reservation_fail_open_total`）。与 new-api 的对照：new-api 回落为
+  `UPDATE ... WHERE quota >= ?` 条件更新（直接改额度）；sub2api 的 Redis 预留是 TTL 凭据
+  （要支持精确退还与续期），因此回落同样用"预留表 + 聚合上限"而不是直接扣余额。
 - **债务模式（`billing.settlement_debt_mode=true`）**：结算不再夹封底，余额可以被扣成负数（欠款），
   `usage_log.actual_cost` 保持真实成本、不产生 write-off 差额；`settlement_shortfall_count` 不再增长。
   监控口径需随之调整（关注负余额用户数/欠款总额，而不是 write-off 斜率），并且预检仍以

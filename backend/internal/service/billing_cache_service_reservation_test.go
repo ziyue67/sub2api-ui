@@ -125,6 +125,16 @@ type atomicReservationCacheStub struct {
 	reservationCacheStub
 }
 
+// unavailableBackendsReservationCacheStub models a cache whose Redis ledger
+// failed and whose configured DB fallback also failed.
+type unavailableBackendsReservationCacheStub struct {
+	atomicReservationCacheStub
+}
+
+func (s *unavailableBackendsReservationCacheStub) TryReserveUserBalance(context.Context, string, string, float64, float64, time.Duration) (float64, bool, error) {
+	return 0, false, ErrReservationBackendsUnavailable
+}
+
 func (s *atomicReservationCacheStub) TryReserveUserBalance(_ context.Context, scope string, requestID string, amount, maxTotal float64, _ time.Duration) (float64, bool, error) {
 	s.reserveCalls.Add(1)
 	if s.failReserve.Load() {
@@ -361,6 +371,23 @@ func TestReserveRequestSpend_FailsOpenWhenReservationUnavailable(t *testing.T) {
 	slot.ReleaseOnExit(context.Background())
 	require.Equal(t, int64(0), cache.releaseCalls.Load())
 	require.InDelta(t, 0.0, cache.reservedAmount(), 1e-9)
+}
+
+// TestReserveRequestSpend_FailsClosedWhenRedisAndDBUnavailable verifies the
+// production safety boundary: when both reservation ledgers are unavailable,
+// the preflight must return HTTP 503 instead of admitting an unguarded request.
+func TestReserveRequestSpend_FailsClosedWhenRedisAndDBUnavailable(t *testing.T) {
+	cache := &unavailableBackendsReservationCacheStub{}
+	cache.balance = 0.45
+	svc := newReservationTestService(cache)
+	t.Cleanup(svc.Stop)
+
+	before := BillingGuardStatsSnapshot().ReservationFailClosed
+	var slot BillingReservationSlot
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "", reservationEligibilityOpts(&slot, 0.10)...)
+	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+	require.Equal(t, before+1, BillingGuardStatsSnapshot().ReservationFailClosed)
+	require.Equal(t, int64(0), cache.releaseCalls.Load())
 }
 
 // TestReserveRequestSpend_NoopForPlainCacheStub 确认没有实现预留能力的缓存
