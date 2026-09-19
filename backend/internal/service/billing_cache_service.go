@@ -2155,12 +2155,6 @@ func (s *userPlatformQuotaSnapshot) limitExceeded(inFlight float64) error {
 	return nil
 }
 
-// checkUserPlatformQuotaEligibility 是只需要"放行/拒绝"结论的薄封装。
-func (s *BillingCacheService) checkUserPlatformQuotaEligibility(ctx context.Context, userID int64, platform string) error {
-	_, err := s.loadUserPlatformQuotaEligibility(ctx, userID, platform)
-	return err
-}
-
 // loadUserPlatformQuotaEligibility 在 standard 模式下检查 user × platform 日/周/月 quota，
 // 并把判定用的用量/限额快照返回给调用方（供在途预留复用，见 reserveUserPlatformQuotaSpend）。
 //
