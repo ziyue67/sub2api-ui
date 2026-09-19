@@ -161,6 +161,16 @@ type billingReservationRenewer interface {
 	RenewUserBalanceReservation(ctx context.Context, scope string, requestID string, ttl time.Duration) error
 }
 
+// ReservationFallbackStore 是"Redis 在途预留不可用"时的 DB 回落能力（结构上等同
+// billingReservationStore，由 repository.billingReservationDBStore 实现）。
+//
+// 装配后，Redis 写失败不再直接 fail-open：改用 DB 预留表（scope 级 advisory lock 串行化）
+// 保持跨请求的原子准入，语义与 new-api 在 Redis 不可用时回落 DB 条件更新一致。
+type ReservationFallbackStore interface {
+	ReserveUserBalance(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) (float64, error)
+	ReleaseUserBalanceReservation(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) error
+}
+
 // balanceReservationScope 余额模式的预留 scope：直接按用户聚合
 // （余额是用户级资源，同一用户的所有余额模式请求共享同一份额度）。
 func balanceReservationScope(userID int64) string {
@@ -481,6 +491,8 @@ type BillingCacheService struct {
 	cfg                   *config.Config
 	circuitBreaker        *billingCircuitBreaker
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	// reservationFallback 是 Redis 预留不可用时的 DB 回落（未装配时为 nil，保持旧的 fail-open 行为）。
+	reservationFallback ReservationFallbackStore
 
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
@@ -521,6 +533,57 @@ func NewBillingCacheService(
 	svc.circuitBreaker = newBillingCircuitBreaker(cfg.Billing.CircuitBreaker)
 	svc.startCacheWriteWorkers()
 	return svc
+}
+
+// SetReservationFallback 装配 Redis 不可用时的 DB 回落预留仓储（DI 调用）。
+// 未装配时行为与修复前一致：预留写入失败即 fail-open（只记指标与告警）。
+func (s *BillingCacheService) SetReservationFallback(store ReservationFallbackStore) {
+	if s == nil {
+		return
+	}
+	s.reservationFallback = store
+}
+
+// reserveWithFallbackStore 在 Redis 预留失败时改用 DB 回落预留：成功时把回落 store
+// 绑进同一个槽位（归还/续期照旧按凭据走），DB 也失败时返回 handled=false 交由调用方 fail-open。
+func (s *BillingCacheService) reserveWithFallbackStore(ctx context.Context, scope, requestID string, amount, maxTotal float64, slot *BillingReservationSlot, guard func(float64) error) (bool, error) {
+	fallback := s.reservationFallback
+	if fallback == nil || slot == nil || amount <= 0 || scope == "" || guard == nil {
+		return false, nil
+	}
+	if atomicStore, ok := fallback.(atomicBillingReservationStore); ok {
+		reservedAfter, accepted, err := atomicStore.TryReserveUserBalance(ctx, scope, requestID, amount, maxTotal, billingReservationTTL)
+		if err != nil {
+			logger.LegacyPrintf("service.billing_cache", "ALERT: db fallback reserve for scope %s failed: %v", scope, err)
+			return false, nil
+		}
+		if !accepted {
+			RecordBillingReservationRejected()
+			return true, guard(reservedAfter + amount)
+		}
+		slot.bind(fallback, scope, requestID, amount)
+		slot.startHeartbeat()
+		RecordBillingReservationReserved()
+		return true, nil
+	}
+	reservedAfter, err := fallback.ReserveUserBalance(ctx, scope, requestID, amount, billingReservationTTL)
+	if err != nil {
+		logger.LegacyPrintf("service.billing_cache", "ALERT: db fallback reserve for scope %s failed: %v", scope, err)
+		return false, nil
+	}
+	if guardErr := guard(reservedAfter); guardErr != nil {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), billingReservationReleaseTimeout)
+		defer cancel()
+		if relErr := fallback.ReleaseUserBalanceReservation(rollbackCtx, scope, requestID, amount, billingReservationTTL); relErr != nil && !errors.Is(relErr, ErrBillingReservationExpired) {
+			logger.LegacyPrintf("service.billing_cache", "ALERT: rollback db fallback reservation for scope %s failed: %v", scope, relErr)
+		}
+		RecordBillingReservationRejected()
+		return true, guardErr
+	}
+	slot.bind(fallback, scope, requestID, amount)
+	slot.startHeartbeat()
+	RecordBillingReservationReserved()
+	return true, nil
 }
 
 // Stop 关闭缓存写入工作池
@@ -1735,8 +1798,12 @@ func (s *BillingCacheService) reserveSpendWithGuard(
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
+			// Redis 不可用 → 先试 DB 回落（参考 new-api）；DB 也失败才 fail-open。
+			if handled, fallbackErr := s.reserveWithFallbackStore(ctx, scope, requestID, amount, maxTotal, slot, guard); handled {
+				return fallbackErr
+			}
 			RecordBillingReservationFailOpen()
-			logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed: %v", scope, err)
+			logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed (redis, no db fallback): %v", scope, err)
 			return nil
 		}
 		if !accepted {
@@ -1756,8 +1823,12 @@ func (s *BillingCacheService) reserveSpendWithGuard(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
+		// Redis 不可用 → 先试 DB 回落（参考 new-api）；DB 也失败才 fail-open。
+		if handled, fallbackErr := s.reserveWithFallbackStore(ctx, scope, requestID, amount, maxTotal, slot, guard); handled {
+			return fallbackErr
+		}
 		RecordBillingReservationFailOpen()
-		logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed: %v", scope, err)
+		logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed (redis, no db fallback): %v", scope, err)
 		return nil // fail-open
 	}
 	if guardErr := guard(reservedAfter); guardErr != nil {

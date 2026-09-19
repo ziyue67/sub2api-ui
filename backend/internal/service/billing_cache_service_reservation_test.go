@@ -825,3 +825,55 @@ func TestAPIKeyQuotaReservation_RollsBackSubscriptionBindingOnReject(t *testing.
 	require.ErrorIs(t, err, ErrAPIKeyQuotaExhausted)
 	require.InDelta(t, 0.0, cache.reservedAmount(), 1e-9, "被拒请求不得留下订阅或 key 额度预留")
 }
+
+// TestReserveRequestSpend_FallsBackToDBWhenRedisUnavailable 验证 Redis 预留写入失败时
+// 不再直接 fail-open，而是回落到 DB 预留仓储（参考 new-api 的 DB 条件更新回落）：
+// 留存落在回落仓储上，归还也走回落仓储。
+func TestReserveRequestSpend_FallsBackToDBWhenRedisUnavailable(t *testing.T) {
+	redis := &reservationCacheStub{balance: 0.45}
+	redis.failReserve.Store(true) // 模拟 Redis 预留写入失败
+	dbFallback := &atomicReservationCacheStub{}
+	dbFallback.balance = 0.45
+
+	svc := newReservationTestService(redis)
+	svc.SetReservationFallback(dbFallback)
+	t.Cleanup(svc.Stop)
+
+	var slot BillingReservationSlot
+	require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "", reservationEligibilityOpts(&slot, 0.10)...))
+	require.InDelta(t, 0.10, dbFallback.reservedAmount(), 1e-9, "回落预留必须落在 DB 仓储")
+	require.InDelta(t, 0.0, redis.reservedAmount(), 1e-9)
+
+	slot.Release(context.Background())
+	require.InDelta(t, 0.0, dbFallback.reservedAmount(), 1e-9, "归还必须走回落仓储")
+	require.Equal(t, int64(1), dbFallback.releaseCalls.Load())
+}
+
+// TestReserveRequestSpend_FallbackRejectIsFailClosed 验证回落仓储判定超限时请求被拒（不是 fail-open）：
+// 余额 0.45、封底 0.10、每笔最坏 0.10 时只能放行 3 笔，第 4 笔由 DB 回落护栏拦下。
+func TestReserveRequestSpend_FallbackRejectIsFailClosed(t *testing.T) {
+	redis := &reservationCacheStub{balance: 0.45}
+	redis.failReserve.Store(true)
+	dbFallback := &atomicReservationCacheStub{}
+	dbFallback.balance = 0.45
+
+	svc := newReservationTestService(redis)
+	svc.SetReservationFallback(dbFallback)
+	t.Cleanup(svc.Stop)
+
+	held := make([]*BillingReservationSlot, 0, 3)
+	for i := 0; i < 3; i++ {
+		slot := &BillingReservationSlot{}
+		require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "", reservationEligibilityOpts(slot, 0.10)...))
+		held = append(held, slot)
+	}
+
+	var overflow BillingReservationSlot
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "", reservationEligibilityOpts(&overflow, 0.10)...)
+	require.ErrorIs(t, err, ErrInsufficientBalance, "回落仓储判定超限必须 fail-closed")
+	require.InDelta(t, 0.30, dbFallback.reservedAmount(), 1e-9, "被拒请求不得留下回落残留")
+
+	for _, slot := range held {
+		slot.Release(context.Background())
+	}
+}
