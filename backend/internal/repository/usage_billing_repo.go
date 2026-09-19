@@ -15,6 +15,9 @@ import (
 type usageBillingRepository struct {
 	db                    *sql.DB
 	minimumBalanceReserve float64
+	// settlementDebtMode = billing.settlement_debt_mode：结算收不满时是否允许余额
+	// 扣成负数（债务，充值抵扣）而非封底核销（write-off）。
+	settlementDebtMode bool
 }
 
 func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfgs ...*config.Config) service.UsageBillingRepository {
@@ -22,7 +25,11 @@ func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfgs ...*config.C
 	if len(cfgs) > 0 && cfgs[0] != nil {
 		reserve = cfgs[0].Billing.MinimumBalanceReserve
 	}
-	return &usageBillingRepository{db: sqlDB, minimumBalanceReserve: reserve}
+	return &usageBillingRepository{
+		db:                    sqlDB,
+		minimumBalanceReserve: reserve,
+		settlementDebtMode:    len(cfgs) > 0 && cfgs[0] != nil && cfgs[0].Billing.SettlementDebtMode,
+	}
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -187,7 +194,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		deduction, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost, r.minimumBalanceReserve)
+		deduction, err := deductUsageBillingBalanceWithMode(ctx, tx, cmd.UserID, cmd.BalanceCost, r.minimumBalanceReserve, r.settlementDebtMode)
 		if err != nil {
 			return err
 		}
@@ -304,6 +311,34 @@ const deductBalanceToFloorSQL = `
 		SELECT previous_balance, new_balance FROM updated
 	`
 
+// deductBalanceToDebtSQL 是 deductBalanceToFloorSQL 在 billing.settlement_debt_mode 下的
+// 对应物：全额入账，不再把本次扣费夹在 floor 之上 —— 余额不足时会被扣成负数（欠款），
+// 下次充值先抵扣欠款。对照 new-api `model/user.go` 的 decreaseUserQuota：那里同样不带
+// 余额下限，负余额是“债务”而非“坏账”。
+//
+//   - 钱包行仍用 FOR UPDATE 锁住，并发结算串行化，每笔都能看到上一笔已提交的结果；
+//   - WHERE 只排除软删用户，所以“无返回行”只可能是用户不存在 → ErrUserNotFound；
+//   - 债务模式下不存在“扣不动”的情形，因此不会返回 ErrInsufficientBalance。
+//
+// $1 与 float 类型的 balance 列比较，PostgreSQL 会推导为 double precision（与
+// deductBalanceToFloorSQL 同一写法）。
+const deductBalanceToDebtSQL = `
+		WITH target AS (
+			SELECT id, balance
+			FROM users
+			WHERE id = $2 AND deleted_at IS NULL
+			FOR UPDATE
+		), updated AS (
+			UPDATE users AS u
+			SET balance = target.balance - $1,
+				updated_at = NOW()
+			FROM target
+			WHERE u.id = target.id
+			RETURNING target.balance AS previous_balance, u.balance AS new_balance
+		)
+		SELECT previous_balance, new_balance FROM updated
+	`
+
 // deductBalanceToFloor runs deductBalanceToFloorSQL and translates the outcome.
 // ok=false means no row matched (user missing or wallet already at/below floor);
 // callers distinguish the two with a follow-up existence check.
@@ -315,6 +350,38 @@ func deductBalanceToFloor(ctx context.Context, q balanceSQLQuerier, userID int64
 		floor = 0
 	}
 	rows, err := q.QueryContext(ctx, deductBalanceToFloorSQL, amount, userID, floor)
+	if err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+	if !rows.Next() {
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return service.BalanceDeduction{}, false, rowsErr
+		}
+		return service.BalanceDeduction{}, false, nil
+	}
+	var previous, current float64
+	if err := rows.Scan(&previous, &current); err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	if err := rows.Err(); err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	return settleBalanceDeduction(amount, previous, current), true, nil
+}
+
+// deductBalanceToDebt runs deductBalanceToDebtSQL and translates the outcome.
+// ok=false means no row matched, i.e. the user is missing or soft-deleted (in debt
+// mode a present wallet always pays, so there is no insufficient-balance case).
+func deductBalanceToDebt(ctx context.Context, q balanceSQLQuerier, userID int64, amount float64) (_ service.BalanceDeduction, ok bool, err error) {
+	if amount < 0 {
+		return service.BalanceDeduction{}, false, errors.New("deduction amount must be nonnegative")
+	}
+	rows, err := q.QueryContext(ctx, deductBalanceToDebtSQL, amount, userID)
 	if err != nil {
 		return service.BalanceDeduction{}, false, err
 	}
@@ -372,7 +439,9 @@ func settleBalanceDeduction(amount, previous, current float64) service.BalanceDe
 //   - wallet already <= floor             → ErrInsufficientBalance, nothing deducted
 //   - user missing / soft-deleted         → ErrUserNotFound
 //
-// The wallet can never become negative on this path.
+// The wallet can never become negative on this path. With
+// billing.settlement_debt_mode=true the unified path branches to
+// deductUsageBillingBalanceWithMode instead, see that function.
 func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64, minimumReserves ...float64) (service.BalanceDeduction, error) {
 	var minimumReserve float64
 	if len(minimumReserves) > 0 {
@@ -397,6 +466,31 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 		return service.BalanceDeduction{}, service.ErrUserNotFound
 	}
 	return service.BalanceDeduction{}, service.ErrInsufficientBalance
+}
+
+// deductUsageBillingBalanceWithMode 按 billing.settlement_debt_mode 选择余额结算语义：
+//
+//   - debtMode=false（默认）：封底核销，余额永不为负，差额记 write-off（见
+//     deductUsageBillingBalance）。
+//   - debtMode=true：债务模式，全额入账、余额可扣成负数（欠款由下次充值抵扣），
+//     对齐 new-api 的 decreaseUserQuota。除了用户不存在（ErrUserNotFound），不会
+//     因为“余额不够”而拒绝结算 —— 上游成本已经发生，欠款比核销更容易追偿。
+//
+// 两种模式都保留 FOR UPDATE 行锁，并发结算仍然串行化。
+func deductUsageBillingBalanceWithMode(ctx context.Context, tx *sql.Tx, userID int64, amount, minimumReserve float64, debtMode bool) (service.BalanceDeduction, error) {
+	if !debtMode {
+		return deductUsageBillingBalance(ctx, tx, userID, amount, minimumReserve)
+	}
+	deduction, ok, err := deductBalanceToDebt(ctx, tx, userID, amount)
+	if err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if ok {
+		return deduction, nil
+	}
+	// deductBalanceToDebtSQL 的 WHERE 与“用户存在且未软删”同谓词（没有 floor 条件），
+	// 所以无返回行只可能是用户不存在，不需要再查一次 EXISTS。
+	return service.BalanceDeduction{}, service.ErrUserNotFound
 }
 
 func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand, minimumReserves ...float64) (*service.BatchImageBalanceHoldResult, error) {

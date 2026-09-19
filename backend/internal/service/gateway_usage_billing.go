@@ -141,6 +141,16 @@ type balanceFloorDeductor interface {
 	DeductBalanceToFloor(ctx context.Context, id int64, amount, floor float64) (BalanceDeduction, error)
 }
 
+// balanceDebtDeductor is the optional repository capability used by the legacy
+// fallback billing path when billing.settlement_debt_mode is on: it charges the
+// full amount and lets the wallet go negative (debt, repaid by the next top-up)
+// instead of clamping the deduction at the reserve floor. The production
+// userRepository implements it, keeping this degraded path consistent with the
+// unified usage_billing_repo path.
+type balanceDebtDeductor interface {
+	DeductBalanceAllowNegative(ctx context.Context, id int64, amount float64) (BalanceDeduction, error)
+}
+
 // postUsageBilling is the legacy fallback billing path used when the unified
 // billing repo is unavailable (nil). Production uses applyUsageBilling → repo.Apply
 // for atomic billing. This path only runs in tests or degraded mode.
@@ -187,7 +197,13 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 				// 后付费结算：余额不足以覆盖全额时扣到 floor 为止（永不为负），
 				// 差额记为 shortfall；余额本来就 <= floor 时才返回 ErrInsufficientBalance。
 				var deduction BalanceDeduction
-				deduction, err = floorDeductor.DeductBalanceToFloor(billingCtx, p.User.ID, cost.ActualCost, minimumReserve)
+				if debtDeductor, ok := deps.userRepo.(balanceDebtDeductor); ok && deps.cfg != nil && deps.cfg.Billing.SettlementDebtMode {
+					// billing.settlement_debt_mode：债务模式，全额入账、余额可扣成负数（欠款由充值
+					// 抵扣），与统一 usage_billing_repo 路径的 deductUsageBillingBalanceWithMode 语义一致。
+					deduction, err = debtDeductor.DeductBalanceAllowNegative(billingCtx, p.User.ID, cost.ActualCost)
+				} else {
+					deduction, err = floorDeductor.DeductBalanceToFloor(billingCtx, p.User.ID, cost.ActualCost, minimumReserve)
+				}
 				if err == nil {
 					newBalance := deduction.NewBalance
 					result.NewBalance = &newBalance

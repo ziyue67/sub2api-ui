@@ -945,6 +945,25 @@ func (r *userRepository) DeductBalanceToFloor(ctx context.Context, id int64, amo
 	return service.BalanceDeduction{}, service.ErrInsufficientBalance
 }
 
+// DeductBalanceAllowNegative 是 billing.settlement_debt_mode=true 时后付费结算用的扣款：
+// 不做“够才扣”判断，直接把余额扣成负数（=欠款），欠款由下一次充值抵扣。
+//
+// 对照 new-api `model/user.go` 的 decreaseUserQuota：那里同样不带余额下限，余额可以为负。
+// 与 DeductBalanceToFloor 的区别只在“收不满”时：封底模式把余额夹在 floor、差额核销；
+// 债务模式全额入账、把差额留给用户欠款，因此没有 ErrInsufficientBalance（只有用户不存在）。
+// 同样用 FOR UPDATE 锁行，并发结算串行化。
+func (r *userRepository) DeductBalanceAllowNegative(ctx context.Context, id int64, amount float64) (service.BalanceDeduction, error) {
+	client := clientFromContext(ctx, r.client)
+	deduction, ok, err := deductBalanceToDebt(ctx, client, id, amount)
+	if err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if !ok {
+		return service.BalanceDeduction{}, service.ErrUserNotFound
+	}
+	return deduction, nil
+}
+
 // DeductAvailableBalance atomically deducts min(amount, max(balance, 0)).
 // Unlike DeductBalance, this refund-specific operation never increases an
 // existing deficit or permits a concurrent deduction to cause an overdraft.
