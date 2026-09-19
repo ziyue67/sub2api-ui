@@ -153,7 +153,12 @@ func (s *BillingReservationSuite) TestTryReserveKeepsFullFloatPrecision() {
 	ctx := context.Background()
 	scope := "9017"
 
-	want := 0.1 + 0.1 + 0.1 // IEEE754: 0.30000000000000004
+	want := 0.0
+	for i := 0; i < 3; i++ {
+		want += 0.1 // 必须**运行时**累加：常量表达式 `0.1+0.1+0.1` 会被编译器按任意精度
+		// 折叠成精确的 0.3（再舍入到最近的 float64），复现不出浮点漂移。
+	}
+	require.Equal(s.T(), 0.30000000000000004, want, "前提校验：运行时三笔累加确实带浮点尾差")
 	for i := 0; i < 3; i++ {
 		_, accepted, err := cache.TryReserveUserBalance(
 			ctx, scope, fmt.Sprintf("precision-%d", i), 0.10, 1.0, 10*time.Minute)

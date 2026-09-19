@@ -444,6 +444,8 @@ return 1
 | **R5** | ✅ | `grok_media.go` 路由切换处改为先 `EstimateRequestSpendUpperBound` 再调 `recheckSelectedGroupRouteEligibility(..., worstSpend, nil)`（该入口无预留槽位，只补最坏费用闸门）；已无调用者的 `checkSelectedGroupRouteEligibility` 删除，避免 golangci-lint unused | 全仓 grep 确认调用点唯一，靠 `go build`/`go vet` 把关（该 handler 无轻量单测夹具） |
 | **R6** | ✅ | `docs/BILLING_ZERO_OVERSHOOT.md` §6：把"兜底分组重试没有最坏费用闸门"移出未覆盖清单（并注明 PR#16 已修）；Grok 媒体条目改为准确描述"主链路无闸门、只有切换支路补了闸门"；新增两条已知边界（Redis 不可用 ⇒ 预留 fail-open；无法解释的脚本答复按拒绝处理）；多模态段落补上 `url`/`file_data` 的灰区 `max` 规则 | 文档，无测试 |
 | **R7** | ✅ | `gofmt -w internal/{service,repository,handler}`；`find internal -name '*.go' \| xargs gofmt -l` 现已全空（含 PR#16 引入的 repository 集成测试与 PR#3 起的 `handler/user_handler_test.go`） | gofmt 全量复查 |
+| **R2** | ✅ | **新增 DB 侧原子预留兜底**（对标 new-api `reserveUserQuotaDB`）：迁移 `238_billing_balance_reservations.sql` 建表 `(user_id, request_id, amount, expires_at)`；`billing_reservation_db.go` 用「事务 + `SELECT … FROM users FOR UPDATE` 锁行 → 清理本用户过期行（TTL 自愈）→ 汇总未过期预留 → `reserved+amount <= maxTotal` 判定 → 幂等 upsert」实现与 Redis 脚本同语义的准入；`billingCache` 的 `TryReserve`/`Release`/`Renew` 在 Redis 报错或报"凭据缺失"时二次走 DB（幂等，正常路径零额外开销）；新增 `NewBillingCacheWithDB` 并在 `wire_gen.go` 接入；新增两个指标 + 两条 degraded signal | 集成套件 `BillingReservationDBFallbackSuite`：Redis 全程不可用下 5 笔抢预算 0.30（单笔 0.10）**恰好 3 笔被接受**、归还后行数归零、过期残留被清理、过期行不被续期复活 |
+| **R9** | ✅ | **余额缓存加"变动代号"防旧快照复活**（对标 new-api 的 `cacheInitToken` + `invalidateTokenCacheForMutation` fence）：`deductBalanceScript` 与新的 `invalidateBalanceScript` 在同一次脚本里 `INCR billing:balance_gen:<uid>`；新增 `BalanceGeneration` / `SetUserBalanceIfGeneration`（条件发布，代号不符则丢弃写回、不创建键）；服务层在**发起 DB 读取之前**取代号，回源写回与近封底复核写回都改走条件发布（可选能力 `balancePublishGuard`，未实现该能力的缓存自动退回无条件写回）。用代号而非时间戳以规避多实例时钟偏移 | `billing_cache_generation_test.go`（miniredis，本机可跑）：扣费后的旧快照被丢弃且缓存保持扣费后的值；`InvalidateUserBalance` 递增代号 |
 
 ### 10.2 R1 修复的实测前后对比
 
@@ -463,13 +465,33 @@ return 1
 `{"content":"<b64>"}`（纯文本位）与 `{"image":{"url":"<b64>"}}`（确诊媒体）
 **逐位不变**（分别为 223/691…/26 691 与恒定 1 626），说明修复只影响灰区，未扩散。
 
-### 10.3 未修复（有意留给单独 PR）
+### 10.3 未修复
 
 | 编号 | 原因 |
 | --- | --- |
-| **R2** | Redis 故障期的 DB 原子兜底需要新增"预留列"或等价的条件更新，**涉及表结构/迁移**，不宜与本次口径修复混在一个 PR |
-| **R9** | 余额缓存 fence 会改动结算与缓存回写的关键路径（`setBalanceCache` / `SetUserBalanceCache` / 结算失效顺序），需要独立的时序设计与并发测试 |
 | **R8** | 依赖升级已随 PR#16 合入 `main`，无法在后续 PR 里"拆开"，只能记录为流程建议 |
+
+R2/R9 已在同一分支上落地（见 §10.1）。它们本来是"建议单列 PR"的两条，之所以并入本 PR：
+两者都是**护栏强度**问题（而非口径修复），与 §4 的建议 1/2 完全对应，且 R9 的条件写回
+需要与 R2 一起改 `billingCache` 的同一批方法，拆开反而增加合并成本。
+
+R2 的**已知限制**（未修，属设计边界）：DB 兜底只支持余额模式（scope 为纯 userID）。
+订阅模式的 scope 形如 `sub:<user>:<group>`，在该模式下 Redis 故障仍会退回 fail-open，
+需要按"订阅限额"另做一套按窗口的 DB 预留 —— 已写入 `docs/BILLING_ZERO_OVERSHOOT.md` §6。
+
+### 10.5 CI 失败与修复（2026-09-19）
+
+本 PR 首次推送后 CI 的 `test` 作业失败（10m14s），失败点是**本 PR 新增测试自身的断言写错**，
+实现本身正确：
+
+- `TestTryReserveKeepsFullFloatPrecision` 断言 `want := 0.1 + 0.1 + 0.1`，期望得到
+  `0.30000000000000004`。但 Go 的**无类型常量表达式**会被编译器按任意精度折叠：
+  `0.1+0.1+0.1` 先算成精确十进制 0.3，再舍入到最近的 float64 → 得到 `0.3`。
+  而实际值（从 Redis 读回的聚合）是 `0.30000000000000004` —— 这恰好**证明了 `%.17g` 修复生效**
+  （若仍是 `tostring()` 的 `%.14g`，实际值会是被截断的 `0.3`，测试反而会"通过"）。
+- 修复：把期望值改为**运行时累加**（循环 `want += 0.1`），并加一条前提断言
+  `require.Equal(0.30000000000000004, want)` 锁住这个易踩的语义，防止后人"简化"回常量表达式。
+- 其余包全部 `ok`，本次失败仅影响 `internal/repository`。
 
 ### 10.4 本轮验证
 
