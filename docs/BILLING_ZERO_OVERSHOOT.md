@@ -16,6 +16,10 @@
    差额写成坏账（线上实证 `usage_log` 应收 0.19184 / 实收 0.099472）。
 3. 并发突发时 N 个请求读到**同一份余额快照**，每个都判定"够付自己这一笔"而全部放行，
    结算时只有前几笔扣得动（坏账）——即使刚刚用 DB 真值复核过。
+4. **user × platform 日/周/月配额**与 **API Key 配额**都只有准入判定、用量在结算时才
+   累加：同一用户在平台配额上的并发突发会共用同一份用量快照，配额被超额消耗
+   （第 3 类的"额度换成平台配额"版本，用户钱包并不因此少收，但配额上限失效）。
+   两类额度都已按第 ③ 层修复（scope=用户×平台 / scope=apikey:<id>，见下一节）。
 
 另外还有一个可用性问题：余额贴近封底时每笔请求都要 DB 复核，150–200 并发会把
 PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
@@ -26,7 +30,7 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 | --- | --- | --- | --- |
 | ① 准入阈值 + DB 真值复核带 | 转发前 | `balance <= reserve` 直接 403；`balance <= reserve + band` 时用 DB 真值复核；结算判定耗尽后写"钱包已耗尽"标记，预检命中即 403 | `checkBalanceEligibility` |
 | ② 最坏费用闸门 | 转发前 | 要求 `balance >= reserve + 本次最坏费用`，付不满的请求**不转发**，不产生上游成本 | `estimateRequestSpendUpperBound` |
-| ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，要求 `balance - Σ预留 >= reserve`，使准入成为跨请求的原子操作。**Redis 不可用时退化为 DB 兜底**（`billing_balance_reservations` + 用户行锁），护栏不失效 | `reserveSpendWithGuard` / `TryReserveUserBalance` |
+| ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，使准入成为跨请求的原子操作，四类额度各自一个 scope：钱包（scope=用户，`balance - Σ预留 >= reserve`）、订阅（scope=用户×分组，`usage + Σ预留 <= limit`）、user×platform 配额（scope=用户×平台，任一窗口 `usage + Σ预留 <= limit`）、API Key 总额度（scope=`apikey:<id>`，两种计费模式都生效，`quota_used + Σ预留 <= quota`）。一次请求可同时持有其中多条凭据；任一 scope 预留失败时整槽回滚。**Redis 不可用时退化为 DB 兜底**（`billing_balance_reservations` + 用户行锁），护栏不失效 | `reserveSpendWithGuard` / `reserveSubscriptionSpend` / `reserveUserPlatformQuotaSpend` / `reserveAPIKeyQuotaSpend` |
 | ④ 结算封底 + 差额记账 | 结算 | `FOR UPDATE` 锁行后 `GREATEST(balance - amount, floor)`，差额记 write-off 并打耗尽标记；**永不为负** | `deductBalanceToFloorSQL` |
 
 核心不变量：`balance − Σ在途预留 ≥ reserve`，且它在"结算扣钱"与"归还预留"以任意
@@ -41,6 +45,19 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 **订阅模式**（订阅计费）复用第 ③ 层：scope 为 `用户 × 分组`，护栏是
 `usage + Σ预留 < daily/weekly/monthly limit`，堵住"并发请求共用同一份用量快照、
 配额被超额消耗"的超卖。
+
+**user × platform 日/周/月配额**（余额模式）同样复用第 ③ 层：scope 为
+`upq:<userID>:<platform>`，三个窗口分别校验 `usage + Σ预留 <= limit`，取最紧的
+窗口作为 Redis 侧的 `maxTotal`。它与余额 scope 是两套独立额度，同一次请求会在槽位上
+持有**两条凭据**（`BillingReservationSlot` 多绑定），归还/续期以凭据为单位；平台预留
+失败时余额绑定会整槽回滚，不会白占额度到 TTL 到期。
+
+**API Key 总额度**（`api_key.quota`，两种计费模式都生效）同样复用第 ③ 层：scope 为
+`apikey:<id>`，护栏是 `quota_used + Σ预留 <= quota`。它参考 new-api 的 token 额度预留
+（`model.TryReserveTokenQuota` 同时动 `RemainQuota`/`UsedQuota`）：准入只读鉴权缓存里的
+`quota_used` 快照、而 `quota_used` 在结算时才递增，所以并发突发会让同一个 key 一起
+穿过 `quota_used >= quota` 判定。预留后该 key 的额度上限在并发下同样成立；不限量
+（`quota <= 0`）的 key 不产生预留。
 
 ## 3. 配置项清单
 
@@ -255,3 +272,15 @@ GET /api/v1/admin/ops/billing-guard
   2. 幂等以"同一笔调用只提交一次"为前提（worker 池的 `TrySubmit` 成功即仅入队一次，
      失败按 overflow policy 单次降级）。若将来引入记账重试/人工重放，必须复用同一个
      上游 id，否则会被视为两笔独立扣费。
+- **API Key 总额度已接入在途预留，但 5h/1d/7d 限流窗口没有**：`Usage5h/1d/7d` 由
+  `APIKeyService.UpdateRateLimitUsage` 在结算时递增，准入仍只看鉴权缓存快照，并发突发
+  可以超出窗口上限（属于限流而非计费）。要严格限流可复用同一套预留机制
+  （scope=`apikey:<id>:<window>`），目前**尚未实现**。
+- **API Key 额度与钱包/订阅是并行额度**：同一次请求最多会持有三条预留凭据
+  （钱包 + 平台配额 + key 额度，或订阅 + key 额度），归还/续期以凭据为单位；
+  任一 scope 预留失败都会整槽回滚，不会留下占着额度的残留凭据。
+- **Redis 故障时预留 fail-open**：`reserveSpendWithGuard` 遇到 Redis 写失败时记
+  `fail_open` 指标并放行本笔请求（与修复前一致），此时护栏退化为"余额快照 + 最坏费用
+  闸门 + 结算封底"，并发维度的原子性在故障期间不存在。new-api 在同类场景下回落到
+  DB 条件更新（`UPDATE users SET quota=quota-? WHERE quota>=?`）来保持原子性，
+  可作为后续加固方向。

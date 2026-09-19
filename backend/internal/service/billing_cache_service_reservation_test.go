@@ -28,8 +28,8 @@ type reservationCacheStub struct {
 	balanceEligibilityCacheStub
 
 	mu           sync.Mutex
-	receipts     map[string]float64
-	reservedNano int64
+	receipts     map[string]map[string]float64
+	reservedNano map[string]int64
 	reserveCalls atomic.Int64
 	releaseCalls atomic.Int64
 	renewCalls   atomic.Int64
@@ -37,7 +37,7 @@ type reservationCacheStub struct {
 	failRelease  atomic.Bool
 }
 
-func (s *reservationCacheStub) ReserveUserBalance(_ context.Context, _ string, requestID string, amount float64, _ time.Duration) (float64, error) {
+func (s *reservationCacheStub) ReserveUserBalance(_ context.Context, scope string, requestID string, amount float64, _ time.Duration) (float64, error) {
 	s.reserveCalls.Add(1)
 	if s.failReserve.Load() {
 		return 0, errors.New("redis down")
@@ -45,41 +45,47 @@ func (s *reservationCacheStub) ReserveUserBalance(_ context.Context, _ string, r
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.receipts == nil {
-		s.receipts = make(map[string]float64)
+		s.receipts = make(map[string]map[string]float64)
 	}
-	// 幂等：同 requestID 重复预留不重复累加（与 Redis 端 SET NX 语义一致）。
-	if _, exists := s.receipts[requestID]; !exists {
-		s.receipts[requestID] = amount
-		s.reservedNano += int64(math.Round(amount * 1e9))
+	if s.reservedNano == nil {
+		s.reservedNano = make(map[string]int64)
 	}
-	return float64(s.reservedNano) / 1e9, nil
+	if s.receipts[scope] == nil {
+		s.receipts[scope] = make(map[string]float64)
+	}
+	// 幂等：同 scope + requestID 重复预留不重复累加（与 Redis 端 SET NX 语义一致）。
+	if _, exists := s.receipts[scope][requestID]; !exists {
+		s.receipts[scope][requestID] = amount
+		s.reservedNano[scope] += int64(math.Round(amount * 1e9))
+	}
+	return float64(s.reservedNano[scope]) / 1e9, nil
 }
 
-func (s *reservationCacheStub) ReleaseUserBalanceReservation(_ context.Context, _ string, requestID string, _ float64, _ time.Duration) error {
+func (s *reservationCacheStub) ReleaseUserBalanceReservation(_ context.Context, scope string, requestID string, _ float64, _ time.Duration) error {
 	s.releaseCalls.Add(1)
 	if s.failRelease.Load() {
 		return errors.New("redis down")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	stored, exists := s.receipts[requestID]
+	stored, exists := s.receipts[scope][requestID]
 	if !exists {
 		// 凭据已随 TTL 过期：整体 no-op，绝不能触碰聚合总额（否则会扣掉别人的预留）。
 		return ErrBillingReservationExpired
 	}
-	delete(s.receipts, requestID)
-	s.reservedNano -= int64(math.Round(stored * 1e9))
-	if s.reservedNano < 0 {
-		s.reservedNano = 0
+	delete(s.receipts[scope], requestID)
+	s.reservedNano[scope] -= int64(math.Round(stored * 1e9))
+	if s.reservedNano[scope] < 0 {
+		s.reservedNano[scope] = 0
 	}
 	return nil
 }
 
-func (s *reservationCacheStub) RenewUserBalanceReservation(_ context.Context, _ string, requestID string, _ time.Duration) error {
+func (s *reservationCacheStub) RenewUserBalanceReservation(_ context.Context, scope string, requestID string, _ time.Duration) error {
 	s.renewCalls.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.receipts[requestID]; !exists {
+	if _, exists := s.receipts[scope][requestID]; !exists {
 		return ErrBillingReservationExpired
 	}
 	return nil
@@ -91,13 +97,62 @@ func (s *reservationCacheStub) RenewUserBalanceReservation(_ context.Context, _ 
 func (s *reservationCacheStub) expireAllReceipts() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.receipts = make(map[string]float64)
+	// 只清凭据：聚合总额仍旧保留在 Redis（聚合键只在自身 TTL 到期时消失），
+	// 这正是“晚到的归还不得吃掉别人预留”缺陷能复现的前提。
+	s.receipts = make(map[string]map[string]float64)
 }
 
 func (s *reservationCacheStub) reservedAmount() float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return float64(s.reservedNano) / 1e9
+	var total int64
+	for _, nano := range s.reservedNano {
+		total += nano
+	}
+	return float64(total) / 1e9
+}
+
+func (s *reservationCacheStub) reservedAmountForScope(scope string) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return float64(s.reservedNano[scope]) / 1e9
+}
+
+// atomicReservationCacheStub 建模生产路径：底层缓存实现了原子预留能力
+// （repository.billingCache.TryReserveUserBalance 的 Lua 语义），越界时**不落盘**，
+// 因此 service 层只需要回滚同请求已经绑定的其它 scope。
+type atomicReservationCacheStub struct {
+	reservationCacheStub
+}
+
+func (s *atomicReservationCacheStub) TryReserveUserBalance(_ context.Context, scope string, requestID string, amount, maxTotal float64, _ time.Duration) (float64, bool, error) {
+	s.reserveCalls.Add(1)
+	if s.failReserve.Load() {
+		return 0, false, errors.New("redis down")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.receipts == nil {
+		s.receipts = make(map[string]map[string]float64)
+	}
+	if s.reservedNano == nil {
+		s.reservedNano = make(map[string]int64)
+	}
+	if s.receipts[scope] == nil {
+		s.receipts[scope] = make(map[string]float64)
+	}
+	current := float64(s.reservedNano[scope]) / 1e9
+	// 幂等重放：同一 requestID 重复预留直接返回当前总额（对应 Lua 的 existing 分支）。
+	if _, exists := s.receipts[scope][requestID]; exists {
+		return current, true, nil
+	}
+	next := s.reservedNano[scope] + int64(math.Round(amount*1e9))
+	if float64(next)/1e9 > maxTotal+1e-12 {
+		return current, false, nil
+	}
+	s.receipts[scope][requestID] = amount
+	s.reservedNano[scope] = next
+	return float64(next) / 1e9, true, nil
 }
 
 func newReservationTestService(cache BillingCache) *BillingCacheService {
@@ -554,4 +609,219 @@ func TestSubscriptionReservation_MissingWorstSpendKeepsOldBehaviour(t *testing.T
 	var slot BillingReservationSlot
 	require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 42}, nil, group, &UserSubscription{Status: "active"}, "", WithBalanceReservation(&slot)))
 	require.Equal(t, int64(0), cache.reserveCalls.Load(), "无最坏费用上界时不预留")
+}
+
+func newPlatformQuotaReservationTestService(cache BillingCache, rec *UserPlatformQuotaRecord) *BillingCacheService {
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	svc.userPlatformQuotaRepo = &fakeQuotaRepo{rec: rec}
+	return svc
+}
+
+// TestPlatformQuotaReservation_BlocksConcurrentOversell 锁死 user×platform 配额的
+// 并发超卖：daily limit=0.30、每笔最坏费用 0.10 时，前 3 笔能把限额正好用满，
+// 第 4 笔必须在预检被拒；且第 4 笔先绑定的余额预留必须随拒绝一起回滚。
+func TestPlatformQuotaReservation_BlocksConcurrentOversell(t *testing.T) {
+	cache := &reservationCacheStub{balance: 10.0}
+	dailyLimit := 0.30
+	svc := newPlatformQuotaReservationTestService(cache, &UserPlatformQuotaRecord{
+		UserID: 1, Platform: "anthropic", DailyLimitUSD: &dailyLimit,
+	})
+	t.Cleanup(svc.Stop)
+
+	slots := make([]*BillingReservationSlot, 0, 3)
+	for i := 0; i < 3; i++ {
+		slot := &BillingReservationSlot{}
+		err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "anthropic", reservationEligibilityOpts(slot, 0.10)...)
+		require.NoError(t, err, "第 %d 笔应通过（限额可被最坏费用正好用满）", i+1)
+		slots = append(slots, slot)
+	}
+	require.InDelta(t, 0.60, cache.reservedAmount(), 1e-9, "3 笔请求各占余额 + 平台两条 0.10 凭据")
+
+	overflow := &BillingReservationSlot{}
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "anthropic", reservationEligibilityOpts(overflow, 0.10)...)
+	require.ErrorIs(t, err, ErrUserPlatformDailyQuotaExhausted)
+	require.InDelta(t, 0.60, cache.reservedAmount(), 1e-9, "被拒请求的余额预留必须回滚")
+	// 该桩未实现原子预留：越界的平台预留先落盘、再由护栏回滚，加上余额绑定的
+	// 回滚，第 4 笔一共释放 2 次（生产路径见下一个用例）。
+	require.Equal(t, int64(2), cache.releaseCalls.Load(), "第 4 笔的余额绑定与平台预留都必须回滚")
+
+	for _, slot := range slots {
+		slot.Release(context.Background())
+	}
+	require.InDelta(t, 0.0, cache.reservedAmount(), 1e-9)
+	require.Equal(t, int64(8), cache.releaseCalls.Load(), "2 次回滚 + 3 笔 × 2 个 scope")
+}
+
+// TestPlatformQuotaReservation_AtomicStoreLeavesNoResidue 锁死生产路径（底层缓存实现
+// TryReserveUserBalance 原子预留）上的拒绝语义：越界的平台预留在 Lua 里就被挡下、
+// 根本不会落盘，拒绝只需回滚同请求已绑定的余额预留，在途总额保持不变。
+func TestPlatformQuotaReservation_AtomicStoreLeavesNoResidue(t *testing.T) {
+	cache := &atomicReservationCacheStub{}
+	cache.balance = 10.0
+	dailyLimit := 0.30
+	svc := newPlatformQuotaReservationTestService(cache, &UserPlatformQuotaRecord{
+		UserID: 1, Platform: "anthropic", DailyLimitUSD: &dailyLimit,
+	})
+	t.Cleanup(svc.Stop)
+
+	platformScope := userPlatformQuotaReservationScope(1, "anthropic")
+
+	slots := make([]*BillingReservationSlot, 0, 3)
+	for i := 0; i < 3; i++ {
+		slot := &BillingReservationSlot{}
+		err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "anthropic", reservationEligibilityOpts(slot, 0.10)...)
+		require.NoError(t, err, "第 %d 笔应通过（限额可被最坏费用正好用满）", i+1)
+		slots = append(slots, slot)
+	}
+	require.InDelta(t, 0.30, cache.reservedAmountForScope(platformScope), 1e-9, "平台 scope 恰好用满限额")
+	require.InDelta(t, 0.60, cache.reservedAmount(), 1e-9)
+
+	overflow := &BillingReservationSlot{}
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "anthropic", reservationEligibilityOpts(overflow, 0.10)...)
+	require.ErrorIs(t, err, ErrUserPlatformDailyQuotaExhausted)
+	require.InDelta(t, 0.30, cache.reservedAmountForScope(platformScope), 1e-9, "原子拒绝不得留下平台预留残留")
+	require.InDelta(t, 0.60, cache.reservedAmount(), 1e-9, "第 4 笔的余额预留必须随拒绝回滚")
+	require.Equal(t, int64(1), cache.releaseCalls.Load(), "原子拒绝只需回滚余额绑定一次")
+
+	for _, slot := range slots {
+		slot.Release(context.Background())
+	}
+	require.InDelta(t, 0.0, cache.reservedAmount(), 1e-9)
+	require.Equal(t, int64(7), cache.releaseCalls.Load(), "1 次回滚 + 3 笔 × 2 个 scope")
+}
+
+// TestPlatformQuotaReservation_UsesTightestWindow 验证三个窗口取最紧的那个：
+// daily 宽松、weekly 只够 2 笔时，第 3 笔必须以 weekly 错误拒绝。
+func TestPlatformQuotaReservation_UsesTightestWindow(t *testing.T) {
+	cache := &reservationCacheStub{balance: 10.0}
+	dailyLimit := 5.0
+	weeklyLimit := 0.20
+	svc := newPlatformQuotaReservationTestService(cache, &UserPlatformQuotaRecord{
+		UserID: 1, Platform: "anthropic", DailyLimitUSD: &dailyLimit, WeeklyLimitUSD: &weeklyLimit,
+	})
+	t.Cleanup(svc.Stop)
+
+	for i := 0; i < 2; i++ {
+		slot := &BillingReservationSlot{}
+		require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "anthropic", reservationEligibilityOpts(slot, 0.10)...))
+	}
+
+	overflow := &BillingReservationSlot{}
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "anthropic", reservationEligibilityOpts(overflow, 0.10)...)
+	require.ErrorIs(t, err, ErrUserPlatformWeeklyQuotaExhausted)
+}
+
+// TestPlatformQuotaReservation_HandOffReleasesBothScopes 验证多绑定槽位的归还时机：
+// 移交给结算任务后收尾兜底不得提前归还；结算完成时的 Release 必须归还全部 scope。
+func TestPlatformQuotaReservation_HandOffReleasesBothScopes(t *testing.T) {
+	cache := &reservationCacheStub{balance: 10.0}
+	dailyLimit := 1.0
+	svc := newPlatformQuotaReservationTestService(cache, &UserPlatformQuotaRecord{
+		UserID: 1, Platform: "anthropic", DailyLimitUSD: &dailyLimit,
+	})
+	t.Cleanup(svc.Stop)
+
+	slot := &BillingReservationSlot{}
+	require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "anthropic", reservationEligibilityOpts(slot, 0.10)...))
+	require.InDelta(t, 0.20, cache.reservedAmount(), 1e-9)
+
+	slot.HandOff()
+	slot.ReleaseOnExit(context.Background())
+	require.InDelta(t, 0.20, cache.reservedAmount(), 1e-9, "移交结算后收尾兜底不得提前归还")
+
+	slot.Release(context.Background())
+	require.InDelta(t, 0.0, cache.reservedAmount(), 1e-9)
+	require.Equal(t, int64(2), cache.releaseCalls.Load(), "两个 scope 都必须归还")
+}
+
+// TestPlatformQuotaReservation_NoopWithoutLimits 确认没有配置平台限额时
+// 只产生余额预留，不写无意义的平台预留键。
+func TestPlatformQuotaReservation_NoopWithoutLimits(t *testing.T) {
+	cache := &reservationCacheStub{balance: 10.0}
+	svc := newPlatformQuotaReservationTestService(cache, &UserPlatformQuotaRecord{UserID: 1, Platform: "anthropic"})
+	t.Cleanup(svc.Stop)
+
+	var slot BillingReservationSlot
+	require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "anthropic", reservationEligibilityOpts(&slot, 0.10)...))
+	require.Equal(t, int64(1), cache.reserveCalls.Load(), "无 limit 时不产生平台预留")
+	require.InDelta(t, 0.10, cache.reservedAmount(), 1e-9)
+}
+
+// TestAPIKeyQuotaReservation_BlocksConcurrentOversell 锁死 API Key 总额度（quota）的
+// 并发超额：quota=0.30、每笔最坏费用 0.10 时前 3 笔正好用满，第 4 笔必须在预检被
+// 429 拒绝，且它先绑定的余额预留必须随拒绝一起回滚（与 user×platform 预留同构）。
+//
+// 修复前：key 额度只在鉴权时读 quota_used 快照（quota_used 又只在结算时递增），
+// 并发请求会一起穿过 `quota_used >= quota` 判定，使该 key 超额消耗。
+func TestAPIKeyQuotaReservation_BlocksConcurrentOversell(t *testing.T) {
+	cache := &reservationCacheStub{balance: 10.0}
+	svc := newReservationTestService(cache)
+	t.Cleanup(svc.Stop)
+
+	apiKey := &APIKey{ID: 7, UserID: 1, Quota: 0.30}
+	keyScope := apiKeyQuotaReservationScope(apiKey.ID)
+
+	slots := make([]*BillingReservationSlot, 0, 3)
+	for i := 0; i < 3; i++ {
+		slot := &BillingReservationSlot{}
+		err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, apiKey, nil, nil, "", reservationEligibilityOpts(slot, 0.10)...)
+		require.NoError(t, err, "第 %d 笔应通过（key 额度可被最坏费用正好用满）", i+1)
+		slots = append(slots, slot)
+	}
+	require.InDelta(t, 0.30, cache.reservedAmountForScope(keyScope), 1e-9, "key 额度 scope 恰好用满")
+	require.InDelta(t, 0.60, cache.reservedAmount(), 1e-9, "3 笔余额 + 3 笔 key 额度")
+
+	overflow := &BillingReservationSlot{}
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, apiKey, nil, nil, "", reservationEligibilityOpts(overflow, 0.10)...)
+	require.ErrorIs(t, err, ErrAPIKeyQuotaExhausted)
+	require.InDelta(t, 0.30, cache.reservedAmountForScope(keyScope), 1e-9, "被拒请求不得留下 key 额度残留")
+	require.InDelta(t, 0.60, cache.reservedAmount(), 1e-9, "第 4 笔的余额预留必须随拒绝回滚")
+
+	for _, slot := range slots {
+		slot.Release(context.Background())
+	}
+	require.InDelta(t, 0.0, cache.reservedAmount(), 1e-9)
+}
+
+// TestAPIKeyQuotaReservation_NoopForUnlimitedKey 确认不限量的 key（quota<=0）
+// 不产生预留，行为与修复前一致。
+func TestAPIKeyQuotaReservation_NoopForUnlimitedKey(t *testing.T) {
+	cache := &reservationCacheStub{balance: 10.0}
+	svc := newReservationTestService(cache)
+	t.Cleanup(svc.Stop)
+
+	var slot BillingReservationSlot
+	require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, &APIKey{ID: 7, Quota: 0}, nil, nil, "", reservationEligibilityOpts(&slot, 0.10)...))
+	require.InDelta(t, 0.10, cache.reservedAmount(), 1e-9, "只应有余额预留")
+	require.InDelta(t, 0.0, cache.reservedAmountForScope(apiKeyQuotaReservationScope(7)), 1e-9)
+}
+
+// TestAPIKeyQuotaReservation_RollsBackSubscriptionBindingOnReject 验证第三个 scope
+// （key 额度）在订阅模式下同样生效：订阅预留已经绑定后 key 额度被拒，整槽必须回滚，
+// 不得留下任何一条占着额度到 TTL 的残留凭据。
+func TestAPIKeyQuotaReservation_RollsBackSubscriptionBindingOnReject(t *testing.T) {
+	dailyLimit := 5.0
+	cache := &subscriptionReservationCacheStub{
+		subData: &SubscriptionCacheData{
+			Status:    SubscriptionStatusActive,
+			ExpiresAt: time.Now().Add(time.Hour),
+		},
+	}
+	cache.balance = 100 // 余额模式的额度与本用例无关
+
+	cfg := &config.Config{}
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+
+	group := &Group{ID: 10, SubscriptionType: "subscription", Status: "active", DailyLimitUSD: &dailyLimit}
+	subscription := &UserSubscription{Status: "active"}
+	// key 只剩 0.05，单笔最坏费用 0.10 已经吃不消。
+	apiKey := &APIKey{ID: 9, UserID: 1, Quota: 0.05}
+
+	var slot BillingReservationSlot
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, apiKey, group, subscription, "", reservationEligibilityOpts(&slot, 0.10)...)
+	require.ErrorIs(t, err, ErrAPIKeyQuotaExhausted)
+	require.InDelta(t, 0.0, cache.reservedAmount(), 1e-9, "被拒请求不得留下订阅或 key 额度预留")
 }
