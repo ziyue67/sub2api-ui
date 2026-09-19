@@ -865,6 +865,12 @@ func ProvideAPIKeyService(
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	svc.SetConcurrencyService(concurrencyService)
+	// API Key 已用额度共享高水位账本：鉴权缓存里的 quota_used 是快照
+	// （L1 15s / L2 300s），结算只递增 DB。账本把"结算后的 DB 真值"发布出来，
+	// 让准入在快照过期前也能看到最新已用额度（见 service.APIKeyQuotaUsedLedger）。
+	if ledger, ok := cache.(APIKeyQuotaUsedLedger); ok {
+		SetAPIKeyQuotaUsedLedger(ledger)
+	}
 	return svc
 }
 

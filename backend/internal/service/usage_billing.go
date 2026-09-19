@@ -165,7 +165,11 @@ type AccountQuotaState struct {
 type UsageBillingApplyResult struct {
 	Applied              bool
 	APIKeyQuotaExhausted bool
-	NewBalance           *float64 // post-deduction balance (nil = no balance deduction)
+	// APIKeyQuotaUsed 是本次事务提交后的 api_key.quota_used 真值（nil = 本次没有
+	// 触碰该 key 的额度）。调用方用它把"已用额度"发布到共享高水位账本，
+	// 使鉴权快照过期之前预检也能看到最新已用额度（见 reserveAPIKeyQuotaSpend）。
+	APIKeyQuotaUsed *float64
+	NewBalance      *float64 // post-deduction balance (nil = no balance deduction)
 	// BalanceCollected is the amount actually taken from the wallet for this
 	// request. It equals the requested balance cost unless the wallet was
 	// drained down to the configured floor (billing.minimum_balance_reserve),

@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/redis/go-redis/v9"
 )
 
 // DB fallback timing. The DB ledger is only used after Redis reservation calls
@@ -270,4 +273,92 @@ func normalizedBillingReservationTTL(ttl time.Duration) time.Duration {
 		return billingReservationFallbackDefaultRowTTL
 	}
 	return ttl
+}
+
+// scanRedisReservationReceipts 把 Redis 账本上存活的在途预留导出为可导入 DB 的凭据快照。
+//
+// 键形如 billing:resv_item:<scope>:<requestID>；requestID 由服务层生成且**不含 ':'
+// （去连字符 UUID），因此按最后一个 ':' 切分即可无歧义地还原 scope 与 requestID。
+// TTL 用 PTTL 读取：<= 0（无过期或已被回收）时按缺省自愈 TTL 处理，宁可保守多占
+// 一段时间，也不让存量预留凭空消失。
+//
+// 仅用于"Redis 故障切 DB 账本"这一低频路径（见 activateReservationFallback），
+// 正常热路径零额外开销。
+func (c *billingCache) scanRedisReservationReceipts(ctx context.Context) ([]redisReservationReceipt, error) {
+	if c == nil || c.rdb == nil {
+		return nil, errors.New("redis client unavailable")
+	}
+	const scanBatch = 256
+	var (
+		cursor   uint64
+		receipts = make([]redisReservationReceipt, 0, scanBatch)
+	)
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, billingReservedItemKeyPrefix+"*", scanBatch).Result()
+		if err != nil {
+			return receipts, err
+		}
+		if len(keys) > 0 {
+			pipe := c.rdb.Pipeline()
+			gets := make([]*redis.StringCmd, len(keys))
+			pttls := make([]*redis.DurationCmd, len(keys))
+			for i, key := range keys {
+				gets[i] = pipe.Get(ctx, key)
+				pttls[i] = pipe.PTTL(ctx, key)
+			}
+			if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+				return receipts, err
+			}
+			now := time.Now()
+			for i, key := range keys {
+				amountText, err := gets[i].Result()
+				if err != nil {
+					// 键在 SCAN 与 GET 之间被归还/过期：跳过。
+					continue
+				}
+				amount, err := strconv.ParseFloat(amountText, 64)
+				if err != nil || amount <= 0 {
+					continue
+				}
+				ttl, err := pttls[i].Result()
+				if err != nil || ttl <= 0 {
+					ttl = billingReservationFallbackDefaultRowTTL
+				}
+				scope, requestID, ok := splitReservationItemKey(key)
+				if !ok {
+					continue
+				}
+				receipts = append(receipts, redisReservationReceipt{
+					Scope:     scope,
+					RequestID: requestID,
+					Amount:    amount,
+					ExpiresAt: now.Add(ttl),
+				})
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return receipts, nil
+}
+
+// splitReservationItemKey 把 billing:resv_item:<scope>:<requestID> 拆成 (scope, requestID)。
+// 前缀不匹配 / 缺少分隔符 / 任一段为空时返回 ok=false（非法键一律跳过，不猜测）。
+func splitReservationItemKey(key string) (scope, requestID string, ok bool) {
+	rest, found := strings.CutPrefix(key, billingReservedItemKeyPrefix)
+	if !found {
+		return "", "", false
+	}
+	index := strings.LastIndex(rest, ":")
+	if index <= 0 || index >= len(rest)-1 {
+		return "", "", false
+	}
+	scope = rest[:index]
+	requestID = rest[index+1:]
+	if scope == "" || requestID == "" {
+		return "", "", false
+	}
+	return scope, requestID, true
 }

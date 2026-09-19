@@ -112,6 +112,9 @@ type cacheWriteTask struct {
 	// 早于最近一次扣费/加钱，发布它会让预检依据偏高的余额放行。
 	// 空串表示"未取到代号"（降级装配 / 轻量 stub 缓存），退回无条件发布。
 	balanceGeneration string
+	// subscriptionGeneration 同理，作用于订阅缓存（用量同步累加会递增它）。
+	// 空串表示"未取到代号"，退回无条件发布。
+	subscriptionGeneration string
 }
 
 // balancePublishGuard 是余额缓存回源写回的**可选**能力：支持"读到余额之后没有发生过
@@ -210,6 +213,38 @@ func userPlatformQuotaReservationScope(userID int64, platform string) string {
 // 同一个 key 的额度不能被钱包预留抵扣，反之亦然。
 func apiKeyQuotaReservationScope(apiKeyID int64) string {
 	return "apikey:" + strconv.FormatInt(apiKeyID, 10)
+}
+
+// APIKeyQuotaUsedLedger 是 API Key 已用额度（quota_used）的共享高水位账本。
+//
+// 它只有一个职责：把"结算提交后的 DB 真值"发布到 Redis，使准入在鉴权快照
+// （L1 15s / L2 300s）过期之前也能看到最新已用额度。见
+// reserveAPIKeyQuotaSpend 的说明与 repository 侧 apiKeyQuotaUsedLedgerKeyPrefix 注释。
+//
+// 之所以做成"注入的窄接口"而不是给 BillingCacheService 加构造参数：该服务有大量
+// 调用点（含大量单测装配），沿用包内既有的包级 setter 注入约定
+// （见 SetInflightReservationBudgetResolver / SetCodexCanonicalUserAgentResolver）。
+// 未注入（降级/单测装配）时账本静默 no-op，准入退回"快照 + 在途预留"，行为与修复前一致。
+type APIKeyQuotaUsedLedger interface {
+	// GetAPIKeyQuotaUsedLedger 读取高水位；键不存在（含已过期）返回 0。
+	GetAPIKeyQuotaUsedLedger(ctx context.Context, apiKeyID int64) (float64, error)
+	// SetAPIKeyQuotaUsedLedger 以"只增不减"的方式发布结算后的 quota_used。
+	SetAPIKeyQuotaUsedLedger(ctx context.Context, apiKeyID int64, quotaUsed float64) error
+	// ClearAPIKeyQuotaUsedLedger 清除账本（管理员重置 quota_used 时必须调用，
+	// 否则残留的高水位会在 TTL 内误拦该 key）。
+	ClearAPIKeyQuotaUsedLedger(ctx context.Context, apiKeyID int64) error
+}
+
+var apiKeyQuotaUsedLedgerStore APIKeyQuotaUsedLedger
+
+// SetAPIKeyQuotaUsedLedger 注入共享账本（nil = 关闭该护栏，退回修复前语义）。
+func SetAPIKeyQuotaUsedLedger(store APIKeyQuotaUsedLedger) {
+	apiKeyQuotaUsedLedgerStore = store
+}
+
+// APIKeyQuotaUsedLedgerReader 返回已注入的账本（nil 安全，供测试与 ops 使用）。
+func APIKeyQuotaUsedLedgerReader() APIKeyQuotaUsedLedger {
+	return apiKeyQuotaUsedLedgerStore
 }
 
 // billingReservationTTL 是在途预留的自愈 TTL：结算任务被丢弃 / 进程崩溃导致归还丢失时，
@@ -612,7 +647,7 @@ func (s *BillingCacheService) cacheWriteWorker(ch <-chan cacheWriteTask) {
 		case cacheWriteSetBalance:
 			s.setBalanceCacheWithGeneration(ctx, task.userID, task.balance, task.balanceGeneration)
 		case cacheWriteSetSubscription:
-			s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
+			s.setSubscriptionCacheWithGeneration(ctx, task.userID, task.groupID, task.subscriptionData, task.subscriptionGeneration)
 		case cacheWriteUpdateSubscriptionUsage:
 			if s.cache != nil {
 				if err := s.cache.UpdateSubscriptionUsage(ctx, task.userID, task.groupID, task.amount); err != nil {
@@ -887,6 +922,9 @@ func (s *BillingCacheService) GetSubscriptionStatus(ctx context.Context, userID,
 	}
 
 	// 缓存未命中，从数据库读取
+	// 变动代号必须在 DB 读取**之前**取：晚于读取取到的代号会把"读取期间发生的用量
+	// 变动"一起掩盖掉，条件写回就失去意义（与余额缓存 R9 同构）。
+	generation := s.subscriptionGenerationFor(ctx, userID, groupID)
 	data, err := s.getSubscriptionFromDB(ctx, userID, groupID)
 	if err != nil {
 		return nil, err
@@ -898,6 +936,9 @@ func (s *BillingCacheService) GetSubscriptionStatus(ctx context.Context, userID,
 		userID:           userID,
 		groupID:          groupID,
 		subscriptionData: data,
+		// 条件写回：读取期间有变动就丢弃这份快照（否则迟到的旧快照会把结算后的
+		// 真实 usage 覆盖回偏小值）。
+		subscriptionGeneration: generation,
 	})
 
 	return data, nil
@@ -952,6 +993,70 @@ func (s *BillingCacheService) setSubscriptionCache(ctx context.Context, userID, 
 	}
 }
 
+// subscriptionPublishGuard 是订阅缓存回源写回的**可选**能力：支持"读到订阅之后没有
+// 发生过用量变动才发布"的条件写回（与余额缓存的 balancePublishGuard 同构）。
+//
+// 未实现该能力的缓存（测试用的轻量 stub、旧实现）自动降级为无条件写回，
+// 行为与修复前一致 —— 只降低防护强度，不会产生错误结果。
+type subscriptionPublishGuard interface {
+	// SubscriptionGeneration 返回当前的订阅缓存变动代号（键不存在时归一化为 "0"）。
+	SubscriptionGeneration(ctx context.Context, userID, groupID int64) (string, error)
+	// SetSubscriptionCacheIfGeneration 仅在代号未变时发布快照，返回是否发布成功。
+	SetSubscriptionCacheIfGeneration(ctx context.Context, userID, groupID int64, data *SubscriptionCacheData, generation string) (bool, error)
+}
+
+// subscriptionUsageApplier 是 BillingCache 的**可选**扩展能力：报告订阅用量的同步
+// 累加是否真的落到缓存（applied=false = 缓存键不存在，脚本静默跳过）。
+// 做成可选接口是为了不破坏轻量 stub 的编译。
+type subscriptionUsageApplier interface {
+	UpdateSubscriptionUsageApplied(ctx context.Context, userID, groupID int64, cost float64) (bool, error)
+}
+
+// apiKeyRateLimitUsageApplier 同理，作用于 API Key 限流用量。
+type apiKeyRateLimitUsageApplier interface {
+	UpdateAPIKeyRateLimitUsageApplied(ctx context.Context, keyID int64, cost float64) (bool, error)
+}
+
+// setSubscriptionCacheWithGeneration 发布订阅缓存快照。
+//
+// generation 非空且底层缓存支持条件写回时，只有"读取方发起 DB 读取之后没有发生过
+// 订阅用量变动"才真的发布；被拦下的写回不创建任何键，下一次读取回源真值自愈。
+func (s *BillingCacheService) setSubscriptionCacheWithGeneration(ctx context.Context, userID, groupID int64, data *subscriptionCacheData, generation string) {
+	if s.cache == nil || data == nil {
+		return
+	}
+	if guard, ok := s.cache.(subscriptionPublishGuard); ok && generation != "" {
+		published, err := guard.SetSubscriptionCacheIfGeneration(ctx, userID, groupID, s.convertToPortsData(data), generation)
+		if err != nil {
+			logger.LegacyPrintf("service.billing_cache", "Warning: conditional set subscription cache failed for user %d group %d: %v", userID, groupID, err)
+			return
+		}
+		if !published {
+			logger.LegacyPrintf("service.billing_cache",
+				"subscription cache snapshot discarded for user %d group %d: usage changed after the DB read", userID, groupID)
+		}
+		return
+	}
+	s.setSubscriptionCache(ctx, userID, groupID, data)
+}
+
+// subscriptionGenerationFor 取一份"订阅缓存变动代号"，必须在**发起 DB 读取之前**调用。
+//
+// 能力不可用（轻量 stub / 旧实现）时返回空串，调用方退回无条件写回，与修复前一致。
+func (s *BillingCacheService) subscriptionGenerationFor(ctx context.Context, userID, groupID int64) string {
+	guard, ok := s.cache.(subscriptionPublishGuard)
+	if !ok {
+		return ""
+	}
+	generation, err := guard.SubscriptionGeneration(ctx, userID, groupID)
+	if err != nil {
+		logger.LegacyPrintf("service.billing_cache",
+			"Warning: read subscription generation for user %d group %d failed: %v", userID, groupID, err)
+		return ""
+	}
+	return generation
+}
+
 // UpdateSubscriptionUsage 更新订阅用量缓存（同步调用）
 func (s *BillingCacheService) UpdateSubscriptionUsage(ctx context.Context, userID, groupID int64, costUSD float64) error {
 	if s.cache == nil {
@@ -979,6 +1084,104 @@ func (s *BillingCacheService) QueueUpdateSubscriptionUsage(userID, groupID int64
 	if err := s.UpdateSubscriptionUsage(ctx, userID, groupID, costUSD); err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: update subscription cache fallback failed for user %d group %d: %v", userID, groupID, err)
 	}
+}
+
+// SyncSubscriptionUsageAfterSettlement 在结算提交后**同步**把订阅用量累加进缓存。
+//
+// 为什么不能用 QueueUpdateSubscriptionUsage（异步 worker）：
+//   - 预检读的是 Redis 里的 usage 快照，护栏是 `usage + Σ预留 < 限额`；
+//   - handler 的结算任务闭包在 RecordUsage 返回后 `defer Release()` 归还预留，
+//     而异步 worker 可能还没把本次 usage 累加进缓存。
+//   - 于是"预留已归零、usage 仍是旧值"同时成立，下一批并发请求会重新拿到
+//     一整份剩余额度再次放行 —— 订阅限额被重复消耗（与 API Key 额度冻结快照同构）。
+//
+// 因此这里同步写（Redis HINCRBYFLOAT，通常 < 1ms），并且只在"累加被记录"之后
+// 才让调用方继续归还预留；失败时按保守方向补救：
+//  1. 计一次 ALERT + 失败计数（ops 面板可观测，不再静默吞掉）；
+//  2. 失效订阅缓存，让下一次预检回源到 DB 真值（结算已经写进 DB），
+//     即使缓存键缺失导致累加被跳过，用量视图也不会偏小。
+func (s *BillingCacheService) SyncSubscriptionUsageAfterSettlement(ctx context.Context, userID, groupID int64, costUSD float64) {
+	if s == nil || s.cache == nil || costUSD <= 0 {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cacheWriteTimeout)
+	defer cancel()
+	applied, err := s.applySubscriptionUsageSync(writeCtx, userID, groupID, costUSD)
+	if err == nil && applied {
+		return
+	}
+	if err != nil {
+		RecordBillingSubscriptionUsageSyncError()
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: sync subscription usage cache failed user=%d group=%d cost=%f: %v (invalidating cache, next preflight reads DB truth)",
+			userID, groupID, costUSD, err)
+	} else {
+		// 累加被跳过（订阅缓存键不存在）：这笔用量只在 DB 里，缓存快照偏小。
+		// 不删缓存的话，预检会在 TTL 内继续按偏小的用量放行。
+		RecordBillingSubscriptionUsageSyncError()
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: subscription usage cache increment skipped (missing key) user=%d group=%d cost=%f (invalidating cache, next preflight reads DB truth)",
+			userID, groupID, costUSD)
+	}
+	if invalidateErr := s.InvalidateSubscription(writeCtx, userID, groupID); invalidateErr != nil {
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: invalidate subscription cache after sync usage failure failed user=%d group=%d: %v",
+			userID, groupID, invalidateErr)
+	}
+}
+
+// applySubscriptionUsageSync 累加订阅用量并报告是否真的落到缓存。
+//
+// 底层实现支持"applied"回复（production 的 *billingCache）时用它；
+// 轻量 stub / 旧实现按原语义只看错误（视作 applied=true）。
+func (s *BillingCacheService) applySubscriptionUsageSync(ctx context.Context, userID, groupID int64, costUSD float64) (bool, error) {
+	if applier, ok := s.cache.(subscriptionUsageApplier); ok {
+		return applier.UpdateSubscriptionUsageApplied(ctx, userID, groupID, costUSD)
+	}
+	return true, s.cache.UpdateSubscriptionUsage(ctx, userID, groupID, costUSD)
+}
+
+// SyncAPIKeyRateLimitUsageAfterSettlement 在结算提交后同步累加 API Key 限流用量。
+//
+// 与订阅用量同理：限流预检（checkAPIKeyRateLimits）优先读 Redis 快照，
+// 若累加还躺在异步队列里，下一批请求会按偏小的窗口用量放行（限流被穿透）。
+// 同步写失败时失效限流缓存，让下一次预检回源到 DB 真值（结算已写进 DB）。
+func (s *BillingCacheService) SyncAPIKeyRateLimitUsageAfterSettlement(ctx context.Context, apiKeyID int64, cost float64) {
+	if s == nil || s.cache == nil || apiKeyID <= 0 || cost <= 0 {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cacheWriteTimeout)
+	defer cancel()
+	applied, err := s.applyAPIKeyRateLimitUsageSync(writeCtx, apiKeyID, cost)
+	if err == nil && applied {
+		return
+	}
+	if err != nil {
+		RecordBillingAPIKeyRateLimitSyncError()
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: sync api key rate limit usage cache failed key=%d cost=%f: %v (invalidating cache, next preflight reads DB truth)",
+			apiKeyID, cost, err)
+	} else {
+		// 累加被跳过（限流缓存键不存在）：窗口用量只在 DB 里，缓存快照偏小。
+		RecordBillingAPIKeyRateLimitSyncError()
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: api key rate limit usage cache increment skipped (missing key) key=%d cost=%f (invalidating cache, next preflight reads DB truth)",
+			apiKeyID, cost)
+	}
+	if invalidateErr := s.InvalidateAPIKeyRateLimit(writeCtx, apiKeyID); invalidateErr != nil {
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: invalidate api key rate limit cache after sync usage failure failed key=%d: %v",
+			apiKeyID, invalidateErr)
+	}
+}
+
+// applyAPIKeyRateLimitUsageSync 累加限流用量并报告是否真的落到缓存（语义同
+// applySubscriptionUsageSync）。
+func (s *BillingCacheService) applyAPIKeyRateLimitUsageSync(ctx context.Context, apiKeyID int64, cost float64) (bool, error) {
+	if applier, ok := s.cache.(apiKeyRateLimitUsageApplier); ok {
+		return applier.UpdateAPIKeyRateLimitUsageApplied(ctx, apiKeyID, cost)
+	}
+	return true, s.cache.UpdateAPIKeyRateLimitUsage(ctx, apiKeyID, cost)
 }
 
 // InvalidateSubscription 失效指定订阅缓存
@@ -1162,29 +1365,88 @@ func (s *BillingCacheService) QueueUpdateAPIKeyRateLimitUsage(apiKeyID int64, co
 	})
 }
 
+// userPlatformQuotaUsageApplier 是 BillingCache 的**可选**扩展能力：
+// 报告本次累加是否真的落到缓存（applied=false = 被 key 缺失 / 旧 schema 守卫跳过）。
+//
+// 做成可选接口而不是往 BillingCache 里加方法：后者会破坏所有轻量 stub 的编译
+// （测试与降级装配），而这里只影响 production 的 *billingCache 实现。
+type userPlatformQuotaUsageApplier interface {
+	IncrUserPlatformQuotaUsageCacheApplied(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration, markDirty bool) (bool, error)
+}
+
 // IncrementUserPlatformQuotaUsage 同步累加 user × platform usage 到 Redis 缓存。
 //
 // 设计：同步写入而非异步入队。同步写确保下次 preflight 立即看到最新 usage，
 // 把 TOCTOU 超支窗口限制在并发 in-flight 请求数量内（而非随时间无限累积）。
 // 写延迟通常 < 1ms（本地 Redis），换取 quota 视图实时性的取舍合理。
 //
-// Redis 写失败用 ALERT 级 log；DB 持久化由 caller 单独 goroutine 兜底（gateway_service.go）。
-func (s *BillingCacheService) IncrementUserPlatformQuotaUsage(userID int64, platform string, cost float64) {
+// 返回值 handledByDB=true 表示"这份增量已由本函数同步写进 DB"（缓存累加被跳过或
+// Redis 写失败），调用方不要再重复写一遍 —— 否则会双记。false 表示缓存累加成功，
+// DB 持久化仍按原路径（flusher 或调用方直写）处理。
+//
+// 为什么需要 DB 兜底：累加脚本在 key 不存在 / entry 为旧 schema 时静默 return 0，
+// 此前只看 error 的调用方完全看不到"增量被丢弃"。这份丢失在 flusher 模式下尤其危险：
+// 那笔 cost 连 DB 都不会有，usage 永久偏小 = 平台配额可被重复放行。
+func (s *BillingCacheService) IncrementUserPlatformQuotaUsage(userID int64, platform string, cost float64) (handledByDB bool) {
 	if s.cache == nil {
-		return
+		return false
 	}
 	if platform == "" || cost <= 0 {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
 	defer cancel()
 	ttl := time.Duration(s.cfg.Billing.UserPlatformQuotaCacheTTLSeconds) * time.Second
 	markDirty := s.cfg.Database.UserPlatformQuotaFlusherEnabled
-	if err := s.cache.IncrUserPlatformQuotaUsageCache(ctx, userID, platform, cost, ttl, markDirty); err != nil {
-		logger.LegacyPrintf("service.billing_cache",
-			"ALERT: incr user platform quota cache failed user=%d platform=%s cost=%f: %v",
-			userID, platform, cost, err)
+
+	var (
+		applied     bool
+		incrErr     error
+		supportsAck bool
+	)
+	if applier, ok := s.cache.(userPlatformQuotaUsageApplier); ok {
+		supportsAck = true
+		applied, incrErr = applier.IncrUserPlatformQuotaUsageCacheApplied(ctx, userID, platform, cost, ttl, markDirty)
+	} else {
+		// 轻量 stub / 旧实现：拿不到"是否真的累加"的回复，按原语义只处理错误。
+		applied, incrErr = true, s.cache.IncrUserPlatformQuotaUsageCache(ctx, userID, platform, cost, ttl, markDirty)
 	}
+	if incrErr != nil {
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: incr user platform quota cache failed user=%d platform=%s cost=%f: %v (falling back to synchronous DB increment)",
+			userID, platform, cost, incrErr)
+	}
+	if incrErr == nil && applied {
+		return false
+	}
+
+	// 走到这里有两种情况，都必须补救（方向：宁可 DB usage 偏保守，也不能偏小）：
+	//  1. 累加被守卫跳过（key 缺失 / 旧 schema）：增量已丢，缓存里没有它；
+	//  2. Redis 写失败：增量既不在缓存也不在 DB。
+	// 处置：删缓存（让下次 preflight 从 DB 重载，而不是继续用少了这笔的旧快照）
+	//       + 同步写 DB（把这笔 cost 持久化，成为新的真值来源）。
+	if err := s.cache.DeleteUserPlatformQuotaCache(ctx, userID, platform); err != nil {
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: delete user platform quota cache after skipped/failed incr failed user=%d platform=%s: %v",
+			userID, platform, err)
+	}
+	if !supportsAck {
+		// 旧实现错误路径：保持原有语义，由调用方按 flusher 配置决定是否直写 DB。
+		return false
+	}
+	if s.userPlatformQuotaRepo == nil {
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: user platform quota increment lost user=%d platform=%s cost=%f (no DB repo to fall back to)",
+			userID, platform, cost)
+		return false
+	}
+	if err := s.userPlatformQuotaRepo.IncrementUsageWithReset(ctx, userID, platform, cost, time.Now().UTC()); err != nil {
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: synchronous DB fallback for lost user platform quota increment failed user=%d platform=%s cost=%f: %v (usage will be under-counted until reconciled)",
+			userID, platform, cost, err)
+		return false
+	}
+	return true
 }
 
 // ============================================
@@ -1986,6 +2248,16 @@ func (s *BillingCacheService) reserveAPIKeyQuotaSpend(ctx context.Context, apiKe
 	apiKeyID := apiKey.ID
 	limit := apiKey.Quota
 	used := apiKey.QuotaUsed
+	// 叠加"已结算用量"共享账本：鉴权缓存里的 quota_used 是快照（L1 15s / L2 300s），
+	// 在快照过期前它是冻结的，而结算只递增 DB。若只看快照，等此前放行的请求结算完
+	// 并归还完在途预留，预留总额归零而快照仍旧，同一个 key 就能把一个额度周期内的
+	// 剩余额度重复放行一遍（修复前的超发根因）。账本是单调高水位且恒 ≤ DB 真值，
+	// 因此 max(快照, 账本) 只会让准入更保守。
+	if ledgerUsed, ok := s.apiKeyQuotaUsedHighWater(ctx, apiKeyID); ok && ledgerUsed > used {
+		// 观察到账本高水位领先快照：正是"快照冻结"缺陷的现场，计数暴露给 ops。
+		RecordBillingAPIKeyQuotaLedgerStaleRescue()
+		used = ledgerUsed
+	}
 	remaining := math.Max(0, limit-used)
 	scope := apiKeyQuotaReservationScope(apiKeyID)
 	return s.reserveSpendWithGuard(ctx, scope, maxRequestSpend, remaining, slot, func(reservedAfter float64) error {
@@ -1999,6 +2271,31 @@ func (s *BillingCacheService) reserveAPIKeyQuotaSpend(ctx context.Context, apiKe
 		}
 		return nil
 	}, "")
+}
+
+// apiKeyQuotaUsedHighWater 读取 API Key 已用额度共享账本的高水位。
+//
+// 读失败时返回 ok=false 并计数 + ALERT：此时准入退回"仅鉴权快照"，与修复前一致
+// （方向偏松）。之所以不 fail-closed：账本与在途预留共用同一条 Redis，Redis 故障时
+// 预留本身会切到 DB 兜底账本（另有 fail-closed 路径），这里再返回 503 只会把一次
+// Redis 抖动放大成"所有配额 key 全部不可用"。失败已经被计数暴露在 ops 面板上。
+func (s *BillingCacheService) apiKeyQuotaUsedHighWater(ctx context.Context, apiKeyID int64) (float64, bool) {
+	store := apiKeyQuotaUsedLedgerStore
+	if store == nil || apiKeyID <= 0 {
+		return 0, false
+	}
+	used, err := store.GetAPIKeyQuotaUsedLedger(ctx, apiKeyID)
+	if err != nil {
+		RecordBillingAPIKeyQuotaLedgerReadError()
+		logger.LegacyPrintf("service.billing_cache",
+			"ALERT: read api key quota used ledger failed key=%d: %v (falling back to auth snapshot quota_used)",
+			apiKeyID, err)
+		return 0, false
+	}
+	if used <= 0 {
+		return 0, false
+	}
+	return used, true
 }
 
 // checkSubscriptionEligibility 检查订阅模式资格，并返回订阅缓存数据。

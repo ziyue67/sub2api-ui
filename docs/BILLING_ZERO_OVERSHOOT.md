@@ -74,6 +74,37 @@ DB 兜底也失败时返回 `ErrReservationBackendsUnavailable`，服务层转�
 穿过 `quota_used >= quota` 判定。预留后该 key 的额度上限在并发下同样成立；不限量
 （`quota <= 0`）的 key 不产生预留。
 
+> **已结算用量账本（补上"快照冻结"缺口）**：预留只覆盖"已放行、未结算"的请求。
+> 鉴权缓存里的 `quota_used` 是快照（L1 15s / L2 300s），而结算只递增 DB：等一批请求
+> 结算完并归还完预留，聚合预留归零而快照仍是旧值，于是同一个 key 在一个快照周期内可以
+> 把剩余额度**再放行一遍**（≈ 一个完整额度上限的超发）。
+> 修复：统一计费路径在事务提交后用 `RETURNING quota_used` 的真值发布到 Redis 高水位账本
+> `billing:apikey_quota_used:<keyID>`（Lua 保证只增不减），准入取
+> `max(鉴权快照, 账本)`。账本值恒 ≤ DB 真值，因此只会让准入更保守。
+> 配套：管理员重置 `quota_used` / 调整 `quota` 时清除账本（否则残留高水位会误拦）。
+> 监控：`api_key_quota_ledger_read_error` / `api_key_quota_ledger_write_error`（必须为 0）、
+> `api_key_quota_ledger_stale_rescue`（非零 = 账本正在兜住快照冻结）。
+
+> **订阅用量的同步可见性**：订阅缓存里的 `usage` 同样被预检当作准入依据
+> （`usage + Σ预留 < limit`）。结算后的累加若走异步队列，就会出现"预留已归还、usage
+> 仍是旧值"，下一批请求重新拿到一整份剩余额度。修复：结算路径改为**同步**累加
+> （`SyncSubscriptionUsageAfterSettlement`），失败或缓存键缺失时失效订阅缓存，
+> 让下一次预检回源 DB 真值；API Key 限流窗口用量同理。回源写回另加"变动代号"
+> 条件写回（`billing:sub_gen:<uid>:<gid>`），防止迟到的旧快照把结算后的 usage 覆盖回去。
+> 监控：`subscription_usage_sync_error`、`api_key_rate_limit_sync_error`（必须为 0）。
+
+> **切账本时的存量预留搬运**：Redis 故障切到 DB 兜底账本前，先把 Redis 上仍存活的
+> 预留凭据（`billing:resv_item:*`，含 PTTL）导入 `billing_balance_reservations` /
+> `billing_scope_reservations`，再抬升共享窗口。否则 DB 账本对已放行的请求一无所知，
+> 同一份额度会被两本账各算一遍（少算 = 重复放行）。搬运失败不阻塞窗口抬升（可用性优先），
+> 以 `reservation_fallback_import_error` 暴露残余风险。
+> 监控：`reservation_fallback_imported` / `reservation_fallback_import_error`。
+
+> **user × platform 配额的静默丢增量**：累加脚本在缓存键不存在 / entry 为旧 schema 时
+> 静默返回 0（此前调用方只看 error，永远看不到"这次累加被跳过"）。修复：暴露脚本返回值，
+> 被跳过或 Redis 写失败时删除缓存并**同步写 DB**（`IncrementUsageWithReset`），
+> 让这笔消费成为新真值来源 —— 否则在 flusher 模式下该增量永久丢失、usage 永久偏小。
+
 ## 3. 配置项清单
 
 全部位于 `billing:` 段。
@@ -137,9 +168,15 @@ GET /api/v1/admin/ops/billing-guard
 | `reservation_db_fallback_error` | DB 兜底操作失败；正式装配会 fail-closed（503），无 DB 能力的降级装配才 fail-open | 同时检查 Redis 与 PostgreSQL 连接 |
 | `reservation_fallback_activated` | 本实例抬起共享 DB 兜底窗口 | 与 `reservation_redis_failure` 对照；持续增长说明 Redis 长期不可用 |
 | `reservation_fallback_activate_error` / `reservation_fallback_probe_error` | 兜底窗口抬升/探测失败 → 跨实例一致性变弱 | 检查数据库连接与迁移 `240` |
+| `reservation_fallback_imported` | 切 DB 账本时把 Redis 上仍存活的在途预留**搬进**了 DB（非零即"两本账语义已对齐"的实证） | 正常现象；数值大说明切换时有大量在途请求 |
+| `reservation_fallback_import_error` | 存量预留搬运失败 → DB 账本缺少切换前已放行的预留，护栏会在故障期高估可用额度（最坏重复放行一个预算） | 检查 Redis 读（SCAN/Pipeline）与 PostgreSQL 写 |
 | `reservation_release_error` | 预留归还失败 → 额度滞留到 TTL | 检查 Redis 写入与网络 |
 | `reservation_renew_error` | 续期失败 → 超长请求可能失去保护 | 同上 |
 | `reservation_abandoned` | 结算任务被 drop 语义丢弃 → 该笔未扣费 | 检查 usage_record worker 池容量与 drop 配置 |
+| `subscription_usage_sync_error` | 结算后订阅用量**同步**落缓存失败（或缓存键缺失导致累加被跳过）→ 该笔只能靠缓存失效 + DB 回源补齐 | 检查 Redis 写入；持续增长说明预检会在缓存 TTL 内看到偏小的订阅用量 |
+| `api_key_rate_limit_sync_error` | 结算后 API Key 限流用量同步落缓存失败 → 限流窗口可能短暂按偏小用量放行 | 检查 Redis 写入 |
+| `api_key_quota_ledger_read_error` / `api_key_quota_ledger_write_error` | API Key 已用额度共享账本读/写失败 → 该 key 的额度校验可能退回过期快照 | 检查 Redis 可用性 |
+| `api_key_quota_ledger_stale_rescue` | 账本高水位**领先**鉴权快照（护栏正在拦下"快照冻结后的重复放行"） | 非零是正常的，是修复生效的直接证据；恒为 0 说明鉴权缓存很短命或账本未生效 |
 | `recheck_skipped_no_user_repo` | 无法读 DB 真值（降级装配）→ 坏账窗口回到修复前 | 检查依赖注入装配 |
 | `recheck_fail_closed` | 复核失败 fail-closed → 用户看到 503 | 检查 PG 连接池与 `max_open_conns` |
 | `precheck_disabled` | 第 ② 层被配置关闭 | 确认是否为有意为之 |
