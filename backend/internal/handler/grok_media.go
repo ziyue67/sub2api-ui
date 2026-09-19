@@ -264,7 +264,13 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				} else if switched && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformGrok {
 					subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
 					if switchErr == nil {
-						switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+						// 切换后的分组按自己的倍率结算，最坏费用闸门必须用新分组重估一次
+						// （与 gateway_handler / openai_gateway_handler 的路由切换路径一致，
+						// 见审计 R5）。本入口不建立在途预留槽位（见下方 CheckBillingEligibility
+						// 未传 WithBalanceReservation），因此 slot 传 nil：只补最坏费用闸门，
+						// 不做预留替换（没有预留可替换）。
+						worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, requestModel, body)
+						switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription, worstSpend, nil)
 					}
 					if switchErr != nil {
 						reqLog.Warn("grok_media.group_route_subscription_load_failed", zap.Error(switchErr))

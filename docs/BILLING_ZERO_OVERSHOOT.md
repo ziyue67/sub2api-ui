@@ -163,17 +163,28 @@ GET /api/v1/admin/ops/billing-guard
 
 - **Gemini 文本生成**（`/v1beta` → `gemini_v1beta_handler.go`，走 `RecordUsage` 按余额计费）
 - **OpenAI embeddings**（`/v1/embeddings` → `openai_embeddings.go`，同样按余额计费）
-- **Anthropic 提示过长后的兜底分组重试**（`gateway_handler.go` 的 fallback group 分支）：
-  该笔按兜底分组的倍率结算，但准入只做基础阈值检查，没有最坏费用闸门
 - `/images/generations/async`、`/images/edits/async`、`/images/tasks/:id`
   （异步图片任务，`AsyncImage` handler）
-- Grok 平台图片：`/v1/images/generations` 在 Grok 分组下走 `GrokImages`（`grok_media.go`）
+- Grok 平台图片：`/v1/images/generations` 在 Grok 分组下走 `GrokImages`（`grok_media.go`）。
+  该入口的主链路只做基础阈值检查，**没有最坏费用闸门、也不建立在途预留**；只有"选号失败后
+  切换分组路由"这条支路在 PR#16 后补上了按新分组重估的最坏费用闸门
 - `/v1/live`、`/realtime/calls`（实时语音）、`/v1/realtime`、OpenAI Responses WebSocket
   长连接、Grok realtime audio WebSocket
 - 视频生成（按秒计费，`CalculateVideoCost`：接入点与图片同构，需按"时长上限 × 数量"另做上界）
 
+> 已从本清单移出：**Anthropic 提示过长后的兜底分组重试**（`gateway_handler.go` 的 fallback
+> group 分支）。PR#16 起该支路会按兜底分组重新估算最坏费用并**替换**旧分组的在途预留
+> （`recheckSelectedGroupRouteEligibility`），不再只做基础阈值检查。
+
 其他已知边界：
 
+- **Redis 不可用 ⇒ 在途预留 fail-open**：`TryReserveUserBalance` 报错时按"预留后端不可用"
+  处理并直接放行（并打 ALERT、计入 `billing_reservation_fail_open`）。此时第 ③ 层护栏
+  **整体失效**，只剩 ①准入阈值+DB 复核、②最坏费用闸门与 ④结算封底兜底，并发突发下会出现
+  有界的 write-off。这是所有降级场景里影响最大的一条，运维必须监控该指标。
+- **预留后端返回无法解释的状态**：`tryReserveBalanceScript` 只认 `'1'`/`'0'` 两种答复，
+  其它值一律按**拒绝**处理（交给调用方的 guard 再判一次），不走 fail-open —— 避免"状态不一致"
+  被误当作"后端故障"从而在完全没有预留的情况下放行。
 - **预留 TTL 自愈**：预留默认 TTL 10 分钟，长请求由心跳（TTL/3）续期；若结算任务
   丢失且心跳已停止，额度最多滞留 10 分钟。
 - **凭据过期后的残留份额**：若某请求的预留凭据被 TTL 回收而聚合总额的自愈 TTL 尚未到，
@@ -190,6 +201,12 @@ GET /api/v1/admin/ops/billing-guard
   （OpenAI）才算多模态块；父键明确但不是上述之一（如 `{"payload":{"data":"…"}}`）
   时回落稠密/文本口径，父键无法确证（顶层 `data`、数组元素）时保持按多模态折算，
   以免把真实图片降级为稠密口径而误 403。
+  `url` / `file_data` 同属通用键名（`{"image":{"url":…}}` 是媒体，`{"payload":{"url":…}}`
+  就可能只是长文本），只有父键命中媒体白名单（`image_url`/`input_image`/`input_audio`/
+  `image`/`audio`、`input_file`/`file`/`document`）或值前带 `;base64,` 标记才算多模态块；
+  **落在灰区时口径取 `max(稠密, 1 块固定额度)`**：按字节折算（1 token/字节）高于块额度时
+  用稠密，否则用块额度。两种口径在原始约 1.6KB 处相交，只取其中之一必然在某一侧低估 ——
+  这正是审计 R1 实测到的交叉点（固定额度与按字节折算在 512B–1.6KB 一侧相差最多 2.3 倍）。
   **其它位置的 base64**（含没有
   任何 `;base64,` / `"data":"` 标记的裸长串，判定依据是长串前最近的 JSON 键名）按
   **1 token/字节** 稠密计（实测 20KB base64 被上游分词为 18907 token ≈ 0.92 token/字节，

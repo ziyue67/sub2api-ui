@@ -183,25 +183,47 @@ var (
 	// 只有新总额不超过 maxTotal 时才落凭据并刷新 TTL；被拒绝的请求不写任何键，
 	// 因而既不会制造需要二次回滚的窗口，也不会用拒绝流量给历史残留续命。
 	// 接受的新请求会刷新聚合键 TTL，避免持续短请求下聚合键先于仍有效的凭据过期。
+	//
+	// 关于浮点格式化：Lua 的 `tostring()` 走 lua_number2str（%.14g），会把
+	// `0.1+0.2` 写成 `0.3`、静默丢掉低有效位，与 INCRBYFLOAT（17 位有效数字）
+	// 的口径不一致。聚合总额是多个金额相加的结果，因此显式用 %.17g 写回并返回，
+	// 与 release/renew 侧的 INCRBYFLOAT 保持同一精度（审计 R4）。
+	//
+	// KEYS[1] = billing:reserved:<scope>（聚合总额）
+	// KEYS[2] = billing:resv_item:<scope>:<requestID>（本笔凭据）
+	// ARGV[1] = 预留金额（USD，>0），ARGV[2] = 聚合上限（USD），ARGV[3] = TTL（毫秒）
 	tryReserveBalanceScript = redis.NewScript(`
 		local existing = redis.call('GET', KEYS[2])
 		if existing ~= false then
 			redis.call('PEXPIRE', KEYS[2], ARGV[3])
-			redis.call('PEXPIRE', KEYS[1], ARGV[3])
 			local current = redis.call('GET', KEYS[1])
 			if current == false then
-				return {'-1', '0'}
+				-- 凭据仍在、聚合键却已消失（被 maxmemory 淘汰，或某笔极小金额的归还
+				-- 触发了 newVal <= 1e-7 的 DEL 分支）。这不是"预留后端不可用"，而是
+				-- 状态不一致：旧实现返回 '-1'，被 Go 侧当成后端故障 → fail-open，本笔在
+				-- **完全没有预留**的情况下被放行（审计 R3）。这里改为以凭据金额重建聚合，
+				-- 恢复“凭据存在 ⇒ 聚合至少包含本笔”的不变量；金额以凭据为准，保证后续
+				-- release 能按凭据金额正确递减。
+				local rebuilt = tonumber(existing)
+				if rebuilt == nil or rebuilt <= 0 then
+					rebuilt = tonumber(ARGV[1])
+				end
+				local text = string.format('%.17g', rebuilt)
+				redis.call('SET', KEYS[1], text, 'PX', ARGV[3])
+				return {'1', text}
 			end
+			redis.call('PEXPIRE', KEYS[1], ARGV[3])
 			return {'1', current}
 		end
 		local current = tonumber(redis.call('GET', KEYS[1]) or '0')
 		local newVal = current + tonumber(ARGV[1])
 		if newVal > tonumber(ARGV[2]) + 1e-12 then
-			return {'0', tostring(current)}
+			return {'0', string.format('%.17g', current)}
 		end
+		local text = string.format('%.17g', newVal)
 		redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[3])
-		redis.call('SET', KEYS[1], tostring(newVal), 'PX', ARGV[3])
-		return {'1', tostring(newVal)}
+		redis.call('SET', KEYS[1], text, 'PX', ARGV[3])
+		return {'1', text}
 	`)
 
 	// releaseBalanceScript 原子地归还一笔在途预留，**且只归还属于本请求的那一笔**。
@@ -431,10 +453,17 @@ func (c *billingCache) TryReserveUserBalance(ctx context.Context, scope string, 
 	if !ok || len(parts) != 2 {
 		return 0, false, fmt.Errorf("unexpected atomic reservation reply %T: %v", reply, reply)
 	}
-	accepted := fmt.Sprint(parts[0]) == "1"
-	if fmt.Sprint(parts[0]) == "-1" {
-		return 0, false, errors.New("reservation receipt exists without aggregate total")
+	// 只认两种明确答复：'1' = 已接受并落凭据，'0' = 因超过上限被拒。
+	// 其它值（历史版本的 '-1'、脚本被替换、Lua 返回值异常）**按拒绝处理**而不是返回
+	// error：返回 error 会让调用方走 "预留后端不可用 → fail-open" 的分支，使本笔在
+	// 完全没有预留的情况下被放行。这里返回 accepted=false，交由调用方的 guard 再判
+	// 一次（fail-closed，方向保守）。审计 R3。
+	replyCode := fmt.Sprint(parts[0])
+	if replyCode != "0" && replyCode != "1" {
+		log.Printf("Warning: unexpected atomic reservation reply code %q for scope %s: %v", replyCode, scope, reply)
+		return 0, false, nil
 	}
+	accepted := replyCode == "1"
 	total, err := parseReservedBalanceReply(parts[1])
 	return total, accepted, err
 }

@@ -74,9 +74,9 @@ func (s *BillingReservationSuite) TestTryReserveIsAtomicAndIdempotent() {
 	start := make(chan struct{})
 	type result struct {
 		requestID string
-		total    float64
-		accepted bool
-		err      error
+		total     float64
+		accepted  bool
+		err       error
 	}
 	results := make(chan result, workers)
 	for i := 0; i < workers; i++ {
@@ -114,6 +114,56 @@ func (s *BillingReservationSuite) TestTryReserveIsAtomicAndIdempotent() {
 	require.True(s.T(), replayAccepted)
 	require.InDelta(s.T(), 0.30, total, 1e-9)
 	require.Equal(s.T(), int64(1), rdb.Exists(ctx, billingReservedItemKey(scope, acceptedRequestID)).Val())
+}
+
+// TestTryReserveRebuildsAggregateWhenReceiptSurvives 锁死审计 R3。
+//
+// 凭据仍在、聚合键却消失（被 maxmemory 淘汰，或某笔极小金额的归还触发了
+// `newVal <= 1e-7` 的 DEL 分支）时，旧脚本返回 '-1'，被 Go 侧当成"预留后端故障"
+// → fail-open，本笔在**完全没有预留**的情况下被放行。修复后必须以凭据金额重建聚合
+// 并接受本笔，恢复"凭据存在 ⇒ 聚合至少包含本笔"的不变量。
+func (s *BillingReservationSuite) TestTryReserveRebuildsAggregateWhenReceiptSurvives() {
+	cache, rdb := s.reservationCache()
+	ctx := context.Background()
+	scope := "9016"
+
+	total, accepted, err := cache.TryReserveUserBalance(ctx, scope, "receipt", 0.25, 1.0, 10*time.Minute)
+	require.NoError(s.T(), err)
+	require.True(s.T(), accepted)
+	require.InDelta(s.T(), 0.25, total, 1e-9)
+
+	// 只删聚合键，保留凭据 —— 复现"凭据在、聚合不在"的状态不一致。
+	require.NoError(s.T(), rdb.Del(ctx, billingReservedKey(scope)).Err())
+	require.Equal(s.T(), int64(1), s.itemExists(rdb, scope, "receipt"), "凭据必须仍在")
+
+	total, accepted, err = cache.TryReserveUserBalance(ctx, scope, "receipt", 0.25, 1.0, 10*time.Minute)
+	require.NoError(s.T(), err, "凭据仍在时必须能重建聚合，不得返回错误（错误会被上层当成 fail-open）")
+	require.True(s.T(), accepted, "重建后本笔应被接受")
+	require.InDelta(s.T(), 0.25, total, 1e-9, "聚合应恰好等于凭据金额，不能重复累加")
+}
+
+// TestTryReserveKeepsFullFloatPrecision 锁死审计 R4。
+//
+// 新脚本用 Lua 手写累加替代 INCRBYFLOAT，而 `tostring()` 走 lua_number2str（%.14g），
+// 会把 0.1 三笔累加的结果 0.30000000000000004 截断成 0.3，与 release/renew 侧
+// INCRBYFLOAT 的 17 位口径不一致。修复后显式用 %.17g 写回，聚合值应与 Go 侧同样的
+// IEEE754 累加结果**逐位相同**。
+func (s *BillingReservationSuite) TestTryReserveKeepsFullFloatPrecision() {
+	cache, _ := s.reservationCache()
+	ctx := context.Background()
+	scope := "9017"
+
+	want := 0.1 + 0.1 + 0.1 // IEEE754: 0.30000000000000004
+	for i := 0; i < 3; i++ {
+		_, accepted, err := cache.TryReserveUserBalance(
+			ctx, scope, fmt.Sprintf("precision-%d", i), 0.10, 1.0, 10*time.Minute)
+		require.NoError(s.T(), err)
+		require.True(s.T(), accepted)
+	}
+
+	got, err := cache.ReservedUserBalanceTotal(ctx, scope)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), want, got, "聚合必须保留完整 float64 精度（%.17g），不得被 %.14g 截断")
 }
 
 // TestReserveDoesNotRenewAggregateTTLOnLaterReserves 是"聚合键 TTL 不得被反复续期"的
