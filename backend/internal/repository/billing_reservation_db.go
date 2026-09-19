@@ -13,17 +13,18 @@ import (
 
 // 本文件是「在途预留」的 **DB 侧兜底**实现，对齐 new-api 的 reserveUserQuotaDB：
 // 正常路径用 Redis（billing:reserved:*，带 TTL 自愈），Redis 不可用时不再直接
-// fail-open，而是用一条事务 + 用户行锁在数据库里做同样语义的原子准入。
+// fail-open，而是用数据库账本做同样语义的原子准入：钱包 scope 锁 users 行，
+// 其它 scope 使用 billing_scope_reservations 和 advisory transaction lock。
 //
 // 为什么必须锁用户行：判定条件是「未过期预留总额 + 本笔 <= 预算」，读-判-写跨两条语句。
 // 在 READ COMMITTED 下两个并发事务会读到同一份 SUM 并同时通过，超额放行原样复现。
 // `SELECT ... FROM users WHERE id = $1 FOR UPDATE` 先锁用户行把同一用户的准入串行化；
 // 结算路径的 deductBalanceToFloorSQL 也以 users 行为首把锁，**锁序一致**，不会互相死锁。
 //
-// 代价：Redis 故障期每个准入多一次事务与行锁，单用户吞吐被串行化。这是刻意取舍 ——
+// 代价：Redis 故障期每个准入多一次事务与锁，单 scope 吞吐被串行化。这是刻意取舍：
 // 故障期优先保"余额不为负、不产生坏账"，而不是吞吐。
 
-// dbReservationStore 把在途预留记在 billing_balance_reservations 上。
+// dbReservationStore stores durable reservations in the scope-specific tables.
 type dbReservationStore struct {
 	db *sql.DB
 }
@@ -37,8 +38,8 @@ func newDBReservationStore(db *sql.DB) *dbReservationStore {
 
 // reservationUserIDFromScope 把预留 scope 解析成 userID。
 //
-// 只有余额模式的 scope 是纯数字 userID；订阅模式的 scope 形如 "sub:<user>:<group>"，
-// DB 兜底暂不支持（订阅限额另有一套按窗口的用量表），返回 false 让调用方维持原行为。
+// 钱包模式的 scope 是纯数字 userID，使用 billing_balance_reservations；其它 scope
+// （订阅、user×platform、API Key）使用通用的 billing_scope_reservations 账本。
 func reservationUserIDFromScope(scope string) (int64, bool) {
 	userID, err := strconv.ParseInt(scope, 10, 64)
 	if err != nil || userID <= 0 {
@@ -111,13 +112,18 @@ func (s *dbReservationStore) tryReserveUserBalance(
 		return reserved, false, nil
 	}
 
+	expiresAt := time.Now().Add(ttl)
+
 	// 4) 幂等登记：同一 (user_id, request_id) 重复预留只刷新过期时间，不重复累加。
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO billing_balance_reservations (user_id, request_id, amount, expires_at)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (user_id, request_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
-		userID, requestID, amount, time.Now().Add(ttl),
+		userID, requestID, amount, expiresAt,
 	); err != nil {
+		return 0, false, err
+	}
+	if err := extendBillingReservationFallbackTx(ctx, tx, expiresAt); err != nil {
 		return 0, false, err
 	}
 
@@ -168,11 +174,18 @@ func (s *dbReservationStore) renewUserBalanceReservation(ctx context.Context, sc
 	if !ok {
 		return fmt.Errorf("db reservation fallback does not support scope %q", scope)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	expiresAt := time.Now().Add(ttl)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE billing_balance_reservations
 		SET expires_at = $3
 		WHERE user_id = $1 AND request_id = $2 AND expires_at > NOW()`,
-		userID, requestID, time.Now().Add(ttl))
+		userID, requestID, expiresAt)
 	if err != nil {
 		return err
 	}
@@ -183,5 +196,8 @@ func (s *dbReservationStore) renewUserBalanceReservation(ctx context.Context, sc
 	if affected == 0 {
 		return service.ErrBillingReservationExpired
 	}
-	return nil
+	if err := extendBillingReservationFallbackTx(ctx, tx, expiresAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
