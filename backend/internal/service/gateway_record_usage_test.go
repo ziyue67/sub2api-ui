@@ -861,6 +861,12 @@ type legacyFloorUserRepoStub struct {
 	floorErr   error
 	floorCalls int
 	lastFloor  float64
+
+	// 债务模式（billing.settlement_debt_mode）分支的调用记录。debtNewBalance 是
+	// 模拟仓储把余额扣成负数（欠款）后的余额。
+	debtNewBalance float64
+	debtErr        error
+	debtCalls      int
 }
 
 func (s *legacyFloorUserRepoStub) DeductBalanceToFloor(ctx context.Context, id int64, amount, floor float64) (BalanceDeduction, error) {
@@ -911,6 +917,65 @@ func TestGatewayServiceRecordUsage_LegacyFallbackDrainsToFloorAndSettlesUsageLog
 	require.NotNil(t, usageRepo.lastLog)
 	require.InDelta(t, 0.01, usageRepo.lastLog.ActualCost, 1e-9, "ActualCost must equal the amount actually collected")
 	require.Equal(t, int64(1), cache.invalidateCalls.Load())
+}
+
+// legacyFloorUserRepoStub 同时实现债务扣款（生产 userRepository 两者都实现），
+// 用于验证 billing.settlement_debt_mode 下的 legacy 分支选择。
+func (s *legacyFloorUserRepoStub) DeductBalanceAllowNegative(ctx context.Context, id int64, amount float64) (BalanceDeduction, error) {
+	s.debtCalls++
+	s.lastAmount = amount
+	s.lastCtxErr = ctx.Err()
+	if s.debtErr != nil {
+		return BalanceDeduction{}, s.debtErr
+	}
+	// 债务模式全额入账：实收 == 请求金额、差额不核销（由余额变负承担），
+	// 与生产 userRepository.DeductBalanceAllowNegative 的返回语义一致。
+	return BalanceDeduction{NewBalance: s.debtNewBalance, Collected: amount, Shortfall: 0}, nil
+}
+
+// TestGatewayServiceRecordUsage_LegacyFallbackDebtModeKeepsFullCost 锁死降级路径与统一路径
+// 语义一致：billing.settlement_debt_mode=true 时必须走债务扣款（余额可为负、无核销），
+// 而不是继续封底核销。
+func TestGatewayServiceRecordUsage_LegacyFallbackDebtModeKeepsFullCost(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	userRepo := &legacyFloorUserRepoStub{
+		floorErr: errors.New("floor path must not run in debt mode"),
+		// 钱包 0.0032 付不满本笔成本 → 债务模式把余额扣成负数（欠款）。
+		debtNewBalance: -0.0088,
+	}
+	cache := &balanceEligibilityCacheStub{balance: 0.0032}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	cfg.Billing.SettlementDebtMode = true
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+	svc.cfg.Billing.MinimumBalanceReserve = 0.10
+	svc.cfg.Billing.SettlementDebtMode = true
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_legacy_debt",
+			Usage: ClaudeUsage{
+				InputTokens:  1000,
+				OutputTokens: 600,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 513},
+		User:    &User{ID: 613},
+		Account: &Account{ID: 713},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, userRepo.debtCalls, "debt mode must use the negative-balance deduction")
+	require.Equal(t, 0, userRepo.floorCalls, "floor deduction must not run when debt mode is on")
+	require.NotNil(t, usageRepo.lastLog)
+	require.InDelta(t, userRepo.lastAmount, usageRepo.lastLog.ActualCost, 1e-9,
+		"debt mode must record the full billed amount as collected (no write-off)")
 }
 
 func TestGatewayServiceRecordUsage_LegacyFallbackAtFloorFailsClosed(t *testing.T) {

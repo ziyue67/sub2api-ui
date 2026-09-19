@@ -1,6 +1,6 @@
 # 后付费零超发护栏：运维手册
 
-本文覆盖"余额模式后付费计费"的四层准入/结算护栏，说明**每个配置项的默认值、如何判断
+本文覆盖"余额模式后付费计费"的五层准入/结算护栏，说明**每个配置项的默认值、如何判断
 护栏是否真的在跑、以及升级时的注意事项**。适用代码：`backend/internal/service/billing_cache_service.go`、
 `backend/internal/service/gateway_request_spend_estimate.go`、`backend/internal/repository/billing_cache.go`、
 `backend/internal/repository/usage_billing_repo.go`。
@@ -24,14 +24,15 @@
 另外还有一个可用性问题：余额贴近封底时每笔请求都要 DB 复核，150–200 并发会把
 PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 
-## 2. 四层护栏（按请求生命周期）
+## 2. 五层护栏（按请求生命周期）
 
 | 层 | 位置 | 作用 | 关键代码 |
 | --- | --- | --- | --- |
 | ① 准入阈值 + DB 真值复核带 | 转发前 | `balance <= reserve` 直接 403；`balance <= reserve + band` 时用 DB 真值复核；结算判定耗尽后写"钱包已耗尽"标记，预检命中即 403 | `checkBalanceEligibility` |
 | ② 最坏费用闸门 | 转发前 | 要求 `balance >= reserve + 本次最坏费用`，付不满的请求**不转发**，不产生上游成本 | `estimateRequestSpendUpperBound` |
-| ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，使准入成为跨请求的原子操作，四类额度各自一个 scope：钱包（scope=用户，`balance - Σ预留 >= reserve`）、订阅（scope=用户×分组，`usage + Σ预留 <= limit`）、user×platform 配额（scope=用户×平台，任一窗口 `usage + Σ预留 <= limit`）、API Key 总额度（scope=`apikey:<id>`，两种计费模式都生效，`quota_used + Σ预留 <= quota`）。一次请求可同时持有其中多条凭据；任一 scope 预留失败时整槽回滚。**Redis 不可用时退化为 DB 兜底**（`billing_balance_reservations` + 用户行锁），护栏不失效 | `reserveSpendWithGuard` / `reserveSubscriptionSpend` / `reserveUserPlatformQuotaSpend` / `reserveAPIKeyQuotaSpend` |
-| ④ 结算封底 + 差额记账 | 结算 | `FOR UPDATE` 锁行后 `GREATEST(balance - amount, floor)`，差额记 write-off 并打耗尽标记；**永不为负** | `deductBalanceToFloorSQL` |
+| ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，使准入成为跨请求的原子操作，四类额度各自一个 scope：钱包（scope=用户，`balance - Σ预留 >= reserve`）、订阅（scope=用户×分组，`usage + Σ预留 <= limit`）、user×platform 配额（scope=用户×平台，任一窗口 `usage + Σ预留 <= limit`）、API Key 总额度（scope=`apikey:<id>`，两种计费模式都生效，`quota_used + Σ预留 <= quota`）。一次请求可同时持有其中多条凭据；任一 scope 预留失败时整槽回滚 | `reserveSpendWithGuard` / `reserveSubscriptionSpend` / `reserveUserPlatformQuotaSpend` / `reserveAPIKeyQuotaSpend` |
+| ④ 结算封底 + 差额记账（默认） | 结算 | `FOR UPDATE` 锁行后 `GREATEST(balance - amount, floor)`，差额记 write-off 并打耗尽标记；**永不为负**。`billing.settlement_debt_mode=true` 时改为全额入账、余额可为负（欠款，充值抵扣） | `deductBalanceToFloorSQL` / `deductBalanceToDebtSQL` |
+| ⑤ Redis 故障回落 | 转发前 | Redis 写失败时改用 DB 预留表做原子准入（`billing_balance_reservations` + 用户行锁串行化、过期行清理、`SUM(amount)` 聚合校验）；**只有 Redis 与 DB 都失败**才 fail-open 并计数 `billing_reservation_fail_open` | `TryReserveUserBalance` / `dbReservationStore` |
 
 核心不变量：`balance − Σ在途预留 ≥ reserve`，且它在"结算扣钱"与"归还预留"以任意
 先后顺序发生时都成立。
@@ -66,6 +67,7 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 | 配置 | 默认 | 说明 |
 | --- | --- | --- |
 | `minimum_balance_reserve` | `0.1` | 钱包封底线（不可花）。预检 `balance <= 本值` 即 403。设 0 表示不保留。 |
+| `settlement_debt_mode` | `false` | 结算“收不满”的口径。`false`=封底核销（余额永不为负，差额记 write-off，不再追偿）；`true`=债务模式（全额入账、余额可扣成负数，欠款由后续充值抵扣，对齐 new-api）。两种模式都防白嫖（预检 `balance <= reserve` 即 403），差别只在追偿 vs 核销。**开启前请确认充值/催收/对账流程能识别负余额用户**（负余额是新的取值域）。 |
 | `balance_recheck_band` | `1.0` | DB 真值复核带宽（USD）。余额 `<= reserve + band`（且至少 `2*reserve`）时回源核对。**带宽越大越安全，但贴底用户的每笔请求都会多一次 DB 往返**。 |
 | `request_spend_precheck_disabled` | `false` | 反向命名，零值安全。`true` 关闭第 ② 层（不建议）。 |
 | `request_spend_default_max_output_tokens` | `8192` | 请求未声明输出上限时的缺省上界。 |
@@ -279,8 +281,17 @@ GET /api/v1/admin/ops/billing-guard
 - **API Key 额度与钱包/订阅是并行额度**：同一次请求最多会持有三条预留凭据
   （钱包 + 平台配额 + key 额度，或订阅 + key 额度），归还/续期以凭据为单位；
   任一 scope 预留失败都会整槽回滚，不会留下占着额度的残留凭据。
-- **Redis 故障时预留 fail-open**：`reserveSpendWithGuard` 遇到 Redis 写失败时记
-  `fail_open` 指标并放行本笔请求（与修复前一致），此时护栏退化为"余额快照 + 最坏费用
-  闸门 + 结算封底"，并发维度的原子性在故障期间不存在。new-api 在同类场景下回落到
-  DB 条件更新（`UPDATE users SET quota=quota-? WHERE quota>=?`）来保持原子性，
-  可作为后续加固方向。
+- **Redis 故障时的 DB 回落（第 ⑤ 层）**：Redis 写失败时不再直接放行，而是用
+  `billing_reservations` 表做回落预留（`pg_advisory_xact_lock` 按 scope 串行化、惰性清理过期行、
+  按 scope `SUM(amount)` 后比较上限），语义与 Redis 路径一致（含拒绝与整槽回滚）。
+  **只有 Redis 与 DB 都失败时**才 fail-open（记 `billing_reservation_fail_open_total`），
+  此时护栏退化为"余额快照 + 最坏费用闸门 + 结算封底/债务"。该指标一旦增长应当告警——
+  它意味着并发准入的原子性暂时不存在。与 new-api 的对照：new-api 回落为 `UPDATE ... WHERE quota >= ?`
+  条件更新（直接改额度）；sub2api 的 Redis 预留是 TTL 凭据（要支持精确退还与续期），因此回落同样
+  用“预留表 + 聚合上限”而不是直接扣余额。
+- **债务模式（`billing.settlement_debt_mode=true`）**：结算不再夹封底，余额可以被扣成负数（欠款），
+  `usage_log.actual_cost` 保持真实成本、不产生 write-off 差额；`settlement_shortfall_count` 不再增长。
+  监控口径需随之调整（关注负余额用户数/欠款总额，而不是 write-off 斜率），并且预检仍以
+  `balance <= reserve` 拒绝后续请求，不会因为欠款而持续放行。注意：**`/images/batches` 的 batch image
+  hold 仍按 `balance >= hold + reserve` 预冻结**，不产生欠款；未接入护栏的入口
+  （Gemini 文本、embeddings、异步图片等）在两种模式下都仍有“预检缺位”的窗口。

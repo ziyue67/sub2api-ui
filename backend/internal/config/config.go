@@ -935,7 +935,22 @@ type BillingConfig struct {
 	//     fully cover drains it exactly to the floor (never below, never negative),
 	//     the uncollected remainder is written off and logged, and the next
 	//     preflight is rejected. Set to 0 to make the floor 0.
+	//     SettlementDebtMode=true 时不再夹取：全额入账，余额可为负（见该字段）。
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
+	// SettlementDebtMode 决定余额模式结算时“收不满”如何处理（对照 new-api
+	// model/user.go 的 decreaseUserQuota：扣费不带余额下限，余额可为负）：
+	//
+	//   - false（默认，零值安全）：封底核销 —— GREATEST(balance - amount, floor)，
+	//     余额永不为负，收不满的差额记 write-off（settlement_shortfall_count）并告警，
+	//     不再追偿。本仓库历史线上问题（usage_log.actual_cost = 0）正是核销缺失造成的，
+	//     因此默认保持封底。
+	//   - true：债务模式 —— 全额入账，余额可被扣成负数（=欠款），下次充值先抵扣欠款；
+	//     usage_log.actual_cost 保持真实成本，账本与“真实消耗”一致，无需 write-off 对账。
+	//     适合“先服务、后追偿”的运营方式。
+	//
+	// 两种模式都防白嫖（预检 balance <= reserve 即 403），差别只在追偿 vs 核销。
+	// 开启前请确认充值/催收流程能识别负余额用户。
+	SettlementDebtMode bool `mapstructure:"settlement_debt_mode"`
 	// BalanceRecheckBand (USD) widens the preflight's DB-truth recheck: when the
 	// cached balance is <= MinimumBalanceReserve + band (and at least
 	// 2*MinimumBalanceReserve), the preflight re-verifies the real wallet against
@@ -2185,6 +2200,9 @@ func setDefaults() {
 	// 在途预留聚合闸门预算倍数：默认 1.0 = 严格（预留总额不得超过可花余额，零坏账）。
 	// 运行时可被后台设置 inflight_reservation_budget_multiplier 覆盖。
 	viper.SetDefault("billing.inflight_reservation_budget_multiplier", 1.0)
+	// 余额模式结算的“收不满”处理：false（默认）= 封底核销；true = 债务模式
+	// （全额入账、余额可为负，充值先抵扣欠款，对齐 new-api decreaseUserQuota）。
+	viper.SetDefault("billing.settlement_debt_mode", false)
 	// 放行前最坏费用预估（零超发）：默认启用，缺省输出上界 8192 token，安全系数 1.0。
 	// 见 BillingConfig.RequestSpendPrecheckDisabled 注释。
 	viper.SetDefault("billing.request_spend_precheck_disabled", false)
