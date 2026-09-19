@@ -3,7 +3,8 @@
 本文覆盖"余额模式后付费计费"的四层准入/结算护栏，说明**每个配置项的默认值、如何判断
 护栏是否真的在跑、以及升级时的注意事项**。适用代码：`backend/internal/service/billing_cache_service.go`、
 `backend/internal/service/gateway_request_spend_estimate.go`、`backend/internal/repository/billing_cache.go`、
-`backend/internal/repository/usage_billing_repo.go`。
+`backend/internal/repository/usage_billing_repo.go`、`backend/internal/repository/billing_reservation_db.go`、
+`backend/migrations/238_billing_balance_reservations.sql`。
 
 ## 1. 问题背景
 
@@ -26,7 +27,7 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 | --- | --- | --- | --- |
 | ① 准入阈值 + DB 真值复核带 | 转发前 | `balance <= reserve` 直接 403；`balance <= reserve + band` 时用 DB 真值复核；结算判定耗尽后写"钱包已耗尽"标记，预检命中即 403 | `checkBalanceEligibility` |
 | ② 最坏费用闸门 | 转发前 | 要求 `balance >= reserve + 本次最坏费用`，付不满的请求**不转发**，不产生上游成本 | `estimateRequestSpendUpperBound` |
-| ③ 在途预留（并发原子） | 转发前 | Redis 原子累加"已放行未结算"的最坏费用，要求 `balance - Σ预留 >= reserve`，使准入成为跨请求的原子操作 | `reserveSpendWithGuard` |
+| ③ 在途预留（并发原子） | 转发前 | 原子累加"已放行未结算"的最坏费用，要求 `balance - Σ预留 >= reserve`，使准入成为跨请求的原子操作。默认走 Redis（Lua 比较并累加）；Redis 不可用时**同一条不变量**改由 PostgreSQL 账本守住（见 2.1） | `reserveSpendWithGuard` |
 | ④ 结算封底 + 差额记账 | 结算 | `FOR UPDATE` 锁行后 `GREATEST(balance - amount, floor)`，差额记 write-off 并打耗尽标记；**永不为负** | `deductBalanceToFloorSQL` |
 
 核心不变量：`balance − Σ在途预留 ≥ reserve`，且它在"结算扣钱"与"归还预留"以任意
@@ -35,6 +36,29 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 **订阅模式**（订阅计费）复用第 ③ 层：scope 为 `用户 × 分组`，护栏是
 `usage + Σ预留 < daily/weekly/monthly limit`，堵住"并发请求共用同一份用量快照、
 配额被超额消耗"的超卖。
+
+### 2.1 预留账本：Redis 热路径 + DB 兜底 + 余额缓存栅栏
+
+在途预留有**两本账**，任一时刻只使用其中一本（参考 new-api 的 `TryReserveUserQuota`
+"比较并扣减"与 `cacheInitToken` 栅栏语义实现）：
+
+| 账本 | 何时使用 | 实现 | 关键不变量 |
+| --- | --- | --- | --- |
+| Redis（热路径） | 默认 | Lua 原子"读合计 → 比较 → 累加"（`TryReserveUserBalance`） | 与旧行为一致，单次往返 |
+| PostgreSQL（兜底） | 共享兜底窗口生效期间 | 事务内 `pg_advisory_xact_lock(hashtextextended(scope, 0))` → 删过期行 → `SUM` 活跃金额 → 条件 `INSERT ... ON CONFLICT DO NOTHING`；拒绝即回滚 | 同一条 `balance − Σ预留 ≥ reserve`，跨实例仍是原子操作 |
+
+切换协议（`billing_reservation_fallback_state` 单行表，迁移 `238`）：
+
+1. 任一实例的 Redis 预留报错 → 抬起共享兜底窗口（`fallback_until = GREATEST(现值, now + 预留 TTL)`），并把本笔改走 DB 账本。
+2. 所有实例的每笔预检先探测该窗口（进程内缓存 1s，避免每笔都查 DB）：窗口生效期间**统一**走 DB 账本，**绝不与 Redis 账本混用** —— 同一份额度被两本账各算一遍会变成重复计算（方向保守，但会误伤）。
+3. 窗口不早于"切换时刻 + 预留 TTL"，即至少 10 分钟：切换前已存在的 Redis 预留最迟在窗口结束时全部过期，之后重新信任 Redis 才是安全的。
+4. Redis 与 DB 兜底**同时**不可用时 fail-closed：返回 `ErrBillingServiceUnavailable`（HTTP 503），而不是退回"无预留放行"（审计 R2）。
+
+余额缓存侧同样有一道栅栏（参考 new-api 的 `invalidateTokenCacheForMutation`，审计 R9）：
+
+- 扣费/加款落库后 `InvalidateUserBalance` 用一条 Lua **原子地"抬栅栏 + 删缓存"**；栅栏 TTL 10s，覆盖"DB 读 → 缓存写回"的整段间隙。
+- 回源写缓存（`InitUserBalance`）只在**键缺失且无栅栏**时建立；键已存在时只刷新 TTL、不覆盖。
+- "以 DB 真值覆写"（`SetUserBalanceFenced`）同样在栅栏存在时拒绝写入 —— 否则并发扣费的结果会被扣费前读到的旧快照覆盖（缓存"复活"，预检按虚高余额放行）。
 
 ## 3. 配置项清单
 
@@ -52,6 +76,15 @@ PostgreSQL 连接槽打满，复核失败后 fail-closed 成大范围 **503**。
 | `inflight_reservation_budget_multiplier` | `1.0` | 在途预留聚合闸门的预算倍数：`1.0` = 严格（`balance − Σ预留 ≥ reserve`，并发下零坏账，但并发量被"可花余额 / 单笔最坏费用"卡住）；调高即用**有界坏账**换并发（`settlement_shortfall_count` 会随之上长）。**可被后台 `/admin/settings` 的同名项覆盖，后台值优先，保存后立即生效**。 |
 | `database.max_open_conns` | `32` | 必须**显著低于** PG `max_connections`（默认 100）；多实例按实例数均摊。 |
 | `database.max_idle_conns` | `8` | 建议为 `max_open_conns` 的 25%–50%。 |
+
+### 3.1 DB 兜底相关的固定参数（不可配置）
+
+| 参数 | 值 | 说明 |
+| --- | --- | --- |
+| 预留 TTL | `10m` | Redis / DB 两本账共用；长请求由心跳按 TTL/3 续期。 |
+| 兜底窗口长度 | `≥ 10m` | 每次激活/续期都取 `max(现值, now + 10m)`，保证切换前的 Redis 预留全部过期。 |
+| 兜底窗口探测 | 间隔 `1s` / 超时 `500ms` | 进程内缓存探测结果；探测失败不缓存、按未激活处理（保留 Redis 热路径可用性）。 |
+| DB 兜底单次超时 | `3s` | 只作用于 Redis 故障后的降级路径，不进正常热路径。 |
 
 ### 关于 `request_spend_min_output_tokens`
 
@@ -91,7 +124,12 @@ GET /api/v1/admin/ops/billing-guard
 | 字段 | 非零意味着 | 处置 |
 | --- | --- | --- |
 | `settlement_shortfall_count` | 仍在产生 write-off，预检口径有漏网 | 检查 `request_spend_min_output_tokens` / `default_max_output_tokens` 是否偏小 |
-| `reservation_fail_open` | Redis 预留失败 → 并发护栏**静默失效** | 检查 Redis 可用性与延迟 |
+| `reservation_fail_open` | Redis 预留失败且**装配中没有 DB 兜底能力** → 并发护栏静默失效（仅轻量/降级装配才会出现） | 检查 Redis 可用性；确认正式部署已挂 `userRepo` 的 DB 兜底 |
+| `reservation_redis_failure` | Redis 预留失败，已切到 DB 兜底账本（护栏仍生效，但预留走 DB） | 检查 Redis 可用性；持续增长说明故障未恢复 |
+| `reservation_fail_closed` | Redis 与 DB 兜底**同时**不可用 → 预检 503 | 检查 Redis 与 PG 连接、迁移 238 是否执行 |
+| `reservation_fallback_activated` | 本实例抬起共享 DB 兜底窗口（首次降级信号） | 与 `reservation_redis_failure` 对照；持续增长说明 Redis 长期不可用 |
+| `reservation_fallback_activate_error` / `reservation_fallback_probe_error` | 兜底窗口抬升/探测失败 → 跨实例账本一致性变弱 | 检查 DB 连接与迁移 238 |
+| `balance_init_fenced` / `balance_write_fenced` | 余额缓存回源写被变更栅栏拦截（说明栅栏在起作用，不是故障） | 持续增长说明该用户余额写频繁，属正常并发/扣费节奏 |
 | `reservation_release_error` | 预留归还失败 → 额度滞留到 TTL | 检查 Redis 写入与网络 |
 | `reservation_renew_error` | 续期失败 → 超长请求可能失去保护 | 同上 |
 | `reservation_abandoned` | 结算任务被 drop 语义丢弃 → 该笔未扣费 | 检查 usage_record worker 池容量与 drop 配置 |
@@ -143,6 +181,10 @@ GET /api/v1/admin/ops/billing-guard
    现在会拒绝 `NaN` / `±Inf`（`NaN` 曾能绕过所有 `< 0` 判断并让封底、最坏费用闸门与
    DB 复核静默失效，`+Inf` 会让预留闸门永久放开）。
 6. 配置变更后请用第 4.1 的端点确认 `runtime` 段与实际配置一致。
+7. **必须执行迁移 `238_billing_balance_reservations.sql`**：DB 兜底账本依赖两张新表
+   `billing_reservations`（在途凭据）与 `billing_reservation_fallback_state`（共享兜底窗口）。
+   表缺失时 Redis 故障期的 DB 兜底会报错并 fail-closed（503），而不是静默放行；
+   `degraded_signals` 会同步提示“检查迁移 238”。
 
 ## 6. 已知边界与未覆盖入口
 
@@ -178,10 +220,16 @@ GET /api/v1/admin/ops/billing-guard
 
 其他已知边界：
 
-- **Redis 不可用 ⇒ 在途预留 fail-open**：`TryReserveUserBalance` 报错时按"预留后端不可用"
-  处理并直接放行（并打 ALERT、计入 `billing_reservation_fail_open`）。此时第 ③ 层护栏
-  **整体失效**，只剩 ①准入阈值+DB 复核、②最坏费用闸门与 ④结算封底兜底，并发突发下会出现
-  有界的 write-off。这是所有降级场景里影响最大的一条，运维必须监控该指标。
+- **Redis 不可用 ⇒ 切 DB 兜底，而不是 fail-open**：`TryReserveUserBalance` 报错时先抬起共享
+  兜底窗口（`reservation_redis_failure` / `reservation_fallback_activated`），再用 PostgreSQL 账本
+  继续守同一条不变量；只有 Redis 与 DB 兜底**同时**不可用时才 fail-closed（`reservation_fail_closed`，
+  HTTP 503）。仍然 fail-open 的只剩“装配中没有 DB 兜底能力”的降级部署（轻量/测试装配），
+  见 `reservation_fail_open` 指标。
+- **账本切换的残留边界（已知）**：切换到 DB 账本时，Redis 上**切换前已存在**的预留不会被搬进
+  DB 账本（DB 只统计自己的行），因此切换前那批请求靠“共享窗口 ≥ 预留 TTL”兜住：窗口结束前
+  不重新信任 Redis，等它们全部自然过期。影响方向是保守的（期间可能多拦几笔），不会放行超额。
+- **DB 兜底账本不是扣费**：`billing_reservations` 只是准入用的在途账本，结算仍只写钱包
+  （`users.balance`）；凭据行按 `(scope, request_id)` 唯一，过期行由 TTL + 事务内清理回收。
 - **预留后端返回无法解释的状态**：`tryReserveBalanceScript` 只认 `'1'`/`'0'` 两种答复，
   其它值一律按**拒绝**处理（交给调用方的 guard 再判一次），不走 fail-open —— 避免"状态不一致"
   被误当作"后端故障"从而在完全没有预留的情况下放行。

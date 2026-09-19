@@ -88,6 +88,12 @@ var (
 	billingReservationExpiredReleaseTotal atomic.Int64
 	billingReservationRenewTotal          atomic.Int64
 	billingReservationRenewErrTotal       atomic.Int64
+	// Redis 故障→DB 兜底链路（审计 R2）。
+	billingReservationRedisFailureTotal     atomic.Int64
+	billingReservationFailClosedTotal       atomic.Int64
+	billingReservationFallbackActivateTotal atomic.Int64
+	billingReservationFallbackActivateErr   atomic.Int64
+	billingReservationFallbackProbeErr      atomic.Int64
 )
 
 // 复核与降级计数。这些是"护栏静默失效"的直接证据面。
@@ -99,6 +105,9 @@ var (
 	billingPrecheckUnavailableTotal         atomic.Int64
 	billingSubscriptionReservationTotal     atomic.Int64
 	billingSubscriptionReserveFailOpenTotal atomic.Int64
+	// 余额缓存栅栏（审计 R9）：回源初始化/回填被栅栏拦截的次数。
+	billingBalanceInitFencedTotal  atomic.Int64
+	billingBalanceWriteFencedTotal atomic.Int64
 )
 
 // RecordBillingPreflightReject 记录一次余额预检拒绝及其原因。
@@ -168,6 +177,15 @@ type BillingGuardStats struct {
 	ReservationRenew              int64 `json:"reservation_renew"`
 	ReservationRenewError         int64 `json:"reservation_renew_error"`
 
+	// Redis 故障→DB 兜底 / 缓存栅栏（审计 R2、R9）。
+	ReservationRedisFailure      int64 `json:"reservation_redis_failure"`
+	ReservationFailClosed        int64 `json:"reservation_fail_closed"`
+	ReservationFallbackActivated int64 `json:"reservation_fallback_activated"`
+	ReservationFallbackActivateE int64 `json:"reservation_fallback_activate_error"`
+	ReservationFallbackProbeErr  int64 `json:"reservation_fallback_probe_error"`
+	BalanceInitFenced            int64 `json:"balance_init_fenced"`
+	BalanceWriteFenced           int64 `json:"balance_write_fenced"`
+
 	// DB 复核与降级。
 	RecheckDBReads              int64 `json:"recheck_db_reads"`
 	RecheckFailClosed           int64 `json:"recheck_fail_closed"`
@@ -213,6 +231,14 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 		ReservationRenew:              billingReservationRenewTotal.Load(),
 		ReservationRenewError:         billingReservationRenewErrTotal.Load(),
 
+		ReservationRedisFailure:      billingReservationRedisFailureTotal.Load(),
+		ReservationFailClosed:        billingReservationFailClosedTotal.Load(),
+		ReservationFallbackActivated: billingReservationFallbackActivateTotal.Load(),
+		ReservationFallbackActivateE: billingReservationFallbackActivateErr.Load(),
+		ReservationFallbackProbeErr:  billingReservationFallbackProbeErr.Load(),
+		BalanceInitFenced:            billingBalanceInitFencedTotal.Load(),
+		BalanceWriteFenced:           billingBalanceWriteFencedTotal.Load(),
+
 		RecheckDBReads:              billingRecheckDBReadsTotal.Load(),
 		RecheckFailClosed:           billingRecheckFailClosedTotal.Load(),
 		RecheckSkippedNoUserRepo:    billingRecheckSkippedNoUserRepoTotal.Load(),
@@ -230,6 +256,18 @@ func BillingGuardStatsSnapshot() BillingGuardStats {
 	if stats.ReservationFailOpen > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
 			"在途预留 fail-open：Redis 预留失败时并发护栏静默失效（检查 Redis 可用性）")
+	}
+	if stats.ReservationRedisFailure > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"Redis 预留不可用，已切到 DB 兜底账本（护栏仍生效，但预留走 DB；检查 Redis 可用性）")
+	}
+	if stats.ReservationFailClosed > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"Redis 与 DB 兜底同时不可用，预检 fail-closed：用户看到 503")
+	}
+	if stats.ReservationFallbackActivateE > 0 || stats.ReservationFallbackProbeErr > 0 {
+		stats.DegradedSignals = append(stats.DegradedSignals,
+			"DB 兜底窗口抬升/探测失败：跨实例账本一致性变弱（检查 DB 连接与迁移 238）")
 	}
 	if stats.ReservationReleaseErr > 0 {
 		stats.DegradedSignals = append(stats.DegradedSignals,
@@ -308,6 +346,38 @@ func RecordBillingReservationRenew() { billingReservationRenewTotal.Add(1) }
 
 // RecordBillingReservationRenewError 记录一次续期失败（非"凭据已过期"）。
 func RecordBillingReservationRenewError() { billingReservationRenewErrTotal.Add(1) }
+
+// RecordBillingReservationRedisFailure 记录一次 Redis 预留失败（已切换到 DB 兜底）。
+//
+// 与 FailOpen 的区别：这条表示护栏已降级到 DB 但仍在生效；FailOpen 表示护栏真的消失了。
+func RecordBillingReservationRedisFailure() { billingReservationRedisFailureTotal.Add(1) }
+
+// RecordBillingReservationFailClosed 记录一次"Redis 与 DB 兜底都不可用"导致的拒绝（503）。
+//
+// 这是新语义下唯一正确的选择：宁可在预检拒绝，也不能在没有跨请求护栏时放行上游。
+func RecordBillingReservationFailClosed() { billingReservationFailClosedTotal.Add(1) }
+
+// RecordBillingReservationFallbackActivated 记录一次共享 DB 兜底窗口被本进程抬起。
+func RecordBillingReservationFallbackActivated() { billingReservationFallbackActivateTotal.Add(1) }
+
+// RecordBillingReservationFallbackActivationError 记录一次 DB 兜底窗口抬升失败。
+//
+// 出现即代表跨实例的一致性变弱：本进程会走 DB 账本，但其它实例可能要等下一次
+// 探测/自身切换到 DB 才会跟随（探测失败不再被静默忽略）。
+func RecordBillingReservationFallbackActivationError() { billingReservationFallbackActivateErr.Add(1) }
+
+// RecordBillingReservationFallbackProbeError 记录一次兜底窗口探测失败（按未激活处理）。
+func RecordBillingReservationFallbackProbeError() { billingReservationFallbackProbeErr.Add(1) }
+
+// RecordBillingBalanceInitFenced 记录一次"回源初始化被余额变更栅栏拦截"（审计 R9）。
+//
+// 非 0 是正常自愈现象（变更与回源并发时必然发生）；但持续攀升说明同一用户
+// 的余额变更频率高于缓存 TTL，缓存命中率会下降，应结合 DB 负载一同观察。
+func RecordBillingBalanceInitFenced() { billingBalanceInitFencedTotal.Add(1) }
+
+// RecordBillingBalanceWriteFenced 记录一次"DB 真值回填被余额变更栅栏拦截"（审计 R9）。
+// 这是修掉旧快照覆盖并发扣费的直接证据点。
+func RecordBillingBalanceWriteFenced() { billingBalanceWriteFencedTotal.Add(1) }
 
 // RecordBillingRecheckDBRead 记录一次预检的 DB 真值回源。
 func RecordBillingRecheckDBRead() { billingRecheckDBReadsTotal.Add(1) }

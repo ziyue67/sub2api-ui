@@ -30,6 +30,7 @@ import (
 type userRepository struct {
 	client *dbent.Client
 	sql    sqlExecutor
+	db     *sql.DB
 }
 
 var _ service.RedeemUserAdjustmentRepository = (*userRepository)(nil)
@@ -39,7 +40,11 @@ func NewUserRepository(client *dbent.Client, sqlDB *sql.DB) service.UserReposito
 }
 
 func newUserRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *userRepository {
-	return &userRepository{client: client, sql: sqlq}
+	repo := &userRepository{client: client, sql: sqlq}
+	if db, ok := sqlq.(*sql.DB); ok {
+		repo.db = db
+	}
+	return repo
 }
 
 func (r *userRepository) Create(ctx context.Context, userIn *service.User) error {

@@ -148,8 +148,57 @@ type billingReservationStore interface {
 	ReleaseUserBalanceReservation(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) error
 }
 
+// billingReservationSlotStore 是"在途预留槽位"所需的最小能力：只要求精确归还本笔凭据。
+//
+// 为什么单列它：槽位会被绑定到不同的账本实现（Redis 热路径 / PostgreSQL 兜底），
+// 两者的"预留"方法名并不相同（TryReserveUserBalance vs TryReserveUserBalanceDatabase），
+// 但"归还"契约完全一致。把槽位依赖收敛到这里，DB 账本就不必为了满足接口去实现一个
+// 它根本不该有的旧式非原子预留方法。
+type billingReservationSlotStore interface {
+	ReleaseUserBalanceReservation(ctx context.Context, scope string, requestID string, amount float64, ttl time.Duration) error
+}
+
 type atomicBillingReservationStore interface {
 	TryReserveUserBalance(ctx context.Context, scope string, requestID string, amount, maxTotal float64, ttl time.Duration) (float64, bool, error)
+}
+
+// databaseBillingReservationStore 是 Redis 预留账本不可用时的持久化兜底账本（审计 R2）。
+//
+// 为什么需要它：余额缓存/预留账本是同一份"已经承诺出去但尚未结算"的额度，
+// 一旦 Redis 不可用，旧实现只能 fail-open，并发护栏整层消失（突发流量可以全部
+// 用同一份余额放行，结算时才扣不动钱）。DB 兜底把同一份不变量放在 PostgreSQL
+// 上：按 scope 取 advisory 事务锁 → 清理过期行 → 条件插入，仅当活跃预留总额仍
+// 在 maxTotal 内才接受。因此 Redis 故障期仍然 fail-closed，代价是预留走 DB
+// （低频降级路径，不进正常热路径）。
+//
+// 未装配（userRepo 未实现该能力 / 测试轻量装配）时保持旧语义：Redis 故障仍然 fail-open。
+type databaseBillingReservationStore interface {
+	// DB 账本必须同时提供归还与续期：槽位绑定后由同一 store 负责 Release / 心跳续期，
+	// 否则预留会一直挂到 TTL 到期（长请求提前丢失保护）。
+	// DB 账本必须同时提供归还与续期：槽位绑定后由同一 store 负责 Release / 心跳续期，
+	// 否则预留会一直挂到 TTL 到期（长请求提前丢失保护）。
+	billingReservationSlotStore
+	billingReservationRenewer
+	TryReserveUserBalanceDatabase(ctx context.Context, scope string, requestID string, amount, maxTotal float64, ttl time.Duration) (float64, bool, error)
+	ActivateBillingReservationDatabaseFallback(ctx context.Context, ttl time.Duration) error
+	BillingReservationDatabaseFallbackUntil(ctx context.Context) (time.Time, error)
+}
+
+// balanceCacheInitializer 是余额缓存的"回源初始化"能力（可选）：只在键缺失且无变更
+// 栅栏时建立缓存，键已存在时只刷新 TTL，返回 fenced=true 表示被栅栏拦截。
+//
+// 审计 R9：余额缓存的回源写回会覆盖"读值之后发生的扣费"，把已扣掉的余额复活，
+// 预检据此在缓存 TTL 内持续放行注定扣不动的请求。对照 new-api 的 cacheInitToken。
+// 未实现时（轻量测试桩 / 降级装配）退回无条件写，行为与修复前一致。
+type balanceCacheInitializer interface {
+	InitUserBalance(ctx context.Context, userID int64, balance float64) (fenced bool, err error)
+}
+
+// fencedBalanceWriter 是"以 DB 真值回填余额缓存"的带栅栏能力（可选）：读值与写值
+// 之间发生余额变更（变更路径会抬栅栏）时拒绝本次写入，返回 fenced=true。
+// 未实现时退回无条件 SET，行为与修复前一致。
+type fencedBalanceWriter interface {
+	SetUserBalanceFenced(ctx context.Context, userID int64, balance float64) (fenced bool, err error)
 }
 
 // billingReservationRenewer 是预留的**可选**能力：为长请求续期预留。
@@ -193,6 +242,19 @@ var billingReservationHeartbeatInterval = billingReservationTTL / 3
 // 归还一律走脱离取消的独立 ctx（见 BillingReservationSlot.release）。
 const billingReservationReleaseTimeout = 3 * time.Second
 
+// billingReservationDBFallbackTimeout 是 DB 兜底预留/激活的单次超时。
+// 它只用于 Redis 故障后的降级路径，不进正常热路径。
+const billingReservationDBFallbackTimeout = 3 * time.Second
+
+// billingReservationFallbackProbeInterval 是"共享兜底窗口"的进程内探测缓存间隔。
+// 每次预留都查一次 DB 会把降级状态的可见性成本摊到热路径上；缓存 1 秒后，
+// 别的实例拉起窗口后本实例最多 1 秒内跟随，同时每实例每秒最多一次单行 SELECT。
+const billingReservationFallbackProbeInterval = time.Second
+
+// billingReservationFallbackProbeTimeout 是探测超时。探测失败不缓存结果（下次请求立即重试），
+// 并按"窗口未激活"处理：此时 Redis 若仍可用，保留热路径可用性比多拦一笔更重要。
+const billingReservationFallbackProbeTimeout = 500 * time.Millisecond
+
 // newBillingReservationRequestID 生成一次请求的预留凭据 ID。
 //
 // 必须是每笔请求唯一且不含 ':' 的字符串（仓库层用 ':' 拼接用户与凭据），
@@ -218,7 +280,7 @@ func newBillingReservationRequestID() string {
 // 所有方法对 nil 接收者安全；Release / ReleaseOnExit 幂等，重复调用只归还一次。
 type BillingReservationSlot struct {
 	mu        sync.Mutex
-	store     billingReservationStore
+	store     billingReservationSlotStore
 	scope     string
 	requestID string
 	amount    float64
@@ -245,7 +307,7 @@ const (
 //
 // requestID 是本次请求的预留凭据 ID：归还与续期都以它为唯一匹配键，缺了它就无法
 // 区分"这笔归还到底是谁的"，晚到的归还会吃掉同 scope 下别人的预留。
-func (s *BillingReservationSlot) bind(store billingReservationStore, scope string, requestID string, amount float64) {
+func (s *BillingReservationSlot) bind(store billingReservationSlotStore, scope string, requestID string, amount float64) {
 	if s == nil || store == nil || amount <= 0 || scope == "" || requestID == "" {
 		return
 	}
@@ -436,6 +498,10 @@ type BillingCacheService struct {
 	cacheWriteDropFullLastLog   int64
 	cacheWriteDropClosedCount   uint64
 	cacheWriteDropClosedLastLog int64
+	// DB 兜底窗口的进程内探测缓存（见 reservationFallbackWindowActive）。
+	fallbackProbeMu    sync.Mutex
+	fallbackProbeAt    time.Time
+	fallbackProbeUntil time.Time
 }
 
 // NewBillingCacheService 创建计费缓存服务
@@ -640,12 +706,25 @@ func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) 
 			return nil, err
 		}
 
-		// 异步建立缓存
-		_ = s.enqueueCacheWrite(cacheWriteTask{
-			kind:    cacheWriteSetBalance,
-			userID:  userID,
-			balance: balance,
-		})
+		// 建立缓存。支持栅栏的实现在同一个 Lua 里完成"已存在只刷 TTL / 有栅栏拒绝写"
+		// （审计 R9）：同步执行才能真正覆盖"DB 读 → 缓存写"这段间隙 —— 若交给异步
+		// 队列，任务可能排到栅栏过期之后才落盘，旧快照又会覆盖并发扣费的结果。
+		if initializer, ok := s.cache.(balanceCacheInitializer); ok {
+			fenced, initErr := initializer.InitUserBalance(loadCtx, userID, balance)
+			if initErr != nil {
+				// 写缓存失败不影响本次判定：回源值已经拿到，只是下一次还要再回源。
+				logger.LegacyPrintf("service.billing_cache", "Warning: init balance cache failed for user %d: %v", userID, initErr)
+			} else if fenced {
+				RecordBillingBalanceInitFenced()
+			}
+		} else {
+			// 降级装配（轻量桩）：退回异步无条件写，行为与修复前一致。
+			_ = s.enqueueCacheWrite(cacheWriteTask{
+				kind:    cacheWriteSetBalance,
+				userID:  userID,
+				balance: balance,
+			})
+		}
 		return balance, nil
 	})
 	if err != nil {
@@ -695,6 +774,17 @@ func (s *BillingCacheService) setBalanceCache(ctx context.Context, userID int64,
 	if s.cache == nil {
 		return
 	}
+	// 支持栅栏的缓存走"回源初始化"语义：已存在的键只刷新 TTL、不覆盖，
+	// 变更栅栏存活时整体跳过（见 balanceCacheInitializer / 审计 R9）。
+	if initializer, ok := s.cache.(balanceCacheInitializer); ok {
+		fenced, err := initializer.InitUserBalance(ctx, userID, balance)
+		if err != nil {
+			logger.LegacyPrintf("service.billing_cache", "Warning: init balance cache failed for user %d: %v", userID, err)
+		} else if fenced {
+			RecordBillingBalanceInitFenced()
+		}
+		return
+	}
 	if err := s.cache.SetUserBalance(ctx, userID, balance); err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: set balance cache failed for user %d: %v", userID, err)
 	}
@@ -712,6 +802,18 @@ func (s *BillingCacheService) DeductBalanceCache(ctx context.Context, userID int
 // 避免并发扣费下 Redis INCR 类操作产生负余额视图）。
 func (s *BillingCacheService) SetUserBalanceCache(ctx context.Context, userID int64, balance float64) error {
 	if s.cache == nil {
+		return nil
+	}
+	// 带栅栏的实现在读值与写值之间发生过余额变更时拒绝写入（变更路径会抬栅栏），
+	// 避免把已经过期的 DB 快照写成"权威值"（审计 R9）。
+	if fencedWriter, ok := s.cache.(fencedBalanceWriter); ok {
+		fenced, err := fencedWriter.SetUserBalanceFenced(ctx, userID, balance)
+		if err != nil {
+			return err
+		}
+		if fenced {
+			RecordBillingBalanceWriteFenced()
+		}
 		return nil
 	}
 	return s.cache.SetUserBalance(ctx, userID, balance)
@@ -1626,7 +1728,11 @@ func (s *BillingCacheService) inflightReservationAllowed(ctx context.Context, ba
 //
 // 失败语义：
 //   - slot == nil（调用方未挂预留槽位）或 amount <= 0（没有可用上界）：no-op；
-//   - 底层缓存不支持该能力 / Redis 故障：fail-open（打 ALERT + 计数），退回修复前行为；
+//   - 底层缓存不支持该能力（轻量/降级装配）：no-op，退回修复前行为；
+//   - Redis 故障：先抬起共享 DB 兜底窗口，再走 DB 账本；DB 账本也失败时 fail-closed
+//     （返回 ErrBillingServiceUnavailable → 503，审计 R2）；仅当装配中根本没有 DB 兜底
+//     能力时（轻量测试装配）才退回旧的 fail-open；
+//   - 共享兜底窗口生效期间：直接走 DB 账本，不与 Redis 账本混用；
 //   - guard 判定不成立：回滚预留 + 计数，返回 guard 的错误。
 func (s *BillingCacheService) reserveSpendWithGuard(
 	ctx context.Context,
@@ -1645,36 +1751,131 @@ func (s *BillingCacheService) reserveSpendWithGuard(
 		return nil
 	}
 	requestID := newBillingReservationRequestID()
-	if atomicStore, atomicOK := store.(atomicBillingReservationStore); atomicOK {
-		reservedAfter, accepted, err := atomicStore.TryReserveUserBalance(ctx, scope, requestID, amount, maxTotal, billingReservationTTL)
-		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
-			}
-			RecordBillingReservationFailOpen()
-			logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed: %v", scope, err)
-			return nil
-		}
-		if !accepted {
-			RecordBillingReservationRejected()
-			if rejectReason != "" {
-				RecordBillingPreflightReject(rejectReason)
-			}
-			return guard(reservedAfter + amount)
-		}
-		slot.bind(store, scope, requestID, amount)
-		slot.startHeartbeat()
-		RecordBillingReservationReserved()
+
+	dbStore, hasDBFallback := s.databaseReservationFallback()
+	if hasDBFallback && s.reservationFallbackWindowActive(ctx, dbStore) {
+		// 共享兜底窗口处于激活状态：全实例统一切到 DB 账本。
+		// 绝不回退 Redis：两本账同时记会导致同一份额度被各算一遍（重复计算）。
+		return s.reserveSpendWithDatabaseLedger(ctx, dbStore, scope, requestID, amount, maxTotal, slot, guard, rejectReason)
+	}
+
+	atomicStore, atomicOK := store.(atomicBillingReservationStore)
+	if !atomicOK {
+		return s.reserveSpendWithLegacyLedger(ctx, store, scope, requestID, amount, maxTotal, slot, guard, rejectReason, hasDBFallback, dbStore)
+	}
+
+	reservedAfter, accepted, err := atomicStore.TryReserveUserBalance(ctx, scope, requestID, amount, maxTotal, billingReservationTTL)
+	if err == nil {
+		return s.applyReservationResult(store, scope, requestID, amount, reservedAfter, accepted, slot, guard, rejectReason)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if !hasDBFallback {
+		// 未装配 DB 兜底（轻量/测试装配）：保持既有 fail-open 语义。
+		RecordBillingReservationFailOpen()
+		logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed (no database fallback): %v", scope, err)
 		return nil
 	}
+
+	// Redis 预留不可用：抬起共享兜底窗口并转 DB 预留（审计 R2）。
+	// 这一步把"Redis 故障 = 零预留放行"的窗口换成"DB 条件更新仍守同一条不变量"。
+	RecordBillingReservationRedisFailure()
+	logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed, switching to database fallback: %v", scope, err)
+	s.activateDatabaseReservationFallback(dbStore)
+	return s.reserveSpendWithDatabaseLedger(ctx, dbStore, scope, requestID, amount, maxTotal, slot, guard, rejectReason)
+}
+
+// applyReservationResult 把一次原子预留的结果应用到槽位/guard：接受则绑定槽位并启动心跳，
+// 因上限被拒则交给 guard 判定（guard 返回的错误直接作为预检结果）。
+//
+// 被上限拒绝时传入的是「含本笔的总额」：Redis 与 DB 两侧的原子预留都返回累加前的总额，
+// 因此这里补上 amount 再交给 guard，与旧的非原子路径（返回累计后总额）保持同一口径。
+func (s *BillingCacheService) applyReservationResult(
+	store billingReservationSlotStore,
+	scope string,
+	requestID string,
+	amount float64,
+	reservedAfter float64,
+	accepted bool,
+	slot *BillingReservationSlot,
+	guard func(reservedAfter float64) error,
+	rejectReason BillingPreflightRejectReason,
+) error {
+	if !accepted {
+		RecordBillingReservationRejected()
+		if rejectReason != "" {
+			RecordBillingPreflightReject(rejectReason)
+		}
+		return guard(reservedAfter + amount)
+	}
+	slot.bind(store, scope, requestID, amount)
+	slot.startHeartbeat()
+	RecordBillingReservationReserved()
+	return nil
+}
+
+// reserveSpendWithDatabaseLedger 在共享兜底窗口内用 DB 账本建立在途预留。
+//
+// 失败语义是 fail-closed：Redis 已经不可用，DB 兜底再失败就没有任何跨请求护栏了。
+// 此时必须拒绝本次请求（503），而不是退回"无预留放行"——后者正是审计 R2 的坏账窗口。
+func (s *BillingCacheService) reserveSpendWithDatabaseLedger(
+	ctx context.Context,
+	store databaseBillingReservationStore,
+	scope string,
+	requestID string,
+	amount float64,
+	maxTotal float64,
+	slot *BillingReservationSlot,
+	guard func(reservedAfter float64) error,
+	rejectReason BillingPreflightRejectReason,
+) error {
+	dbCtx, cancel := context.WithTimeout(ctx, billingReservationDBFallbackTimeout)
+	defer cancel()
+	reservedAfter, accepted, err := store.TryReserveUserBalanceDatabase(dbCtx, scope, requestID, amount, maxTotal, billingReservationTTL)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		RecordBillingReservationFailClosed()
+		logger.LegacyPrintf("service.billing_cache", "ALERT: database fallback reservation for scope %s failed: %v", scope, err)
+		return ErrBillingServiceUnavailable.WithCause(err)
+	}
+	return s.applyReservationResult(store, scope, requestID, amount, reservedAfter, accepted, slot, guard, rejectReason)
+}
+
+// reserveSpendWithLegacyLedger 是非原子预留账本（历史实现/测试桩）的兼容路径。
+// 语义与修复前一致的那一半：guard 不成立则回滚本笔；差异只在失败语义 —— 装配了 DB 兜底
+// 能力时，Redis 故障会切到 DB 账本（审计 R2）；没有任何兜底能力时才退回 fail-open。
+func (s *BillingCacheService) reserveSpendWithLegacyLedger(
+	ctx context.Context,
+	store billingReservationStore,
+	scope string,
+	requestID string,
+	amount float64,
+	maxTotal float64,
+	slot *BillingReservationSlot,
+	guard func(reservedAfter float64) error,
+	rejectReason BillingPreflightRejectReason,
+	hasDBFallback bool,
+	dbStore databaseBillingReservationStore,
+) error {
 	reservedAfter, err := store.ReserveUserBalance(ctx, scope, requestID, amount, billingReservationTTL)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		RecordBillingReservationFailOpen()
-		logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed: %v", scope, err)
-		return nil // fail-open
+		if !hasDBFallback {
+			// 未装配 DB 兜底（轻量/测试装配）：保持既有 fail-open 语义。
+			RecordBillingReservationFailOpen()
+			logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed (no database fallback): %v", scope, err)
+			return nil // fail-open
+		}
+		// 旧式账本同样在市场 Redis 故障时切到 DB 兜底，避免"装配了兜底却仍 fail-open"。
+		RecordBillingReservationRedisFailure()
+		logger.LegacyPrintf("service.billing_cache", "ALERT: reserve in-flight spend for scope %s failed, switching to database fallback: %v", scope, err)
+		s.activateDatabaseReservationFallback(dbStore)
+		return s.reserveSpendWithDatabaseLedger(ctx, dbStore, scope, requestID, amount, maxTotal, slot, guard, rejectReason)
 	}
 	if guardErr := guard(reservedAfter); guardErr != nil {
 		// 回滚走脱离取消的独立 ctx：请求 ctx 可能已经结束，直接用它会让 Redis 写入静默失败。
@@ -1698,6 +1899,82 @@ func (s *BillingCacheService) reserveSpendWithGuard(
 	slot.startHeartbeat()
 	RecordBillingReservationReserved()
 	return nil
+}
+
+// databaseReservationFallback 返回 DB 兜底账本能力。
+//
+// 它挂在 userRepo 上（而不是 cache 上）：Redis 故障时 cache 侧能力不可用，
+// 而 userRepo 正是同一批实例已经在用的 DB 连接，不需要新增装配参数。
+// 未实现该能力的 userRepo（轻量测试桩/降级装配）返回 ok=false。
+func (s *BillingCacheService) databaseReservationFallback() (databaseBillingReservationStore, bool) {
+	if s == nil || s.userRepo == nil {
+		return nil, false
+	}
+	store, ok := s.userRepo.(databaseBillingReservationStore)
+	if !ok {
+		return nil, false
+	}
+	return store, true
+}
+
+// reservationFallbackWindowActive 判断"共享 DB 兜底窗口"是否仍在有效期内。
+//
+// 为什么需要共享窗口：Redis 预留与 DB 预留是两本独立的账。若实例 A 因 Redis 故障切到 DB，
+// 而实例 B 仍用 Redis 放行同一用户，两边的"在途预留"各自都没超上限，合起来却超了。
+// 因此任一路径切换到 DB 时就把窗口抬高，所有实例在窗口内统一切到 DB 账本；
+// 窗口至少覆盖"切换前已存在的 Redis 预留"的最长存活时间（见迁移注释），
+// Redis 恢复后也要等窗口结束才重新信任 Redis 账本。
+//
+// 探测结果按进程缓存 billingReservationFallbackProbeInterval，避免每笔预检一次 DB 查询；
+// 探测失败不缓存（下次请求立即重试）并按"未激活"处理，保留 Redis 可用时的热路径。
+func (s *BillingCacheService) reservationFallbackWindowActive(ctx context.Context, store databaseBillingReservationStore) bool {
+	if s == nil || store == nil {
+		return false
+	}
+	now := time.Now()
+	s.fallbackProbeMu.Lock()
+	if !s.fallbackProbeAt.IsZero() && now.Sub(s.fallbackProbeAt) < billingReservationFallbackProbeInterval {
+		until := s.fallbackProbeUntil
+		s.fallbackProbeMu.Unlock()
+		return until.After(now)
+	}
+	s.fallbackProbeMu.Unlock()
+
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), billingReservationFallbackProbeTimeout)
+	defer cancel()
+	until, err := store.BillingReservationDatabaseFallbackUntil(probeCtx)
+	if err != nil {
+		RecordBillingReservationFallbackProbeError()
+		logger.LegacyPrintf("service.billing_cache", "Warning: probe billing reservation database fallback failed: %v", err)
+		return false
+	}
+	s.fallbackProbeMu.Lock()
+	s.fallbackProbeAt = now
+	s.fallbackProbeUntil = until
+	s.fallbackProbeMu.Unlock()
+	return until.After(now)
+}
+
+// activateDatabaseReservationFallback 抬起共享兜底窗口，并让本进程立刻按"已激活"处理。
+// 激活失败只告警：本笔仍会尝试 DB 预留，而其他实例最多在下一次探测时看到窗口。
+// 这是可用性与强度之间的折中，失败必须计数（否则降级会静默）。
+func (s *BillingCacheService) activateDatabaseReservationFallback(store databaseBillingReservationStore) {
+	if s == nil || store == nil {
+		return
+	}
+	activateCtx, cancel := context.WithTimeout(context.Background(), billingReservationDBFallbackTimeout)
+	defer cancel()
+	now := time.Now()
+	if err := store.ActivateBillingReservationDatabaseFallback(activateCtx, billingReservationTTL); err != nil {
+		RecordBillingReservationFallbackActivationError()
+		logger.LegacyPrintf("service.billing_cache", "ALERT: activate billing reservation database fallback failed: %v", err)
+		return
+	}
+	RecordBillingReservationFallbackActivated()
+	s.fallbackProbeMu.Lock()
+	s.fallbackProbeAt = now
+	s.fallbackProbeUntil = now.Add(billingReservationTTL)
+	s.fallbackProbeMu.Unlock()
 }
 
 // subscriptionLimitExceeded 判定"订阅剩余限额是否还吃得起在途预留"。

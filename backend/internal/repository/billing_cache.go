@@ -24,6 +24,13 @@ const (
 	// "余额增加"两条路径会写它，余额未命中回源的异步写回永远不会写它，
 	// 因此它不会被扣费前的旧余额快照"复活"。
 	billingBalanceExhaustedKeyPrefix = "billing:balance_exhausted:"
+	// billingBalanceFenceKeyPrefix 是余额缓存的"变更栅栏"键前缀。
+	// 任何让余额发生变化的路径（扣费/充值/兑换/返利/管理员调整）在失效缓存时
+	// 同时抬起这道栅栏；栅栏存活期内回源写回一律被拒绝，避免"扣费前读到的
+	// 旧余额"在 DEL 之后重新落盘，把已经扣掉的余额复活（预检持续放行 → 坏账）。
+	// 对照 new-api 的 token:fence: + cacheInitToken：已存在的键只刷新 TTL，
+	// 绝不覆盖（Redis 侧原子扣减可能已经领先于本快照）。
+	billingBalanceFenceKeyPrefix = "billing:balance_fence:"
 	// billingReservedKeyPrefix 是"在途预留"键前缀：该用户当前全部"已放行、尚未结算"请求的
 	// 最坏费用上界之和（USD）。预检放行前用 INCRBYFLOAT 原子累加、结算完成后归还，
 	// 使"余额 - 在途预留 >= 封底"成为跨请求的原子准入护栏，堵住并发突发时用同一份
@@ -47,7 +54,11 @@ const (
 	// balanceExhaustedMarkerTTL 必须 >= 余额缓存的最长存活时间（billingCacheTTL），
 	// 否则标记先过期、而余额缓存里仍留着偏高的旧值，预检又会被放行。
 	balanceExhaustedMarkerTTL = billingCacheTTL + time.Minute
-	rateLimitCacheTTL         = 7 * 24 * time.Hour // 7 days matches the longest window
+	// billingBalanceFenceTTL 必须覆盖"DB 读 → 缓存写回"的整段间隙，且不短于
+	// 一次扣费事务的提交窗口；栅栏不主动删除，靠自然过期，保证持有旧快照的读者
+	// 无法在变更之后立刻把旧值写回（对照 new-api 的 tokenCacheFenceSeconds）。
+	billingBalanceFenceTTL = 10 * time.Second
+	rateLimitCacheTTL      = 7 * 24 * time.Hour // 7 days matches the longest window
 
 	// Rate limit window durations — must match service.RateLimitWindow* constants.
 	rateLimitWindow5h = 5 * time.Hour
@@ -73,6 +84,11 @@ func billingBalanceKey(userID int64) string {
 // billingBalanceExhaustedKey generates the Redis key for the "wallet exhausted" marker.
 func billingBalanceExhaustedKey(userID int64) string {
 	return fmt.Sprintf("%s%d", billingBalanceExhaustedKeyPrefix, userID)
+}
+
+// billingBalanceFenceKey generates the Redis key for the balance mutation fence.
+func billingBalanceFenceKey(userID int64) string {
+	return fmt.Sprintf("%s%d", billingBalanceFenceKeyPrefix, userID)
 }
 
 // billingReservedKey generates the Redis key for a reservation scope's in-flight total.
@@ -127,6 +143,50 @@ var (
 		local newVal = tonumber(current) - tonumber(ARGV[1])
 		redis.call('SET', KEYS[1], newVal)
 		redis.call('EXPIRE', KEYS[1], ARGV[2])
+		return 1
+	`)
+
+	// invalidateBalanceScript 原子地"抬栅栏 + 删缓存"：扣费/加款落库后调用。
+	// 两个动作必须在同一个脚本里完成，否则"先删后抬栅栏"之间仍有一个窗口，
+	// 持有旧快照的回源写回可以抢在栅栏之前落盘。
+	//
+	// KEYS[1] = billing:balance:<userID>，KEYS[2] = billing:balance_fence:<userID>
+	// ARGV[1] = 栅栏 TTL（毫秒）
+	invalidateBalanceScript = redis.NewScript(`
+		redis.call('SET', KEYS[2], 1, 'PX', ARGV[1])
+		redis.call('DEL', KEYS[1])
+		return 1
+	`)
+
+	// initBalanceScript 是余额缓存的"回源初始化"：对照 new-api 的 cacheInitToken。
+	// 返回：0 = 被变更栅栏拦截（本次不得写缓存）；1 = 完成初始化；2 = 键已存在，仅刷新 TTL。
+	//
+	// 已存在的键绝不写入快照：Redis 侧的原子扣减/结算写回可能已经领先于本快照，
+	// 覆盖就会把刚扣掉的余额"复活"成扣费前的高值，预检据此持续放行 → 坏账。
+	//
+	// KEYS[1] = billing:balance:<userID>，KEYS[2] = billing:balance_fence:<userID>
+	// ARGV[1] = 余额，ARGV[2] = TTL（毫秒）
+	initBalanceScript = redis.NewScript(`
+		if redis.call('EXISTS', KEYS[2]) == 1 then
+			return 0
+		end
+		if redis.call('EXISTS', KEYS[1]) == 1 then
+			redis.call('PEXPIRE', KEYS[1], ARGV[2])
+			return 2
+		end
+		redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+		return 1
+	`)
+
+	// setBalanceFencedScript 是"以 DB 真值覆写缓存"的带栅栏版本：仅当没有变更栅栏时
+	// 才写入。预检读到 DB 真值后回填缓存时使用它 —— 若读值与写值之间发生了扣费
+	// （扣费会抬栅栏），这次回填就必须被丢弃，否则会把旧的高余额写回去。
+	// 返回：1 = 已写入；0 = 被栅栏拦截。
+	setBalanceFencedScript = redis.NewScript(`
+		if redis.call('EXISTS', KEYS[2]) == 1 then
+			return 0
+		end
+		redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 		return 1
 	`)
 
@@ -360,6 +420,34 @@ func (c *billingCache) SetUserBalance(ctx context.Context, userID int64, balance
 	return c.rdb.Set(ctx, key, balance, jitteredTTL()).Err()
 }
 
+// InitUserBalance 以"回源初始化"语义写入余额缓存：只有键缺失且没有变更栅栏时才建立。
+// 键已存在时仅刷新 TTL（Redis 侧原子扣减/后续结算可能已领先于本快照，快照不得覆盖）；
+// 变更栅栏存活时整体拒绝写入（返回 fenced=true），调用方应只把读到的 DB 值用于本次判定。
+//
+// 实现对照 new-api model.cacheInitToken：这正是修掉"旧快照复活已扣余额"（审计 R9）的关键。
+func (c *billingCache) InitUserBalance(ctx context.Context, userID int64, balance float64) (fenced bool, err error) {
+	reply, err := initBalanceScript.Run(ctx, c.rdb,
+		[]string{billingBalanceKey(userID), billingBalanceFenceKey(userID)},
+		balance, jitteredTTL().Milliseconds()).Int()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return false, err
+	}
+	return reply == 0, nil
+}
+
+// SetUserBalanceFenced 以"DB 真值回填"语义写入余额缓存，仅在变更栅栏不存在时生效。
+// 返回 fenced=true 表示本次回填被栅栏拦截（读值与写值之间发生了余额变更），
+// 调用方必须把它当作"缓存未写入"处理，绝不能退化成无条件 SET。
+func (c *billingCache) SetUserBalanceFenced(ctx context.Context, userID int64, balance float64) (fenced bool, err error) {
+	reply, err := setBalanceFencedScript.Run(ctx, c.rdb,
+		[]string{billingBalanceKey(userID), billingBalanceFenceKey(userID)},
+		balance, jitteredTTL().Milliseconds()).Int()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return false, err
+	}
+	return reply == 0, nil
+}
+
 func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amount float64) error {
 	key := billingBalanceKey(userID)
 	_, err := deductBalanceScript.Run(ctx, c.rdb, []string{key}, amount, int(jitteredTTL().Seconds())).Result()
@@ -371,10 +459,24 @@ func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amou
 }
 
 func (c *billingCache) InvalidateUserBalance(ctx context.Context, userID int64) error {
-	key := billingBalanceKey(userID)
-	return c.rdb.Del(ctx, key).Err()
+	// 原子地"抬变更栅栏 + 删缓存"：栅栏挡住"扣费前读到、扣费后才落盘"的回源写回，
+	// 避免旧余额被复活、让预检在缓存 TTL 内持续放行注定扣不动的请求（审计 R9）。
+	// 两个动作必须同脚本完成：先删后抬之间仍有窗口，持有旧快照的写回可以抢先落盘。
+	_, err := invalidateBalanceScript.Run(ctx, c.rdb,
+		[]string{billingBalanceKey(userID), billingBalanceFenceKey(userID)},
+		billingBalanceFenceTTL.Milliseconds()).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	return nil
 }
 
+// InvalidateUserBalance 原子地删除余额缓存并抬起变更栅栏（见 billingBalanceFenceKeyPrefix）。
+// 栅栏同时挡住"扣费前读到、扣费后才落盘"的回源写回，避免旧余额被复活并让预检
+// 在缓存 TTL 内持续放行注定扣不动的请求（审计 R9）。
+//
+// 台账不变式：删除成功即返回 nil（哪怕键本来就不存在）；仅 Redis 错误向上传播 ——
+// 调用方（扣费/加款路径）靠它判断要不要告警，不能把"键不存在"误判成失败。
 // MarkUserBalanceExhausted 记录"该用户的钱包已经没有可花余额（已到 reserve 底线）"。
 //
 // 计费是后付费：一旦结算才发现余额不足，上游成本已经发生。因此转发前的预检必须
