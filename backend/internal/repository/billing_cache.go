@@ -692,23 +692,38 @@ func (c *billingCache) ReleaseUserBalanceReservation(ctx context.Context, scope 
 	reply, err := releaseBalanceScript.Run(ctx, c.rdb,
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		reservationTTLMillis(ttl)).Result()
-	redisUnavailable := err != nil && !errors.Is(err, redis.Nil)
-	if redisUnavailable || reservationReplyIsExpired(reply) {
+	if err != nil && !errors.Is(err, redis.Nil) {
+		// Redis 不可用：本笔可能当初记在 DB 兜底里，二次尝试。兜底不可用/不支持该 scope 时
+		// 维持既有行为（返回 Redis 错误）。
 		switch outcome, dbErr := c.tryReleaseDBReservation(ctx, scope, requestID); outcome {
 		case dbReservationHandled:
 			return nil
 		case dbReservationAbsent:
-			// 兜底可用且本笔不在其中 ⇒ 与"凭据已随 TTL 回收"同义。
 			return service.ErrBillingReservationExpired
 		default:
 			if dbErr != nil {
 				log.Printf("Warning: db reservation release failed for scope %s: %v", scope, dbErr)
+				return dbErr
 			}
+			log.Printf("Warning: release balance reservation failed for scope %s: %v", scope, err)
+			return err
 		}
 	}
-	if redisUnavailable {
-		log.Printf("Warning: release balance reservation failed for scope %s: %v", scope, err)
-		return err
+	if reservationReplyIsExpired(reply) {
+		// Redis 侧没有本笔凭据（TTL 自愈已回收）——但兜底可用时它也可能记在 DB 里。
+		switch outcome, dbErr := c.tryReleaseDBReservation(ctx, scope, requestID); outcome {
+		case dbReservationHandled:
+			return nil
+		case dbReservationAbsent:
+			return service.ErrBillingReservationExpired
+		default:
+			if dbErr != nil {
+				log.Printf("Warning: db reservation release failed for scope %s: %v", scope, dbErr)
+				return dbErr
+			}
+			// 兜底不可用或不支持该 scope：维持既有语义（凭据已随 TTL 回收）。
+			return service.ErrBillingReservationExpired
+		}
 	}
 	return nil
 }
@@ -722,8 +737,7 @@ func (c *billingCache) RenewUserBalanceReservation(ctx context.Context, scope st
 	reply, err := renewBalanceScript.Run(ctx, c.rdb,
 		[]string{billingReservedKey(scope), billingReservedItemKey(scope, requestID)},
 		reservationTTLMillis(ttl)).Result()
-	redisUnavailable := err != nil && !errors.Is(err, redis.Nil)
-	if redisUnavailable || reservationReplyIsMissing(reply) {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		switch outcome, dbErr := c.tryRenewDBReservation(ctx, scope, requestID, ttl); outcome {
 		case dbReservationHandled:
 			return nil
@@ -732,12 +746,25 @@ func (c *billingCache) RenewUserBalanceReservation(ctx context.Context, scope st
 		default:
 			if dbErr != nil {
 				log.Printf("Warning: db reservation renew failed for scope %s: %v", scope, dbErr)
+				return dbErr
 			}
+			log.Printf("Warning: renew balance reservation failed for scope %s: %v", scope, err)
+			return err
 		}
 	}
-	if redisUnavailable {
-		log.Printf("Warning: renew balance reservation failed for scope %s: %v", scope, err)
-		return err
+	if reservationReplyIsMissing(reply) {
+		switch outcome, dbErr := c.tryRenewDBReservation(ctx, scope, requestID, ttl); outcome {
+		case dbReservationHandled:
+			return nil
+		case dbReservationAbsent:
+			return service.ErrBillingReservationExpired
+		default:
+			if dbErr != nil {
+				log.Printf("Warning: db reservation renew failed for scope %s: %v", scope, dbErr)
+				return dbErr
+			}
+			return service.ErrBillingReservationExpired
+		}
 	}
 	return nil
 }

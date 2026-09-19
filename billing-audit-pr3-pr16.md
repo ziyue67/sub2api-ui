@@ -493,6 +493,34 @@ R2 的**已知限制**（未修，属设计边界）：DB 兜底只支持余额�
   `require.Equal(0.30000000000000004, want)` 锁住这个易踩的语义，防止后人"简化"回常量表达式。
 - 其余包全部 `ok`，本次失败仅影响 `internal/repository`。
 
+### 10.6 第二次 CI 失败：R2 的重构把既有语义改坏（2026-09-19）
+
+第一次修复推送后 CI 再次失败，这次是**真实回归**，不是测试写错：
+
+```
+--- FAIL: TestBillingReservationSuite/TestReleaseOnMissingReceiptIsNoop
+--- FAIL: TestBillingReservationSuite/TestReleaseReducesAndDeletesAtZero
+--- FAIL: TestBillingReservationSuite/TestExpiredReceiptReleaseDoesNotEatOtherReservations
+--- FAIL: TestBillingReservationSuite/TestRenewExtendsReceiptTTL
+        Error: Expected error with "billing reservation already expired" in chain but got nil.
+```
+
+- **根因**：给归还/续期加 DB 兜底分支时，把原来的
+  `if reply == 'EXPIRED' { return ErrBillingReservationExpired }` 重构成了
+  `if redisUnavailable || reply == 'EXPIRED' { switch 兜底结果 { ... } }`，
+  而兜底结果为 `NotApplicable`（本测试用 `NewBillingCache`，`db == nil`）时**没有回退语句**，
+  直接落到函数末尾 `return nil` —— 丢了"凭据已随 TTL 回收"这个信号。
+- **为什么本机没发现**：这 4 条契约**只被 integration 套件覆盖**（需要 Docker），
+  本机跑不了，而 unit 套件里没有任何用例碰到归还/续期的"凭据缺失"分支。
+- **修复**：把 `redisUnavailable` 与 `reply == 'EXPIRED'` 两个分支拆开，各自的 `default`
+  都补上回退（前者返回 Redis 错误，后者返回 `ErrBillingReservationExpired`），
+  与重构前的语义逐条对齐。
+- **顺带补强（本轮的真正收获）**：新增 `billing_cache_reservation_contract_test.go`
+  （miniredis，**无 build tag，本机可跑**），把这三条契约下沉为单元烟测：
+  凭据缺失的归还/续期必须返回 `ErrBillingReservationExpired`；晚到的归还不得吃别人的预留；
+  归还后聚合归零。**同类回归下次会在本机当场失败，而不是等 CI 10 分钟**。
+  *（教训：把 integration-only 的契约下沉到本地能跑的单测，是这类"重构改坏既有语义"的唯一防线。）*
+
 ### 10.4 本轮验证
 
 `go build ./...` ✅ / `go vet -tags=unit ./internal/...` ✅ / `go vet -tags=integration ./internal/repository/` ✅ /
